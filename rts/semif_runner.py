@@ -40,6 +40,31 @@ INSTRUCTION = (
     "if the test would plausibly need to run for this change."
 )
 
+# Structured features that never vary across a change's candidates under the
+# `covered` mask, and so cannot help rank within that change. Verified empirically:
+# path_distance is included because every test lives in the same directory tree, so
+# it is constant per change rather than merely low-variance.
+PER_CHANGE_CONSTANT = frozenset(
+    {
+        "covers_function",
+        "n_covering_tests",
+        "coverage_rank_prior",
+        "path_distance",
+        "change_size",
+        "change_added_lines",
+        "change_removed_lines",
+    }
+)
+
+# Diagnostic arms for the mirror-degradation question. Each holds everything else
+# fixed and varies one property of the injected block:
+#   full          -- all 15 features (the original mirror treatment)
+#   informative   -- only features that actually vary across candidates
+#   placebo       -- same field names and length, every value replaced by a constant
+#   shuffled      -- real values and distribution, decorrelated from the candidate
+#   after_document -- full features, but placed after <Document> instead of <Instruct>
+CONTROL_MODES = ("full", "informative", "placebo", "shuffled")
+
 
 def _prefix_suffix():
     """Reuse SemIf's exact prompt scaffolding and yes/no contract."""
@@ -55,6 +80,7 @@ def build_prompt(
     suffix: str,
     orientation: str = "change_query",
     features_block: str = "",
+    placement: str = "instruct",
 ) -> str:
     """Render one pair.
 
@@ -63,9 +89,11 @@ def build_prompt(
     ``change_query`` treats the change as the information need and the test as the
     candidate document; ``test_query`` inverts it.
 
-    ``features_block`` carries the structured features for the fairness arm. It is
-    placed inside ``<Instruct>`` so the model's own three-field template stays
-    intact. When empty the prompt is text-only.
+    ``features_block`` carries the structured features for the fairness arm.
+    ``placement`` controls where it goes: inside ``<Instruct>`` (before the
+    Query/Document, which also pushes the content further from the final position
+    the reranker reads) or appended after ``<Document>``. The placement switch
+    isolates a position/length effect from a content effect.
     """
     if orientation == "change_query":
         query, document = change_text, test_text
@@ -73,12 +101,23 @@ def build_prompt(
         query, document = test_text, change_text
     else:
         raise ValueError(f"unknown orientation: {orientation!r}")
-    instruction = INSTRUCTION + (f"\n\n{features_block}" if features_block else "")
-    body = (
-        f"<Instruct>: {instruction}\n"
-        f"<Query>: {query.strip()}\n"
-        f"<Document>: {document.strip()}"
-    )
+    if placement == "instruct":
+        instruction = INSTRUCTION + (f"\n\n{features_block}" if features_block else "")
+        body = (
+            f"<Instruct>: {instruction}\n"
+            f"<Query>: {query.strip()}\n"
+            f"<Document>: {document.strip()}"
+        )
+    elif placement == "after_document":
+        body = (
+            f"<Instruct>: {INSTRUCTION}\n"
+            f"<Query>: {query.strip()}\n"
+            f"<Document>: {document.strip()}"
+        )
+        if features_block:
+            body += f"\n\n{features_block}"
+    else:
+        raise ValueError(f"unknown placement: {placement!r}")
     return prefix + body + suffix
 
 
@@ -96,14 +135,33 @@ def _answer_ids_cached(tokenizer):
     return answer_ids(tokenizer)
 
 
-def format_features(ds: dataset.Dataset, X, names: list[str], row: int, col: int) -> str:
-    """Serialize the structured features for one pair into prompt text.
+def format_features(
+    ds: dataset.Dataset,
+    X,
+    names: list[str],
+    row: int,
+    col: int,
+    mode: str = "full",
+    value_col: int | None = None,
+) -> str:
+    """Serialize structured features for one pair into prompt text.
 
-    This is the full mirror: the same 15 features XGBoost receives, rendered as a
-    compact list. Coverage is the important one -- it is dynamic information that
-    cannot be recovered from source text, so withholding it makes the text-only arm
-    an unfair comparison rather than a test of the model.
+    ``mode`` produces the diagnostic variants:
+
+    * ``full`` -- every feature, as XGBoost sees them (the mirror treatment).
+    * ``informative`` -- only features that vary across a change's candidates, so
+      the block stops carrying per-change constants that cannot discriminate.
+    * ``placebo`` -- identical field names and length, every value replaced by a
+      constant. Same distraction, zero information: this isolates a length/format
+      effect from a content effect.
+    * ``shuffled`` -- real values with the real marginal distribution, but read from
+      a different candidate in the same change (``value_col``). Format and
+      distribution preserved, association with the candidate destroyed.
+
+    In every mode the identifier lines describe the actual candidate, so only the
+    feature values are manipulated.
     """
+    source = col if value_col is None else value_col
     test_file, _, test_name = ds.test_ids[col].partition("::")
     change = ds.changes[row]
     lines = [
@@ -112,14 +170,23 @@ def format_features(ds: dataset.Dataset, X, names: list[str], row: int, col: int
         f"- test file: {test_file}",
         f"- test name: {test_name}",
     ]
+    if mode == "informative":
+        selected = [i for i, n in enumerate(names) if n not in PER_CHANGE_CONSTANT]
+    else:
+        selected = list(range(len(names)))
+
     boolean = {"covers_function", "module_name_in_test_file"}
     integer = {
         "n_covering_tests", "n_tests_in_test_file", "test_n_lines", "test_n_tokens",
         "change_size", "change_added_lines", "change_removed_lines", "test_runs_cum",
         "path_distance",
     }
-    for k, name in enumerate(names):
-        value = float(X[row, col, k])
+    for k in selected:
+        name = names[k]
+        if mode == "placebo":
+            lines.append(f"- {name}: n/a")
+            continue
+        value = float(X[row, source, k])
         if name == "test_last_failure_age":
             lines.append(
                 f"- {name}: never failed in prior changes"
@@ -197,6 +264,7 @@ def score_pairs(
     feature_blocks: list[str] | None = None,
     batch_callback=None,
     empty_cache_every: int = 50,
+    placement: str = "instruct",
 ) -> tuple[list[float], dict]:
     """Score (change_text, test_text) pairs in batches. Returns scores and stats.
 
@@ -220,6 +288,7 @@ def score_pairs(
                 c, t, prefix, suffix,
                 orientation=orientation,
                 features_block=blocks[i] if blocks else "",
+                placement=placement,
             )
             for i, (c, t) in enumerate(chunk)
         ]
@@ -264,6 +333,7 @@ class PairSet:
     pairs: list[tuple[str, str]]
     index: list[tuple[int, int]]
     feature_blocks: list[str] | None = None
+    placement: str = "instruct"
 
 
 def build_pair_set(
@@ -273,7 +343,17 @@ def build_pair_set(
     shuffle: bool = False,
     seed: int = config.SEED,
     include_features: bool = False,
+    feature_mode: str | None = None,
+    placement: str = "instruct",
 ) -> PairSet:
+    """Build pairs, optionally with a prompt metadata block.
+
+    ``feature_mode`` selects the block variant, or ``None`` for text-only prompts.
+    ``include_features=True`` is the older spelling of ``feature_mode="full"``.
+    """
+    if include_features and feature_mode is None:
+        feature_mode = "full"
+
     infos = source.load_all(ds.test_ids)
     texts = [features.change_query_text(c) for c in ds.changes]
     if shuffle:
@@ -282,22 +362,36 @@ def build_pair_set(
         texts = [texts[i] for i in perm]
 
     X = names = None
-    if include_features:
+    want_blocks = feature_mode is not None
+    if want_blocks:
         X, names = features.structured_features(ds)
 
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, int]] = []
-    blocks: list[str] | None = [] if include_features else None
+    blocks: list[str] | None = [] if want_blocks else None
     for r in rows:
         r = int(r)
-        for j in np.flatnonzero(candidates[r]):
-            j = int(j)
+        cols = [int(j) for j in np.flatnonzero(candidates[r])]
+        if feature_mode == "shuffled":
+            # Values come from a different candidate in the same change, so the
+            # block keeps its format and value distribution but loses any
+            # association with the candidate it is describing.
+            rng_row = np.random.default_rng(seed + r)
+            value_sources = [cols[p] for p in rng_row.permutation(len(cols))]
+        else:
+            value_sources = cols
+        for pos, j in enumerate(cols):
             info = infos.get(ds.test_ids[j])
             pairs.append((texts[r], info.source if info else ""))
             index.append((r, j))
             if blocks is not None:
-                blocks.append(format_features(ds, X, names, r, j))
-    return PairSet(pairs=pairs, index=index, feature_blocks=blocks)
+                blocks.append(
+                    format_features(
+                        ds, X, names, r, j,
+                        mode=feature_mode, value_col=value_sources[pos],
+                    )
+                )
+    return PairSet(pairs=pairs, index=index, feature_blocks=blocks, placement=placement)
 
 
 def load_done_keys(path: Path) -> set[tuple[int, int]]:
@@ -380,6 +474,7 @@ def score_to_cache(
             model, tokenizer, pairs,
             batch_size=batch_size, max_tokens=max_tokens, orientation=orientation,
             feature_blocks=blocks, batch_callback=write_batch,
+            placement=pair_set.placement,
         )
     finally:
         handle.close()
@@ -534,6 +629,57 @@ def score_heldout(
     return stats
 
 
+def run_controls(
+    max_failures: int = 5,
+    batch_size: int = 8,
+    max_tokens: int | None = None,
+    seed: int = config.SEED,
+) -> dict:
+    """Run the mirror-degradation diagnostics on the starved subset.
+
+    Depends on the existing text-only and full-mirror caches for the reference
+    arms; scores the remaining arms sequentially in one process so the model is
+    loaded once.
+    """
+    ds = dataset.build(seed=seed)
+    candidates = dataset.candidate_mask(ds, "covered")
+    mask = dataset.starved_mask(ds, max_failures=max_failures)
+    rows = ds.test_idx[mask[ds.test_idx]]
+    n_faults = int(sum(1 for i in rows if ds.changes[i].killing_tests))
+
+    print(f"subset          : starved failures<={max_failures}")
+    print(f"changes         : {len(rows)}")
+    print(f"faults          : {n_faults}")
+
+    # (label, feature_mode, placement, output filename)
+    arms = [
+        ("informative", "informative", "instruct", "semif_scores_ctl_informative.jsonl"),
+        ("placebo", "placebo", "instruct", "semif_scores_ctl_placebo.jsonl"),
+        ("shuffled", "shuffled", "instruct", "semif_scores_ctl_shuffled.jsonl"),
+        ("after_document", "full", "after_document", "semif_scores_ctl_after.jsonl"),
+    ]
+
+    model, tokenizer, metadata = load_model()
+    print(f"loaded          : {metadata['device']} {metadata['dtype']}", flush=True)
+
+    stats: dict[str, dict] = {}
+    for label, mode, placement, filename in arms:
+        out_path = config.ARTIFACTS / filename
+        print(f"\n=== arm: {label} (mode={mode}, placement={placement}) ===", flush=True)
+        pair_set = build_pair_set(
+            ds, rows, candidates,
+            feature_mode=mode, placement=placement, seed=seed,
+        )
+        print(f"pairs: {len(pair_set.pairs):,}", flush=True)
+        stats[label] = score_to_cache(
+            model, tokenizer, ds, pair_set, out_path,
+            batch_size=batch_size, max_tokens=max_tokens,
+        )
+        stats[label]["output"] = str(out_path)
+        del pair_set
+    return stats
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -541,18 +687,28 @@ if __name__ == "__main__":
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--pilot", type=int, default=0, help="score N held-out changes")
     parser.add_argument("--heldout", action="store_true", help="score all held-out changes")
+    parser.add_argument("--controls", action="store_true",
+                        help="run the mirror-degradation diagnostics on the starved subset")
     parser.add_argument("--shuffle", action="store_true", help="change-shuffle ablation")
     parser.add_argument("--mirror", action="store_true",
                         help="include the structured features in the prompt (fairness arm)")
+    parser.add_argument("--max-failures", type=int, default=5,
+                        help="starved subset threshold for --controls")
     parser.add_argument("--changes", type=int, default=10)
     parser.add_argument("--distractors", type=int, default=9)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--orientation", default="change_query",
                         choices=["change_query", "test_query"])
     parser.add_argument("--max-tokens", type=int, default=None)
     args = parser.parse_args()
 
-    if args.heldout:
+    if args.controls:
+        run_controls(
+            max_failures=args.max_failures,
+            batch_size=args.batch_size,
+            max_tokens=args.max_tokens,
+        )
+    elif args.heldout:
         score_heldout(
             batch_size=args.batch_size,
             orientation=args.orientation,

@@ -438,36 +438,86 @@ Mechanism, and it is coherent: `failure_rate` and `recency` collapse to 0.023-0.
 *relative* recall **rises** from 0.306 to 0.442 as history is removed and XGBoost's
 **falls** from 0.631 to 0.256. SemIf is the model that does not depend on history.
 
-### Mirror arm: giving SemIf the features makes it worse
+### Mirror arm: the degradation was a position artifact
 
 The fairness arm serializes all 15 structured features (plus changed file, changed
-function, test file, test name) into `<Instruct>`. Prompt grows 413 -> 565 padded
-tokens/pair. 78,371 pairs, 74 min, 0 HSA errors.
+function, test file, test name) into `<Instruct>`. Prompt grows 141 -> 343 tokens on
+the starved subset. 78,371 pairs over the full held-out set; 74 min, 0 HSA errors.
 
-Paired bootstrap, mirror minus text-only:
+**Correction.** An earlier version of this document concluded that "supplying the
+features does not rescue SemIf; it actively degrades it". **That conclusion was
+wrong.** The degradation is caused by *where* the block was placed, not by its
+contents. Four diagnostic arms on the starved subset isolate this.
 
-| regime | b0.01 | b0.05 |
+#### Controls on the starved subset (141 changes, 141 faults)
+
+| arm | what it varies | tokens added |
 |---|---|---|
-| full held-out | **-0.129** [-0.168, -0.095] p<0.0001 | **-0.181** [-0.224, -0.140] p<0.0001 |
-| starved <=2 | **-0.163** [-0.302, -0.047] p=0.016 | **-0.233** [-0.372, -0.093] p=0.001 |
-| starved <=5 | **-0.149** [-0.220, -0.078] p<0.0001 | **-0.213** [-0.298, -0.128] p<0.0001 |
+| `textonly` | reference | 0 |
+| `informative` | only the 8 features that vary across candidates | +143 |
+| `placebo` | same field names/length, every value `n/a` | +183 |
+| `full` | all 15 features (original mirror) | +202 |
+| `shuffled` | real values, decorrelated from the candidate | +204 |
+| `after_document` | all 15 features, placed **after** `<Document>` | +202 |
 
-The mirror arm is significantly worse in **every** regime, by 13-23 points. On the
-full held-out set it scores 0.125 at b0.05, which is 11th of 13 models -- barely
-above `random` (0.073) and `coverage` (0.073).
+Recall, and paired difference vs `textonly` at b0.05:
 
-**This closes the fairness question raised earlier.** The text-only comparison was
-unfair in that SemIf was never given coverage, filenames, or history. But supplying
-those features does not rescue it; it actively degrades it. So the original
-text-only result was not an artifact of withholding information.
+| arm | b0.01 | b0.05 | b0.10 | b0.20 | vs textonly (b0.05) |
+|---|---|---|---|---|---|
+| `xgboost_struct_lex` | 0.298 | 0.489 | 0.624 | 0.730 | +0.071 n.s. |
+| **`ctl_after_doc`** | **0.333** | **0.454** | 0.539 | 0.617 | **+0.035 n.s.** |
+| `semif_textonly` | 0.326 | 0.418 | 0.539 | 0.674 | reference |
+| `bm25_lexical` | 0.284 | 0.355 | 0.397 | 0.553 | -0.064 n.s. |
+| `ctl_informative` | 0.220 | 0.255 | 0.305 | 0.362 | -0.163 **SIG** |
+| `ctl_placebo` | 0.191 | 0.213 | 0.277 | 0.411 | -0.206 **SIG** |
+| `ctl_shuffled` | 0.177 | 0.213 | 0.234 | 0.348 | -0.206 **SIG** |
+| `semif_full` | 0.177 | 0.206 | 0.234 | 0.319 | -0.213 **SIG** |
 
-**Caveat that limits the claim.** The mirror changed two things at once: features
-present, *and* a longer, more cluttered prompt. The degradation could be dilution
-rather than the features themselves. A length-matched placebo (a same-length block
-of uninformative text) would separate these, and has not been run. Note also that
-within the `covered` candidate mask most features are per-change constants
-(`covers_function`, `n_covering_tests`, `change_size`), so only path distance, test
-size, filename match, and the history features can actually discriminate.
+**Reading:**
+
+1. **Information content is irrelevant.** `placebo` (every value `n/a`, zero
+   information) degrades by -0.206, statistically the same as `full` (real values)
+   at -0.213 and `shuffled` (real but decorrelated values) at -0.206. A block with
+   no information at all hurts exactly as much as the informative one.
+2. **Position is the mechanism.** `after_document` carries the identical 15 features
+   at the identical length but is placed *after* the Document, and it is
+   indistinguishable from text-only (+0.035, p=0.32). It is also the best SemIf
+   configuration at b0.01 (0.333), above text-only (0.326) and XGBoost (0.298).
+3. **Length explains the residual ordering** among the pre-content arms:
+   +143 (0.255) > +183 (0.213) ~ +202 (0.206). More tokens before the content is
+   monotonically worse.
+
+The mechanism is what you would expect from a reranker that reads the final
+position: pushing the Query/Document further from the end dilutes the signal it is
+trained to read. Inserting ~200 tokens of *anything* in `<Instruct>` does this.
+
+#### Corrected conclusion on the fairness question
+
+Giving SemIf the structured features is **neutral, not harmful**, provided the block
+goes after the content:
+
+| regime | b0.01 | b0.05 | b0.20 |
+|---|---|---|---|
+| `textonly` | 0.302 | 0.442 | 0.628 |
+| `ctl_after_doc` | 0.349 | 0.442 | 0.581 |
+
+And on the starved `failures <= 2` subset, paired against XGBoost:
+
+| arm | b=0.01 | b=0.05 |
+|---|---|---|
+| `ctl_after_doc` | **+0.233** [+0.070, +0.395] p=**0.002** | **+0.186** [+0.023, +0.372] p=**0.042** |
+| `semif_textonly` | +0.186 [+0.047, +0.349] p=0.019 | +0.186 [+0.023, +0.372] p=0.045 |
+| `semif_full` | +0.023 n.s. | -0.047 n.s. |
+
+So the correctly-placed fairness arm is the strongest SemIf variant and beats
+XGBoost with a better p-value than text-only. But it does not beat text-only, so the
+features are not what drives the advantage -- the text reading is.
+
+**Still to do:** the full held-out mirror was scored with the wrong placement, so the
+"mirror is worse everywhere" claim on the full 464-fault set is unverified for
+correct placement. Re-running `after_document` placement over all 530 held-out
+changes costs ~74 min and should be done before citing the full-set comparison.
+
 
 ### The full regime cannot be tested with adequate power
 
