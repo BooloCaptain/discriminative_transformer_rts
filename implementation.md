@@ -191,11 +191,11 @@ Paired bootstrap vs `coverage` at budget 0.05 (n=464): `xgboost_struct` +0.373
 
 2. **History features contribute nothing.** `xgboost_static` (cumulative failure
    rate, run count, and recency dropped) matches or beats `xgboost_struct`
-   (0.983 vs 0.970 at b0.05). Feature importance agrees: `covers_function`,
-   `n_covering_tests`, and `coverage_rank_prior` account for 94.6% of importance,
-   and all three history features together for under 3%. So the earlier worry that
-   XGBoost was exploiting repeated `(file, test)` pairs is **not** supported — the
-   performance survives removing exactly those features.
+   (0.983 vs 0.970 at b0.05), so the earlier worry that XGBoost was exploiting
+   repeated `(file, test)` pairs is **not** supported. Note this contradicts the
+   feature importances, which put ~0.18 on the history features in the bundle
+   setup: that importance is redundant signal, not necessary signal. Ablations are
+   the reliable instrument here, not importances.
 
 3. **Most of the achievable recall comes from cheap structural funneling, not from
    semantics.** `covers_function AND module_name_in_test_file` narrows the suite to
@@ -583,6 +583,100 @@ so real cost is far lower.
 includes training changes; `rts/semif_runner.py`'s `--heldout` is the mode actually
 used, and SemIf being zero-shot means the training window is never needed.
 
+
+### Correction: XGBoost feature importances
+
+An earlier version of this document stated that `covers_function`,
+`n_covering_tests`, and `coverage_rank_prior` account for 94.6% of importance.
+**That figure was an artifact.** The original selector trained on *all* 1187 tests
+per change, including non-candidates. `covers_function` then does real work -- it
+separates candidates from non-candidates -- but that job does not exist at
+evaluation time, where every test is already a candidate.
+
+Training on the candidate pairs actually being ranked (which the bundle ladder does,
+and which the original selector did not):
+
+| feature | train on all pairs (artifact) | train on candidate pairs (correct) |
+|---|---|---|
+| `covers_function` | 0.7143 | *not in the top 8* |
+| `coverage_rank_prior` | 0.1012 | 0.4206 |
+| `test_last_failure_age` | 0.0163 | 0.1261 |
+| `test_duration` | 0.0175 | 0.0648 |
+| `n_covering_tests` | 0.1306 | 0.0577 |
+| `test_failure_rate_cum` | 0.0026 | 0.0563 |
+| `module_name_in_test_file` | 0.0041 | 0.0495 |
+| recall @0.05 | 0.631 | 0.616 |
+
+The corrected picture is that **no single feature dominates**. Importance is spread
+across six or seven individually weak cues. Note also that `coverage_rank_prior` and
+`n_covering_tests` are *constant within a change*, so they cannot order tests
+directly; they earn their place by gating the others ("if the coverage set is small,
+trust the filename match").
+
+**Importances are also unstable.** In the bundle ladder, which lacks
+`coverage_rank_prior`, `name_match_any` becomes the top feature at 0.17-0.22 instead
+of 0.05. Same data, different feature set, different "most important" feature -- the
+features are partly substitutable. Treat importances as descriptive only.
+
+## Change complexity
+
+Bundling one killed mutant with **survived** distractors broadens the change while
+keeping the label exact (survived mutants have no killing tests, so the union kill
+set is unchanged). The candidate pool is held fixed at the signal's covered set, so
+only the change *description* varies. See `rts/bundles.py`.
+
+**200 held-out bundles, recall @ budget 0.05:**
+
+| change | files | SemIf | BM25 | XGBoost | structural rule | random |
+|---|---|---|---|---|---|---|
+| 1 mutation (baseline) | 1 | 0.305 | 0.235 | 0.550 | 0.280 | 0.090 |
+| 6 mutations | 1 | 0.235 | 0.145 | 0.560 | 0.280 | 0.090 |
+| 6 mutations | 3.8 | **0.190** | 0.160 | 0.525 | 0.300 | 0.090 |
+
+Paired bootstrap against the baseline:
+
+| model | 6 mutations, 1 file | 6 mutations, 3.8 files |
+|---|---|---|
+| SemIf | -0.070 [-0.125, -0.015] p=0.013 | **-0.115** [-0.175, -0.060] p<0.0001 |
+| BM25 | -0.090 [-0.140, -0.040] p<0.0001 | -0.075 [-0.120, -0.030] p=0.001 |
+| XGBoost | +0.010 n.s. | -0.025 n.s. |
+| structural rule | 0.000 n.s. | +0.020 n.s. |
+
+**Increasing change complexity hurts text models and leaves structural models
+untouched.** XGBoost is flat even with the change spanning 3.8 files. The mechanism
+is query dilution: the bundled diff concatenates several unrelated edits, so the
+distractor terms wash out the signal terms. This is the same effect measured in the
+placement controls, where ~200 tokens of *uninformative* text cost SemIf 0.21
+recall.
+
+XGBoost survives because dilution is replaced by a new informative feature,
+`n_mutations_covered` (how much of the bundle a test covers), which is why its top
+features shift to `name_match_any` and `test_duration` rather than collapsing.
+
+**The SemIf-vs-BM25 gap does not widen.** This was the pre-registered falsifier for
+the paraphrase hypothesis -- the one thing a reranker does that bag-of-words cannot:
+
+| | SemIf vs BM25 |
+|---|---|
+| 1 mutation | +0.070 [+0.010, +0.135] p=0.023 |
+| 6 mutations, 1 file | +0.090 [+0.035, +0.145] p<0.0001 |
+| 6 mutations, 3.8 files | +0.030 [-0.025, +0.085] p=0.366 n.s. |
+
+The gap is flat within noise at one file and *collapses to non-significance* at
+3.8 files. So complexity buys SemIf nothing; at cross-file breadth it costs SemIf
+its advantage over BM25 entirely.
+
+**Rung 4 (killed distractors) confirms the killer-count trap.** With 5 *killed*
+distractors, `random` jumps from 0.090 to 0.360 and XGBoost to 0.975. More killing
+tests makes RTS easier, not harder -- which is why survived distractors are the
+right choice for this manipulation and killed ones are a separate control.
+
+**Caveat that limits the claim.** Distractors are picked uniformly at random, so
+they are semantically *unrelated* to the signal. That is the worst case for a text
+model and a neutral case for coverage. Real complex commits are usually *coherent*
+-- a refactor touches one concept across files -- so this manipulation may be
+unfairly adversarial to text models. A coherent-bundle variant (distractors chosen
+by relatedness) has not been run and is the obvious next step.
 
 ## Iteration cost and data sizing
 
