@@ -66,6 +66,10 @@ RUNGS: dict[int, tuple[int, bool, str]] = {
     2: (5, False, "survived"),
     3: (5, True, "survived"),
     4: (5, False, "killed"),
+    # 5: same shape as rung 3, but distractors are chosen for relatedness instead
+    # of at random. This is the coherent-change condition: a real batch of edits
+    # usually touches one concept, giving a reranker a theme it can read.
+    5: (5, True, "coherent"),
 }
 # rung 0 is the existing single-mutant benchmark; kept for reference only.
 BUNDLE_FEATURES = [
@@ -93,6 +97,39 @@ def _survivor_pool(ds: dataset.Dataset) -> dict[str, list[int]]:
     return pool
 
 
+def _coverage_matrix(ds: dataset.Dataset) -> np.ndarray:
+    """[n_changes, n_tests] float32 indicator of which tests cover each change."""
+    C = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
+    for i, covered in enumerate(ds.covered):
+        for test in covered:
+            j = ds.test_index.get(test)
+            if j is not None:
+                C[i, j] = 1.0
+    return C
+
+
+def _coherent_ranking(
+    ds: dataset.Dataset,
+    fault: list[int],
+    survivors: list[int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rank survivors by coverage-profile Jaccard similarity to each signal.
+
+    Structural relatedness stands in for semantic coherence: two mutants covered by
+    a similar set of tests sit on similar execution paths, so bundling them reads as
+    one themed change rather than several unrelated edits. One matmul over the
+    boolean coverage matrix, so this is cheap.
+    """
+    C = _coverage_matrix(ds)
+    survivors_arr = np.array(survivors, dtype=np.int64)
+    signal_arr = np.array(fault, dtype=np.int64)
+    Cs, Cg = C[survivors_arr], C[signal_arr]
+    inter = Cg @ Cs.T
+    union = Cg.sum(1)[:, None] + Cs.sum(1)[None, :] - inter
+    jaccard = np.where(union > 0, inter / np.maximum(union, 1e-9), 0.0)
+    return jaccard, survivors_arr
+
+
 def make_bundles(
     ds: dataset.Dataset,
     rung: int,
@@ -107,11 +144,24 @@ def make_bundles(
     survivors_by_file = _survivor_pool(ds)
     all_survivors = [i for v in survivors_by_file.values() for i in v]
 
+    jaccard = survivors_arr = None
+    signal_pos: dict[int, int] = {}
+    if kind == "coherent":
+        jaccard, survivors_arr = _coherent_ranking(ds, fault, all_survivors)
+        signal_pos = {int(s): p for p, s in enumerate(fault)}
+
     bundles: list[Bundle] = []
     for i in fault:
         rng = np.random.default_rng(seed * 100_003 + rung * 1009 + i)
         if kind == "none":  # rung 0: the original single-mutant benchmark
             distractors = ()
+        elif kind == "coherent":
+            p = signal_pos[i]
+            external = np.array(
+                [ds.files[int(j)] != ds.files[i] for j in survivors_arr], dtype=bool
+            )
+            top = np.argsort(-np.where(external, jaccard[p], -1.0), kind="stable")[:k]
+            distractors = tuple(int(survivors_arr[t]) for t in top)
         elif kind == "survived":
             if cross_file:
                 pool = [j for j in all_survivors if ds.files[j] != ds.files[i]]
@@ -453,7 +503,7 @@ def run_cpu(
 
 
 def plot_ladder(
-    rungs: tuple[int, ...] = (0, 2, 3),
+    rungs: tuple[int, ...] = (0, 2, 3, 5),
     n_held_out: int = 200,
     budget: float = 0.05,
     seed: int = config.SEED,
@@ -510,7 +560,12 @@ def plot_ladder(
         "structural rule": ("#bcbd22", "-", 1.8),
         "random": ("#cccccc", "-", 1.4),
     }
-    labels_x = {0: "1 mutation\n1 file", 2: "6 mutations\n1 file", 3: "6 mutations\n3.8 files"}
+    labels_x = {
+        0: "1 mutation\n1 file",
+        2: "6 mutations\n1 file",
+        3: "6 mutations\n3.8 files\n(unrelated)",
+        5: "6 mutations\n2.6 files\n(coherent)",
+    }
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.6))
     ax = axes[0]
@@ -556,8 +611,8 @@ def plot_ladder(
     ax.legend(fontsize=9)
 
     fig.suptitle(
-        "Bundling unrelated mutations into one change hurts text models and leaves "
-        "structural models untouched",
+        "Broadening a change hurts text models and leaves structural models untouched "
+        "-- coherence does not rescue the reranker",
         fontsize=12.5,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
@@ -662,7 +717,7 @@ if __name__ == "__main__":
 
     rungs = tuple(int(x) for x in args.rungs.split(",")) if args.rungs else None
     if args.plot:
-        plot_ladder(rungs=rungs or (0, 2, 3), n_held_out=args.sample)
+        plot_ladder(rungs=rungs or (0, 2, 3, 5), n_held_out=args.sample)
     elif args.score_semif:
         score_semif(
             rungs=rungs or (0, 3),

@@ -675,8 +675,64 @@ right choice for this manipulation and killed ones are a separate control.
 they are semantically *unrelated* to the signal. That is the worst case for a text
 model and a neutral case for coverage. Real complex commits are usually *coherent*
 -- a refactor touches one concept across files -- so this manipulation may be
-unfairly adversarial to text models. A coherent-bundle variant (distractors chosen
-by relatedness) has not been run and is the obvious next step.
+unfairly adversarial to text models.
+
+### Coherent bundles (rung 5): the reranker is not rescued
+
+Distractors are chosen for relatedness instead of at random, using coverage-profile
+Jaccard similarity as the proxy (two mutants covered by a similar test set sit on
+similar execution paths, so bundling them reads as one themed change). The
+manipulation is strong:
+
+| rung | median Jaccard(signal, distractor) | files/bundle |
+|---|---|---|
+| 3 (random, cross-file) | 0.008 | 3.80 |
+| **5 (coherent, cross-file)** | **0.441** | 2.56 |
+
+Recall @0.05, and paired differences:
+
+| change | SemIf | BM25 | XGBoost |
+|---|---|---|---|
+| 1 mutation (baseline) | 0.305 | 0.235 | 0.550 |
+| 6 mutations, 1 file | 0.235 | 0.145 | 0.560 |
+| 6 mutations, 3.8 files (unrelated) | 0.190 | 0.160 | 0.525 |
+| **6 mutations, 2.6 files (coherent)** | **0.160** | **0.185** | 0.555 |
+
+| comparison | delta | 95% CI | p |
+|---|---|---|---|
+| SemIf: coherent - unrelated | **-0.030** | [-0.080, +0.020] | 0.27 n.s. |
+| BM25: coherent - unrelated | +0.025 | [-0.015, +0.070] | 0.28 n.s. |
+| SemIf: coherent - baseline | **-0.145** | [-0.200, -0.090] | <0.0001 |
+| BM25: coherent - baseline | -0.050 | [-0.100, +0.000] | 0.069 n.s. |
+
+**Coherence does not help SemIf.** It is numerically *worse* under coherence
+(-0.030, n.s.), while BM25 improves slightly (+0.025, n.s.). SemIf degrades by
+-0.145 against the baseline under coherence, versus -0.050 for BM25.
+
+### The SemIf-BM25 gap erodes and then inverts
+
+This was the pre-registered falsifier: if the reranker's semantic reading is worth
+anything, its margin over bag-of-words should grow as change complexity grows.
+
+| change | SemIf - BM25 |
+|---|---|
+| 1 mutation | +0.070 [+0.010, +0.135] p=0.023 SIG |
+| 6 mutations, 1 file | +0.090 [+0.035, +0.145] p<0.0001 SIG |
+| 6 mutations, 3.8 files (unrelated) | +0.030 [-0.025, +0.085] p=0.37 n.s. |
+| **6 mutations, 2.6 files (coherent)** | **-0.025** [-0.080, +0.025] p=0.39 n.s. |
+
+The trend is monotone and in the **opposite** direction to the hypothesis. SemIf's
+advantage over BM25 shrinks with complexity, vanishes by 3.8 files, and is
+numerically *negative* under coherence. Neither the coherent-vs-unrelated gap
+change (-0.025, p=0.43) nor the coherent-vs-baseline gap change (-0.045, p=0.21)
+is significant, so the honest reading is that the gap is flat-to-collapsing rather
+than that BM25 overtakes.
+
+Mechanism: a six-part, multi-topic query is out of distribution for a reranker
+trained on single query-document pairs, whereas BM25 only cares about term overlap
+and is indifferent to coherence. Broadening a change is simply not the regime where
+a reranker's semantic reading pays off.
+
 
 ## Iteration cost and data sizing
 
