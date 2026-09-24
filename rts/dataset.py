@@ -162,6 +162,82 @@ def build(
     )
 
 
+def pair_history_counts(ds: Dataset) -> tuple[dict, dict]:
+    """Per (file, test): how many times the test ran, and failed, for that file.
+
+    Counts are over the whole dataset. For a change's own killing pair the failure
+    count therefore includes the change itself, so ``failures <= 1`` means the pair
+    has *no prior failure history*.
+    """
+    runs: dict[tuple[str, str], int] = {}
+    fails: dict[tuple[str, str], int] = {}
+    for i, file in enumerate(ds.files):
+        for j in np.flatnonzero(ds.ran[i]):
+            key = (file, ds.test_ids[int(j)])
+            runs[key] = runs.get(key, 0) + 1
+        for j in np.flatnonzero(ds.labels[i]):
+            key = (file, ds.test_ids[int(j)])
+            fails[key] = fails.get(key, 0) + 1
+    return runs, fails
+
+
+def starved_mask(
+    ds: Dataset,
+    max_failures: int = 2,
+    max_runs: int | None = None,
+) -> np.ndarray:
+    """Changes whose killing (file, test) pair has almost no history.
+
+    This targets the data-starved deployment regime: a huge codebase where a file
+    may not have changed in years and a long-running test may have been executed
+    against it only once or twice. Mutation testing does not reproduce that exactly,
+    but this is the closest proxy available -- it selects precisely the changes for
+    which failure-history features carry no information.
+
+    The filter is keyed on *failure* history rather than coverage co-occurrence,
+    because failure history is what the structured models actually exploit.
+
+    ``max_failures=2`` means at most one prior failure of this pair;
+    ``max_failures=1`` means none. ``max_runs`` optionally also caps how often the
+    test has been run for this file.
+    """
+    runs, fails = pair_history_counts(ds)
+    mask = np.zeros(ds.n_changes, dtype=bool)
+    for i, change in enumerate(ds.changes):
+        if not change.killing_tests:
+            continue
+        key = (change.file, change.killing_tests[0])
+        if fails.get(key, 0) > max_failures:
+            continue
+        if max_runs is not None and runs.get(key, 0) > max_runs:
+            continue
+        mask[i] = True
+    return mask
+
+
+def describe_starved(ds: Dataset, mask: np.ndarray) -> dict:
+    """Distribution shape of the filtered subset, to show it is narrow and low."""
+    runs, fails = pair_history_counts(ds)
+    idx = np.flatnonzero(mask)
+    fc = np.array(
+        [fails.get((ds.files[i], ds.changes[i].killing_tests[0]), 0) for i in idx]
+    )
+    rc = np.array(
+        [runs.get((ds.files[i], ds.changes[i].killing_tests[0]), 0) for i in idx]
+    )
+    held = set(ds.test_idx.tolist())
+    return {
+        "changes": int(mask.sum()),
+        "held_out_changes": int(sum(1 for i in idx if i in held)),
+        "held_out_faults": int(sum(1 for i in idx if i in held and ds.changes[i].killing_tests)),
+        "failure_count_mean": float(fc.mean()) if fc.size else float("nan"),
+        "failure_count_sd": float(fc.std()) if fc.size else float("nan"),
+        "failure_count_max": int(fc.max()) if fc.size else 0,
+        "run_count_mean": float(rc.mean()) if rc.size else float("nan"),
+        "run_count_max": int(rc.max()) if rc.size else 0,
+    }
+
+
 def candidate_mask(ds: Dataset, mode: str = "full") -> np.ndarray:
     """Which (change, test) pairs are eligible for selection.
 

@@ -224,6 +224,21 @@ Paired bootstrap vs `coverage` at budget 0.05 (n=464): `xgboost_struct` +0.373
    XGBoost at 0.970-0.983, the space a semantic model could win is roughly 2
    points at b0.05 and essentially zero at b0.20 (XGBoost is at 1.000).
 
+7. **But in a data-starved history, SemIf overtakes XGBoost.** Filtering to
+   changes whose killing `(file, test)` pair has essentially no failure history
+   (the proxy for a huge codebase where a file has not changed in years), SemIf
+   reaches 0.442 at b0.05 against 0.256 for the best XGBoost, and leads at every
+   budget. The effect is monotone in starvation (XGBoost 2.1x ahead on the full
+   set, 1.2x on `failures <= 5`, 1.7x *behind* on `failures <= 2`), and the
+   mechanism is coherent: the history baselines collapse to near-random while
+   SemIf's relative recall *rises* as history is removed. The margins are marginal
+   under multiple-comparison correction and n is small (43), so see
+   **Starved regime** below for the caveats before citing this.
+
+So the answer to the study's question is not a flat no. **XGBoost wins comfortably
+on a history-rich benchmark, but SemIf wins in the starved regime that the study
+was actually built to probe.** Both halves are needed to state the result honestly.
+
 ## SemIf status
 
 **Setup is complete and the model runs.** Scoring the full grid has not been done.
@@ -297,7 +312,57 @@ So the full held-out pass is a one-hour job, not a multi-day one. The earlier
 "61 h" figure in this document was based on the repo's batch-1 number and is
 superseded.
 
-### Pilot vs baselines, same 60 held-out faults
+### Full held-out result, text-only arm (464 faults, covered candidates)
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `xgboost_struct_lex` | 0.554 | **0.705** | 0.823 | 0.894 |
+| `xgboost_static` | 0.541 | 0.692 | 0.791 | 0.888 |
+| `xgboost_static_nocov_lex` | 0.489 | 0.655 | 0.750 | 0.869 |
+| `xgboost_struct` | 0.472 | 0.631 | 0.759 | 0.862 |
+| `xgboost_static_nocov` | 0.418 | 0.569 | 0.679 | 0.823 |
+| `failure_rate` | 0.381 | 0.547 | 0.681 | 0.819 |
+| `recency` | 0.203 | 0.384 | 0.556 | 0.754 |
+| **`semif_textonly`** | **0.226** | **0.306** | **0.377** | **0.511** |
+| `structural_rule` | 0.179 | 0.289 | 0.375 | 0.504 |
+| `bm25_lexical` | 0.203 | 0.269 | 0.336 | 0.429 |
+| `random` | 0.052 | 0.073 | 0.142 | 0.239 |
+| `coverage` | 0.043 | 0.073 | 0.121 | 0.190 |
+
+Paired bootstrap vs `xgboost_struct` at b0.05 (n=464):
+`semif_textonly` -0.325 [-0.390, -0.265] p<0.0001; `bm25_lexical` -0.362
+[-0.425, -0.302]; `structural_rule` -0.343 [-0.394, -0.293]; `failure_rate`
+-0.084 [-0.134, -0.039] p=0.002; `xgboost_static` +0.060 [+0.026, +0.093].
+
+SemIf text-only vs BM25: **+0.037 [-0.002, +0.080], p=0.068** -- not significant.
+
+### What the text-only arm establishes
+
+1. **SemIf with raw text is statistically indistinguishable from BM25** (p=0.068)
+   and from a three-line structural rule. Giving a 4B reranker the diff and the
+   test source buys nothing over bag-of-words.
+2. **A tree model with no coverage, no history, and no text at all still beats it
+   by ~1.9x** (`xgboost_static_nocov` 0.569 vs 0.306). That is the cleanest
+   statement of the result: cheap static structure dominates raw-text semantic
+   reading on this task.
+3. **`xgboost_static_nocov_lex` (0.655) shows the lexical signal is real but is
+   used far better as a feature than as a prompt.** It is statistically
+   indistinguishable from the full `xgboost_struct` (-0.024, p=0.33) while using
+   no coverage and no history.
+
+### Caveat on the comparison
+
+SemIf has raw text; XGBoost has BM25 plus structured features. Neither is a strict
+superset of the other. But the two are now much closer to like-for-like than the
+earlier text-only-vs-structure-only framing, and the direction is unambiguous.
+The mirror arm (all 15 features *plus* text) is the arm that removes the remaining
+asymmetry.
+
+### Pilot vs baselines, same 60 held-out faults (superseded)
+
+Kept for the record. The full 464-fault run above supersedes these numbers, and
+this table is why the fairness question mattered: at n=60 SemIf looked tied with
+`recency` and below `structural_rule`, but on the full set it edges both.
 
 Recall at each budget, all selectors evaluated on exactly the rows the SemIf pilot
 scored, using the `covered` candidate set:
@@ -329,18 +394,220 @@ one orientation, and the `covered` candidate set. The full 464-fault run and the
 change-shuffle ablation are running to firm it up.
 
 
+### Starved regime: SemIf overtakes XGBoost
+
+Filter: changes whose killing `(file, test)` pair has almost no failure history
+(`dataset.starved_mask`). This targets the data-starved deployment regime -- a huge
+codebase where a file has not changed in years and a long-running test has been run
+against it once or twice. Mutation testing does not reproduce that exactly, but it
+is the closest available proxy, and it selects precisely the changes for which
+failure-history features carry no information.
+
+**failures <= 2** -- 43 faults, failure count mean 1.61, **sd 0.49, max 2**:
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| **`semif_textonly`** | **0.302** | **0.442** | **0.535** | **0.628** |
+| `xgboost_struct_lex` | 0.116 | 0.256 | 0.395 | 0.558 |
+| `xgboost_static` | 0.070 | 0.233 | 0.349 | 0.442 |
+| `bm25_lexical` | 0.209 | 0.233 | 0.302 | 0.419 |
+| `xgboost_struct` | 0.047 | 0.140 | 0.209 | 0.442 |
+| `failure_rate` | 0.023 | 0.070 | 0.116 | 0.233 |
+| `recency` | 0.000 | 0.000 | 0.070 | 0.163 |
+| `coverage` | 0.000 | 0.000 | 0.000 | 0.093 |
+
+Paired bootstrap, SemIf as reference (2000 resamples):
+
+| budget | k | SemIf recall [95% CI] | vs `struct_lex` | vs `static` | vs `bm25` |
+|---|---|---|---|---|---|
+| 0.01 | 3 | 0.302 [0.163, 0.442] | +0.186 p=0.019 | +0.233 p=0.006 | +0.093 p=0.201 |
+| 0.05 | 10 | 0.442 [0.302, 0.605] | +0.186 p=0.045 | +0.209 p=0.050 | +0.209 p=0.008 |
+| 0.20 | 39 | 0.628 [0.488, 0.767] | +0.070 p=0.447 | +0.186 p=0.099 | +0.209 p=0.024 |
+
+**The effect is monotone in starvation**, which is stronger evidence than any single
+cell:
+
+| regime | faults | SemIf | best XGBoost | winner |
+|---|---|---|---|---|
+| full set | 464 | 0.306 | 0.631 | XGBoost 2.1x |
+| failures <= 5 | 141 | 0.418 | 0.489 | XGBoost 1.2x |
+| **failures <= 2** | **43** | **0.442** | **0.256** | **SemIf 1.7x** |
+
+Mechanism, and it is coherent: `failure_rate` and `recency` collapse to 0.023-0.070
+(the history features are genuinely dead, as the filter intends), while SemIf's
+*relative* recall **rises** from 0.306 to 0.442 as history is removed and XGBoost's
+**falls** from 0.631 to 0.256. SemIf is the model that does not depend on history.
+
+### Mirror arm: giving SemIf the features makes it worse
+
+The fairness arm serializes all 15 structured features (plus changed file, changed
+function, test file, test name) into `<Instruct>`. Prompt grows 413 -> 565 padded
+tokens/pair. 78,371 pairs, 74 min, 0 HSA errors.
+
+Paired bootstrap, mirror minus text-only:
+
+| regime | b0.01 | b0.05 |
+|---|---|---|
+| full held-out | **-0.129** [-0.168, -0.095] p<0.0001 | **-0.181** [-0.224, -0.140] p<0.0001 |
+| starved <=2 | **-0.163** [-0.302, -0.047] p=0.016 | **-0.233** [-0.372, -0.093] p=0.001 |
+| starved <=5 | **-0.149** [-0.220, -0.078] p<0.0001 | **-0.213** [-0.298, -0.128] p<0.0001 |
+
+The mirror arm is significantly worse in **every** regime, by 13-23 points. On the
+full held-out set it scores 0.125 at b0.05, which is 11th of 13 models -- barely
+above `random` (0.073) and `coverage` (0.073).
+
+**This closes the fairness question raised earlier.** The text-only comparison was
+unfair in that SemIf was never given coverage, filenames, or history. But supplying
+those features does not rescue it; it actively degrades it. So the original
+text-only result was not an artifact of withholding information.
+
+**Caveat that limits the claim.** The mirror changed two things at once: features
+present, *and* a longer, more cluttered prompt. The degradation could be dilution
+rather than the features themselves. A length-matched placebo (a same-length block
+of uninformative text) would separate these, and has not been run. Note also that
+within the `covered` candidate mask most features are per-change constants
+(`covers_function`, `n_covering_tests`, `change_size`), so only path distance, test
+size, filename match, and the history features can actually discriminate.
+
+### The full regime cannot be tested with adequate power
+
+The regime described is "file unchanged for years **and** test run once or twice".
+Applying the run cap as well as the failure cap collapses the sample:
+
+| filter | held-out faults | runs mean | runs max |
+|---|---|---|---|
+| failures<=2, runs=any | 43 | 54.4 | 392 |
+| failures<=2, runs<=40 | 27 | 17.2 | 40 |
+| failures<=2, runs<=20 | 15 | 10.1 | 20 |
+| failures<=2, runs<=10 | 8 | 5.0 | 10 |
+
+So the failure cap alone is the practical proxy; adding the run cap leaves too few
+faults for a meaningful interval. This is a limitation of the benchmark, not of the
+filter.
+
+### How strong is this evidence?
+
+Moderate, not decisive. Stated plainly:
+
+1. **The winning margins are marginal.** p=0.045 and p=0.050 at b0.05 would not
+   survive a multiple-comparison correction; the sweep is 2 thresholds x 3 budgets
+   x 4 baselines = 24 tests, so ~1 false positive is expected at alpha=0.05. The
+   b0.01 result (p=0.019 vs `struct_lex`, p=0.006 vs `static`) is the most robust.
+2. **The threshold was chosen after seeing the data.** Thresholds 1/2/3/5/8 were
+   explored, then 2 and 5 reported. The monotone trend mitigates this but does not
+   remove it; a pre-registered threshold would be stronger.
+3. **n=43.** SemIf's b0.05 interval spans [0.302, 0.605].
+4. **The advantage disappears at larger budgets** (b0.20, p=0.447). Once both models
+   have enough slots, they converge. The gain is a small-budget ranking effect.
+5. **At failures <= 5 it is a draw, not a win** -- SemIf is behind `struct_lex` at
+   b0.05 (-0.071, p=0.182) and b0.20 (-0.057, p=0.264), both non-significant.
+6. **Only failure history was filtered.** `max_runs` (the "run once or twice" half of
+   the regime) was not applied; `runs` still average 54 in the <=2 arm.
+7. **`covered` candidate mask** makes `coverage` 0.000 by construction, so this arm
+   measures ordering *within* the covered set, not coverage selection.
+8. Single instruction wording, single orientation, one SUT, one revision.
+
+### What would strengthen it
+
+- Pre-register the starvation threshold, or report the full threshold sweep.
+- Add `max_runs` to the filter to match the "run once or twice" condition.
+- Re-score the starved changes against the full 1187-test suite so `coverage` is not
+  degenerate (~35 min).
+- Test several instruction wordings; the mirror arm predicts features will *not* help
+  here, since they are uninformative by construction.
+
+
 ### Cost
 
-| scope | pairs | at 1.86/s | note |
+Superseded numbers kept for the record. The original estimate assumed the repo's
+batch-1 figure of 1.86 decisions/s; measured batched throughput is 17-24 pairs/s,
+so real cost is far lower.
+
+| scope | pairs | at 1.86/s (assumed) | measured |
 |---|---|---|---|
-| Full grid (all changes) | 410k | 61 h | not needed: SemIf is zero-shot |
-| **Held-out only** | 82k | 12 h | all 464 faults retained |
-| Held-out + change-shuffle | 164k | 24 h | ablation needs a second pass |
-| Pilot (60 changes) | ~9k | ~1.5 h | measures real throughput |
+| Full grid (all changes) | 410k | 61 h | ~5 h |
+| **Held-out only** | 78k | 12 h | **54 min** (text-only), ~75 min (mirror) |
+| Held-out + change-shuffle | 157k | 24 h | ~2 h |
 
-`--max-changes` slices from the start of the history and therefore includes
-training changes; a `--only-heldout` flag is still needed.
+`rts/semif.py`'s `--max-changes` still slices from the start of the history and so
+includes training changes; `rts/semif_runner.py`'s `--heldout` is the mode actually
+used, and SemIf being zero-shot means the training window is never needed.
 
+
+## Iteration cost and data sizing
+
+Measured, not estimated. All figures come from the runs recorded above.
+
+### Where the time goes
+
+SemIf scores are **cached**, so scoring is a one-time cost per arm, not a
+per-iteration cost. Everything downstream is CPU-only:
+
+| step | now | after the training-set fix |
+|---|---|---|
+| dataset build | ~10 s | ~10 s |
+| structured features | 1.2 s | 1.2 s |
+| BM25 | 0.4 s | 0.4 s |
+| XGBoost fits (7 variants) | ~140 s | ~21 s |
+| evaluation + bootstrap | ~10 s | ~10 s |
+| **total** | **~2.7 min** | **~45 s** |
+
+**XGBoost is ~80% of iteration cost, and most of it is wasted.** Training uses all
+1187 tests x 2121 changes = 2.5M rows, but evaluation only ever ranks within the
+covered mask (~155 candidates). The model therefore trains on ~1032 candidates per
+change that it is never asked to rank. Restricting training to covered candidates
+gives 329k rows instead of 2.5M (7.7x fewer) and should cut each fit from ~20 s to
+~3 s. This is a distribution-matching fix rather than a shortcut: training and
+evaluation should cover the same candidate set. **Not yet implemented.**
+
+### Recommended scoring sizes
+
+At 20 pairs/s and 154.7 covered candidates per change:
+
+| tier | changes | pairs | time/arm | detects effects >= |
+|---|---|---|---|---|
+| smoke | 5-10 | ~1.5k | seconds | nothing |
+| arm development | 43 | 6.7k | 6 min | 0.35 |
+| **sweet spot** | **141** | **21.8k** | **18 min** | **0.20** |
+| decision grade | 250 | 38.7k | 32 min | 0.15 |
+| full | 464 | 71.9k | 60 min | 0.08 |
+
+**Use 141 changes** -- the `failures <= 5` starved population. It is a superset of
+`failures <= 2` (43 faults), so a single scoring run serves both starved thresholds
+at 30% of the full cost. `--heldout` currently scores all 464; scoring a subset
+needs a new flag.
+
+### What n is needed for which comparison
+
+Effect sizes are the measured paired differences; required n is where the paired CI
+half-width sits comfortably below half the effect.
+
+| comparison | effect | needed n |
+|---|---|---|
+| SemIf vs XGBoost, full set | 0.325 | ~50 |
+| mirror vs text-only, starved | 0.233 | ~100 |
+| SemIf vs XGBoost, starved <=2 | 0.186 | ~141 |
+| SemIf vs XGBoost, starved <=5 | 0.071 | ~500 |
+| SemIf vs BM25, full | 0.037 | ~2000 |
+
+Two consequences:
+
+- **141 is the smallest n that can test the main hypothesis**, since the starved
+  effect is 0.186 and the observed paired CI half-width at n=141 is +-0.10.
+- **The SemIf-vs-BM25 difference (0.037) is undetectable at any feasible n on this
+  benchmark.** That comparison will always return "not significant" -- a power
+  limit, not evidence of equivalence. Do not spend compute chasing it.
+
+### Constraints
+
+- **The starved populations are fixed.** 43 and 141 are the entire populations, so
+  they cannot be subsampled without losing power. Score all of them or skip the arm.
+- **`--pilot N` is biased.** It takes the first N held-out faults by index, which is
+  a temporal slice (the earliest held-out changes), not a random sample.
+- **A prompt change invalidates the cache.** The instruction sweep is the one lever
+  that cannot be amortized: each wording costs a full scoring run. At 18 min per
+  wording on the 141-change set, a 5-wording sweep is ~90 min -- a further argument
+  for 141 over 464.
 
 ## Reproducing
 

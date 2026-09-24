@@ -21,6 +21,15 @@ HISTORY_FEATURES = (
     "test_last_failure_age",
 )
 
+# Per-test coverage features. In a huge codebase with long-running integration
+# tests, obtaining these means running the suite you are trying to avoid, so a
+# deployment may genuinely not have them.
+COVERAGE_FEATURES = (
+    "covers_function",
+    "n_covering_tests",
+    "coverage_rank_prior",
+)
+
 
 @dataclass
 class Context:
@@ -145,6 +154,7 @@ class XGBoostSelector(Selector):
         self,
         include_lexical: bool = False,
         exclude_history: bool = False,
+        exclude_coverage: bool = False,
         n_estimators: int = 300,
         max_depth: int = 6,
         learning_rate: float = 0.15,
@@ -152,22 +162,32 @@ class XGBoostSelector(Selector):
     ):
         self.include_lexical = include_lexical
         self.exclude_history = exclude_history
+        self.exclude_coverage = exclude_coverage
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
         self.seed = seed
         parts = ["xgboost"]
         parts.append("struct" if not exclude_history else "static")
+        if exclude_coverage:
+            parts.append("nocov")
         if include_lexical:
             parts.append("lex")
         self.name = "_".join(parts)
         self._model = None
         self.importances_: dict[str, float] = {}
 
+    def _dropped(self) -> set[str]:
+        dropped: set[str] = set()
+        if self.exclude_history:
+            dropped |= set(HISTORY_FEATURES)
+        if self.exclude_coverage:
+            dropped |= set(COVERAGE_FEATURES)
+        return dropped
+
     def _kept_columns(self, ctx: Context) -> list[int]:
-        if not self.exclude_history:
-            return list(range(len(ctx.names)))
-        return [i for i, n in enumerate(ctx.names) if n not in HISTORY_FEATURES]
+        dropped = self._dropped()
+        return [i for i, n in enumerate(ctx.names) if n not in dropped]
 
     def _design(self, ctx: Context, rows: np.ndarray) -> np.ndarray:
         keep = self._kept_columns(ctx)
@@ -242,6 +262,8 @@ def default_selectors(include_semif: bool = True) -> list[Selector]:
         XGBoostSelector(include_lexical=False),
         XGBoostSelector(include_lexical=True),
         XGBoostSelector(exclude_history=True, include_lexical=False),
+        XGBoostSelector(exclude_history=True, exclude_coverage=True),
+        XGBoostSelector(exclude_history=True, exclude_coverage=True, include_lexical=True),
     ]
     if include_semif:
         selectors.append(SemIfSelector())
