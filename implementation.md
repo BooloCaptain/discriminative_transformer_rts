@@ -7,9 +7,25 @@ what was measured.
 ## Environment
 
 - Workspace: `/home/noaha/discriminative_transformer_rts`
-- Python: `/home/noaha/graphrnn_env`, Python 3.12.3. Reused deliberately rather than creating a second environment.
-- Installed for this work: `mutmut` 3.8.0, `coverage`, `simplejson`. `pytest` 9.0.3 was already present.
-- System under test is cloned to `sut/` and gitignored.
+- Python: `/home/noaha/graphrnn_env`, Python 3.12.3. Reused deliberately rather than
+  creating a second environment, so SemIf was installed in place (see below).
+- **Hardware**: AMD Radeon RX 9070 XT, 17 GB VRAM, via ROCm. `nvidia-smi` is absent;
+  `torch.cuda.is_available()` is True and reports the AMD device. All SemIf numbers
+  here were produced on this card.
+- **Hugging Face cache**: `/home/noaha/hf_cache` (~7.6 GB). Export `HF_HOME` before
+  any score run or the checkpoint is re-downloaded.
+- Packages added for this work: `mutmut` 3.8.0, `coverage`, `simplejson`,
+  `xgboost` 3.4.1, `matplotlib` 3.10.8. Pre-existing: `numpy`, `pandas` 3.0.1,
+  `scikit-learn` 1.8.0, `pytest` 9.0.3.
+- **SemIf installed in place** at pinned commit `23cf1f39fc9534fe81437200959b6dfc7106e45a`
+  (`pip install -e .`, base deps only). `[test]` was deliberately **not** installed:
+  it pins `pytest==8.4.2`, which would downgrade 9.0.3 and risk the mutmut harness.
+  SemIf's pins moved `numpy` 2.3.5 -> 2.2.6 and `protobuf` 6.33.5 -> 7.36.1.
+  `torch==2.10.0` matched the installed `2.10.0+rocm7.1` under PEP 440 and was left
+  untouched, so ROCm survived. A pre-install snapshot is at
+  `/home/noaha/graphrnn_env_before_semif.txt` (159 packages) for rollback.
+- System under test is cloned to `sut/` and gitignored; `artifacts/` holds score
+  caches (currently ~78 MB) and figures.
 
 ## System under test
 
@@ -182,6 +198,47 @@ Paired bootstrap vs `coverage` at budget 0.05 (n=464): `xgboost_struct` +0.373
 | `bm25_lexical` | 0.203 | 0.269 | 0.429 |
 | `random` | 0.052 | 0.073 | 0.239 |
 | `coverage` | 0.043 | 0.073 | 0.190 |
+
+### Sparsity sweep (panels A and C)
+
+Held-out faults binned into equal-count deciles by how much failure history their
+killing `(file, test)` pair has (decile 1 = sparsest). Figures and tables in
+`artifacts/figures/panel_A_C_budget*.png`; code in `rts/analysis.py`.
+
+**Panel A** replaces the two post-hoc starvation thresholds with a continuous axis.
+Recall @0.05, sparsest to densest decile (median failures 2 -> 51):
+
+| model | decile 1 | decile 10 | trend |
+|---|---|---|---|
+| `failure_rate` | **0.000** | **0.964** | strong monotone up |
+| `xgboost_struct_lex` | 0.083 | 0.946 | strong monotone up |
+| `recency` | 0.104 | 0.839 | up |
+| `semif_textonly` | 0.292 | 0.143 | noisy, slight down |
+| `structural_rule` | 0.208 | 0.214 | flat |
+| `coverage` | 0.000 | 0.000 | flat at zero (degenerate, see below) |
+
+The history-dependent classical methods degrade cleanly as data thins;
+`failure_rate` goes from catching *nothing* to catching almost everything. SemIf is
+approximately flat. But note the claim must be stated narrowly: **structure-only**
+methods (`structural_rule`) do not degrade, because they never used history. So it is
+*history-based* classical methods that lose their footing, not classical methods in
+general.
+
+**Panel C disproved the mechanism I hypothesized.** I predicted the killer would
+fall outside the structural funnel as sparsity rises. It does not -- the funnel
+fraction is **flat** (0.417 in decile 1 vs 0.411 in decile 10). Funnel *size* does
+vary, but inverted from my guess: 5.5 tests in decile 1 vs 134 in decile 10.
+
+What actually tracks the crossover is **whether the killing test is the file's usual
+suspect**. `failure_rate` starts at 0.000 because in sparse bins the killer has no
+failure history, and XGBoost tracks `failure_rate` closely. History finds usual
+suspects; semantics is the only thing that can find an unusual one.
+
+**Caveat**: `coverage` reads 0.000 across all bins, but that is an artifact -- every
+candidate already covers the mutated function, so the feature is constant within the
+pool. This panel therefore measures ordering *within* the coverage set, not coverage
+selection. The full-suite run (see Status and handoff) is needed to make that
+comparison honest.
 
 ## Findings
 
@@ -677,6 +734,47 @@ model and a neutral case for coverage. Real complex commits are usually *coheren
 -- a refactor touches one concept across files -- so this manipulation may be
 unfairly adversarial to text models.
 
+**Candidate pool: fixed vs union.** The ladder above holds the pool fixed at the
+signal's covered set, which isolates the change *description*. But holding it fixed
+also preserves the coverage feature's selectivity, which masks the main way bundling
+should degrade structure. Re-running with the pool set to the union over all bundle
+members (158 -> 281 -> 381 -> 490 candidates):
+
+| rung | candidates | XGBoost | BM25 | structural |
+|---|---|---|---|---|
+| 0 | 158 | 0.550 | 0.235 | 0.280 |
+| 1 | 281 | 0.590 | 0.165 | 0.235 |
+| 2 | 381 | 0.595 | 0.175 | 0.210 |
+| 3 | 490 | 0.570 | 0.145 | 0.190 |
+
+XGBoost is still flat even with the pool tripled. The structural rule degrades
+modestly (0.280 -> 0.190) because it cannot exploit the new packing signal. The
+conclusion is unchanged under the more realistic pool.
+
+### Rungs, mechanisms, and confounds
+
+Two design bugs were found and fixed while building the ladder, both of which had
+silently biased earlier results:
+
+1. **Each rung originally sampled a different 200 held-out bundles** (`seed + rung`),
+   so the ladder was not paired. The held-out sample is now drawn once and shared.
+2. **Training on all 1187 tests let the model learn the candidate mask**, which is
+   constant inside the pool at evaluation time. Training is now restricted to
+   candidate pairs -- faster and correctly focused. This is also what exposed the
+   feature-importance artifact documented above.
+
+Confounds to state when citing the ladder:
+
+- Rung 5 has **2.56 files/bundle vs rung 3's 3.80**, because coverage-similar
+  distractors cluster in the same files. Part of rung 5's difference could be
+  reduced file spread rather than coherence.
+- Bundling lengthens the change text, and the placement controls showed a long
+  prefix degrades the reranker regardless of content. A token-budget-matched variant
+  was built (`bundle_text(..., token_budget=)`) but not run.
+- Distractors are reused ~30x across bundles (340 survivors against 2311 signals),
+  so the distractor distribution is not realistic. Acceptable for a controlled
+  manipulation; not representative of real commit composition.
+
 ### Coherent bundles (rung 5): the reranker is not rescued
 
 Distractors are chosen for relatedness instead of at random, using coverage-profile
@@ -752,13 +850,28 @@ per-iteration cost. Everything downstream is CPU-only:
 | evaluation + bootstrap | ~10 s | ~10 s |
 | **total** | **~2.7 min** | **~45 s** |
 
-**XGBoost is ~80% of iteration cost, and most of it is wasted.** Training uses all
+**XGBoost is ~80% of iteration cost, and most of it was wasted.** Training used all
 1187 tests x 2121 changes = 2.5M rows, but evaluation only ever ranks within the
-covered mask (~155 candidates). The model therefore trains on ~1032 candidates per
-change that it is never asked to rank. Restricting training to covered candidates
-gives 329k rows instead of 2.5M (7.7x fewer) and should cut each fit from ~20 s to
-~3 s. This is a distribution-matching fix rather than a shortcut: training and
-evaluation should cover the same candidate set. **Not yet implemented.**
+covered mask (~155 candidates), so the model trained on ~1032 candidates per change
+that it is never asked to rank. Restricting training to covered candidates gives 329k
+rows instead of 2.5M (7.7x fewer). **This is now implemented** in `rts/bundles.py` and
+is what exposed the feature-importance artifact above: recall is essentially unchanged
+(0.631 -> 0.616) but the learned feature set changes completely.
+
+**Negative result: length bucketing does not help.** The reasoning looked sound --
+batches pad to their longest member, and padded tokens/pair were 483, so sorting pairs
+by length before batching should cut waste. Measured, it does the opposite:
+
+| config | pairs/s | padded tokens/pair |
+|---|---|---|
+| batch 8, unsorted (kept) | **21.3** | 483 |
+| batch 16, bucketed | 17.6 | 442 |
+| batch 32, bucketed | 19.9 | 453 |
+
+Bucketing cuts padding only 8% while costing ~18% throughput: the run is
+**compute-bound on the forward pass, not padding-bound**. `bucket_by_length` defaults
+to off and the reasoning is recorded in the function docstring so it is not retried.
+The measured ceiling is ~21-24 pairs/s at batch 8, and no configuration tested beat it.
 
 ### Recommended scoring sizes
 
@@ -809,6 +922,89 @@ Two consequences:
   wording on the 141-change set, a 5-wording sweep is ~90 min -- a further argument
   for 141 over 464.
 
+## SemIf variations: analysis and proposals
+
+Written at the end of the session as a handoff. Every number cited is measured
+elsewhere in this document; the proposals themselves are **not yet run**.
+
+### Diagnosis: why the reranker underperforms
+
+The evidence points to a **prior mismatch**, not a capability problem:
+
+- Statistically indistinguishable from BM25 on 464 faults (+0.037, p=0.068), and
+  below a tree with no coverage, no history, and no text (0.306 vs 0.569).
+- Behaves like a lexical matcher: real signal, but no more than bag-of-words.
+- Degrades *faster* than BM25 as changes broaden (-0.145 vs -0.050 under coherence),
+  i.e. it is hurt by content that is not a single coherent query.
+- Highly sensitive to prompt position: ~200 tokens of *zero-information* text placed
+  before the content cost 0.21 recall.
+
+`Qwen3-Reranker` was trained for **topical relevance over natural language** -- "does
+this document answer this query". The RTS question is **executional and causal**:
+"would this test fail because of this edit". Those are different relations, and a
+text-only model has no way to observe execution. That is consistent with it landing
+at BM25 level and failing to exploit the code-structural cues a tree finds trivially.
+
+The "it is mainly a human language model" intuition is therefore supported by the
+data, and it is testable: if the relation is executional, *any* text-only model
+should plateau near BM25 unless it was trained on code changes specifically.
+
+### Proposals, ranked by value per unit cost
+
+**P5 -- Is the transformer redundant? (cheapest; existing caches; CPU only).**
+Add the SemIf score as one extra column to `xgboost_static_nocov_lex` and see whether
+recall moves. If it does not, SemIf is redundant given BM25 plus cheap structure, and
+that is the practical bottom line regardless of what else is tried. ~10 min.
+
+**P2 -- Instruction and prompt sweep (cheap, high leverage, untested).** The only
+major lever never explored, and the position controls make it high-leverage: this
+runner is demonstrably sensitive to prompt construction. Variants: instruction
+wording (5-8 phrasings); input truncation to a fixed token budget; a summarised
+change instead of the raw concatenated diff; and re-testing the two Query/Document
+orientations at adequate n (they were only compared at n=10). ~20 min per variant on
+the 200-bundle set.
+
+**P1 -- Direct mode instead of reranker (best chance of changing the verdict).**
+`semif-score --mode direct` is the configuration SemIf was designed for, and it
+changes the *task formulation* rather than the model: present up to 16 candidate
+tests in one prompt and have the model apply the criterion and pick one, instead of
+scoring each pair for topical relevance. Two reasons to expect a difference: the
+"apply this criterion to this evidence" framing matches a decision rather than a
+retrieval task, and it is much cheaper -- 155 candidates / 16 ≈ 10 calls per change
+versus 155 pairwise forward passes (~15x fewer).
+
+Caveats: `LETTERS = "ABCDEFGHIJKLMNOP"` caps options at 16, and the softmax is over
+slots within a window, so scores are not comparable across windows -- a tournament or
+iterative-elimination loop is needed, and iterating for recall@k costs k rounds.
+Direct mode per the repo's pinned config uses `Qwen/Qwen3.5-4B`, a different
+checkpoint to download.
+
+**P3 -- Code-specialised embedding baseline (cheap; contextualises everything).**
+Cosine similarity between a code embedding of the change and of the test. The
+cheapest possible "semantic" model, sitting strictly between BM25 and a reranker. If
+it matches SemIf, the 4B reranker is unjustified. If it beats BM25, there is a
+semantic signal worth pursuing with something stronger. Candidates:
+`microsoft/codebert-base`, `Salesforce/codet5p-110m-embedding`,
+`jinaai/jina-embeddings-v3`, `BAAI/bge-m3`. ~15 min.
+
+**P4 -- Model substitution holding the interface fixed.** 2x2 of {pairwise reranker,
+direct} x {Qwen3-Reranker-4B, larger or code-tuned reranker}. Distinguishes "the
+architecture is wrong" from "the model is too small or not code-tuned".
+
+**P6 -- Prompt-side mitigation of the measured dilution.** Since long prefixes are
+known to hurt, feed a short structured summary (changed function signature plus a
+one-line description) rather than the raw diff. Targets the mechanism we measured
+rather than hoping for a better model.
+
+### Expected outcome, stated in advance
+
+Given that SemIf has tracked BM25 in every regime tested and lost to structure in
+every regime tested, I expect **P5 to show redundancy**, **P2 to move recall by a few
+points at most**, and **P1 to be the only proposal with a real chance of changing the
+verdict**, because it changes the task formulation rather than the model. **P3** is
+the most informative per unit of effort if the goal is to decide whether to keep
+pursuing text-only models at all.
+
 ## Reproducing
 
 ```
@@ -830,4 +1026,64 @@ fits (~20 s each).
 - **Pretraining contamination.** Cannot be ruled out for a well-known project; state as a limitation rather than trying to fix it in a probe.
 - **Imposed history.** The temporal order is synthetic and the recency baseline is degenerate by construction. Do not report recency as a result.
 - **Single revision.** All mutants come from one commit, so there is no real code evolution and no cross-revision drift.
+- **Exactly one killing test per mutant** (verified: max = 1 across all 2311 faults). Real RTS has multiple failing tests per change, where recall is far more forgiving and a structural funnel gets partial credit. This is the benchmark's least realistic property and it likely **overstates** how much semantic matching buys, since the task is "find the one needle".
+- **`covered` candidate mask everywhere.** Every SemIf number in this document ranks within ~155 candidates. This presupposes per-test coverage, which is exactly the data a starved deployment may not have.
+- **Feature importances are unstable and were once wrong here.** See the correction section; trust ablations over importances.
+
+## Status and handoff
+
+### Bottom line
+
+**Exactly one regime favours SemIf: sparse failure history, at small budgets.** It
+reaches 0.442 vs 0.256 for the best XGBoost on the sparsest 43 faults
+(`failures <= 2`), significant at b0.01 (p=0.002) and b0.05 (p=0.045), and the effect
+is monotone in starvation. That result is the weakest evidence in the document: n=43,
+a threshold chosen after seeing the data, and p-values that would not survive
+multiple-comparison correction.
+
+**Everywhere else it loses, and sometimes badly:**
+
+| regime | SemIf | best classical | verdict |
+|---|---|---|---|
+| full held-out, 464 faults | 0.306 | 0.631 XGBoost | loses 2.1x |
+| starved `failures <= 2`, 43 faults | **0.442** | 0.256 XGBoost | **wins 1.7x** |
+| 6 mutations, cross-file | 0.190 | 0.525 XGBoost | loses |
+| 6 mutations, coherent | 0.160 | 0.555 XGBoost | loses, and BM25 overtakes it |
+
+(all at budget 0.05, covered candidates)
+
+### Completed
+
+- Synthetic change history from mutmut: 2651 mutants, 2311 killed, exact per-test
+  outcome labels, 54 min for a full run.
+- Evaluation harness: per-change budgets, temporal split, paired bootstrap, shuffle
+  ablations, sparsity sweep, complexity ladder, coherent bundles.
+- Three SemIf arms scored over all 530 held-out changes (text-only, mirror,
+  after-document) plus four diagnostic controls, all cached in `artifacts/`.
+- Documentation corrected three times after its own claims failed verification
+  (the 94.6% importance figure, the mirror-degradation direction, and the funnel-size
+  mechanism). Treat earlier-sounding claims in this document with that history in mind.
+
+### Outstanding, in priority order
+
+1. **Full-suite run for the starved arm** (~40 min for the 43-change set). Removes the
+   `covered`-mask crutch and makes the one positive result comparable to how RTS is
+   actually deployed. Highest value remaining.
+2. **P5, then P2, then P1** from the SemIf variations section above.
+3. **Test-complexity axis** (bundle tests into coarse groups, emulating long-running
+   integration tests). This breaks coverage and filename matching *simultaneously*,
+   which is qualitatively different from anything tested so far and is the only
+   remaining manipulation likely to favour a text model.
+4. **`after_document` re-run on all 464 held-out faults** (~74 min) so the full-set
+   fairness comparison is citable rather than inferred from the 141-change subset.
+5. **Second SUT, and a real-commit dataset.** Everything rests on one project, one
+   revision, and mutation-derived labels.
+
+### Things that would change the verdict
+
+- A prompt or framing change that lifts SemIf above 0.631 on the full held-out set
+  (P1 or P2).
+- A code-specialised model that clearly beats BM25, which would show semantics is
+  exploitable and the reranker prior was simply the wrong one (P3).
+- The test-complexity axis showing structure collapsing where text survives.
 
