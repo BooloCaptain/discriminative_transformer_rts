@@ -181,8 +181,14 @@ def paired_bootstrap(
     """Bootstrap the recall difference (a - b) over the shared set of changes."""
     rng = np.random.default_rng(seed)
     shared = sorted(set(hits_a) & set(hits_b))
-    if not shared:
-        return {"delta": float("nan"), "lo": float("nan"), "hi": float("nan"), "n": 0}
+    if not shared or n_bootstrap <= 0:
+        return {
+            "delta": float("nan"),
+            "lo": float("nan"),
+            "hi": float("nan"),
+            "p_value": float("nan"),
+            "n": len(shared),
+        }
     a = np.array([hits_a[i] for i in shared], dtype=np.float64)
     b = np.array([hits_b[i] for i in shared], dtype=np.float64)
     delta = a - b

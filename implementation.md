@@ -226,22 +226,121 @@ Paired bootstrap vs `coverage` at budget 0.05 (n=464): `xgboost_struct` +0.373
 
 ## SemIf status
 
-**Not yet scored.** The adapter, pair builder, cost estimator, and score cache are
-implemented and wired into the pipeline as `semif_reranker`; the pipeline skips it
-cleanly when the cache is absent. Two things are missing:
+**Setup is complete and the model runs.** Scoring the full grid has not been done.
 
-1. The SemIf checkout is not installed and `transformers` is not in the
-   environment.
-2. The checkpoint (`Qwen/Qwen3-Reranker-4B`, ~9 GB) has not been downloaded.
+### Environment
 
-Cost on the `covered` candidate set: **410,167 pairs, ~61 hours (2.6 days)** at the
-measured 1.86 decisions/s. This is the binding constraint on the study. Reducing
-`--max-changes` is the obvious lever: 300 changes would be ~7 hours.
+SemIf installed in-place into `graphrnn_env` (user's choice) at pinned commit
+`23cf1f39fc9534fe81437200959b6dfc7106e45a`. A pre-install snapshot is at
+`/home/noaha/graphrnn_env_before_semif.txt` (159 packages) if a rollback is needed.
 
-Comparability is handled by holding the option set constant: every row offers
-exactly `yes`/`no` against the same question, so the softmax denominator is
-identical across rows and `P(yes)` is on one global scale. Score is the raw log-odds
-of `yes` over `no`. See `rts/semif.py` for the reasoning.
+What changed:
+
+| | before | after |
+|---|---|---|
+| torch | 2.10.0+rocm7.1 | **unchanged** (`==2.10.0` matched the local build) |
+| numpy | 2.3.5 | 2.2.6 |
+| protobuf | 6.33.5 | 7.36.1 |
+| typing-extensions | 4.15.0 | 4.16.0 |
+| new | — | transformers 5.17.0, tokenizers 0.23.2, safetensors 0.8.0, huggingface-hub 1.31.0, accelerate 1.12.0, sentencepiece 0.2.1, typer, httpx |
+
+**ROCm survived**: `torch.cuda.is_available()` is still True on the RX 9070 XT.
+The RTS pipeline still reproduces identical numbers after the numpy downgrade
+(0.039 / 0.381 / 0.179 / 0.597 at budget 0.05), so the downgrade is benign for
+this study.
+
+`[test]` was deliberately **not** installed: it pins `pytest==8.4.2`, which would
+downgrade pytest 9.0.3 and could break the mutmut harness.
+
+Checkpoint: `Qwen/Qwen3-Reranker-4B` @ `22e683669bc0f0bd69640a1354a6d0aebcfeede5`,
+7.6 GB, cached at `/home/noaha/hf_cache` (set `HF_HOME` to use it). Loads in ~8 s
+and fits in 17 GB BF16.
+
+### Scorer
+
+`rts/semif_runner.py` builds the prompt directly from the model's native template
+and imports SemIf's `PREFIX`, `SUFFIX`, and `_answer_ids` so the contract stays
+identical to the reference implementation. Pairs are scored independently with the
+same prompt skeleton and read out as the yes-vs-no log-odds, so scores are on one
+global scale across changes. Pairs are batched (left-padded) in one forward pass.
+
+`orientation` selects which side is the Query and which the Document, since
+rerankers are asymmetric.
+
+### Preliminary smoke test (n=10, not conclusive)
+
+Ranking a known killing test against 9 distractors:
+
+| setup | #1 | mean rank | chance |
+|---|---|---|---|
+| distractors from the coverage set | 2/10 | — | 1.00 |
+| distractors random from the full suite | 3/10 | — | 1.00 |
+| same, `change`=Query | 4/10 | 3.40 | 5.50 |
+| same, `test`=Query | 6/10 | 3.80 | 5.50 |
+
+Both orientations beat chance but neither is strong, and with n=10 the difference
+between them is within noise, so the full pass used `change_query`.
+
+### Measured throughput (the cost objection is resolved)
+
+**22.3-22.8 pairs/s at batch 16** (421 padded tokens/pair), versus the 1.86
+decisions/s the repo reports for batch-1 native reranker scoring on a 3090. Batching
+gives a **12x speedup**, which changes the budget entirely:
+
+| scope | pairs | at 1.86/s (assumed) | **measured** |
+|---|---|---|---|
+| Full grid | 410k | 61 h | ~5 h |
+| **Held-out only** | 78k | 12 h | **~1.0 h** |
+| Held-out + change-shuffle | 157k | 24 h | ~2 h |
+
+So the full held-out pass is a one-hour job, not a multi-day one. The earlier
+"61 h" figure in this document was based on the repo's batch-1 number and is
+superseded.
+
+### Pilot vs baselines, same 60 held-out faults
+
+Recall at each budget, all selectors evaluated on exactly the rows the SemIf pilot
+scored, using the `covered` candidate set:
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `xgboost_static` | 0.550 | **0.733** | 0.800 | 0.883 |
+| `xgboost_struct_lex` | 0.517 | 0.717 | 0.833 | 0.883 |
+| `xgboost_struct` | 0.450 | 0.650 | 0.800 | 0.850 |
+| `failure_rate` | 0.300 | 0.500 | 0.667 | 0.800 |
+| `recency` | 0.217 | 0.317 | 0.467 | 0.733 |
+| `structural_rule` | 0.250 | 0.333 | 0.400 | 0.533 |
+| **`semif_reranker`** | **0.200** | **0.317** | **0.383** | **0.483** |
+| `bm25_lexical` | 0.183 | 0.250 | 0.333 | 0.400 |
+| `random` | 0.067 | 0.083 | 0.133 | 0.250 |
+| `coverage` | 0.050 | 0.067 | 0.083 | 0.167 |
+
+SemIf ranks **6th of 10**. It is tied with `recency` at b0.05, marginally above
+`bm25_lexical`, and **below a three-line structural rule** that only checks
+coverage plus test-filename matching. Against XGBoost it is not close: 0.317 vs
+0.733 at b0.05, a factor of 2.3.
+
+This is the feasibility answer. On this benchmark SemIf does not compete with
+gradient-boosted trees, and it does not beat the cheapest non-learned baselines by
+a meaningful margin.
+
+Caveats before treating this as final: n=60 (wide CIs), one instruction wording,
+one orientation, and the `covered` candidate set. The full 464-fault run and the
+change-shuffle ablation are running to firm it up.
+
+
+### Cost
+
+| scope | pairs | at 1.86/s | note |
+|---|---|---|---|
+| Full grid (all changes) | 410k | 61 h | not needed: SemIf is zero-shot |
+| **Held-out only** | 82k | 12 h | all 464 faults retained |
+| Held-out + change-shuffle | 164k | 24 h | ablation needs a second pass |
+| Pilot (60 changes) | ~9k | ~1.5 h | measures real throughput |
+
+`--max-changes` slices from the start of the history and therefore includes
+training changes; a `--only-heldout` flag is still needed.
+
 
 ## Reproducing
 
