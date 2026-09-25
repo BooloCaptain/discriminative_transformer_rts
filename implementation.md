@@ -138,6 +138,7 @@ Package `rts/`, run from the workspace root with `/home/noaha/graphrnn_env/bin/p
 | `rts/embed.py` | P3: code-embedding similarity baseline (CPU-capable) |
 | `rts/direct_runner.py` | P1: SemIf direct mode, pairwise, batched and resumable |
 | `rts/variations.py` | P1-P5 experiment driver; writes `artifacts/variations.json` |
+| `rts/figures.py` | Figures for the correction, the decomposition, and the lever forest plot; reads only `variations.json` |
 | `scripts/run_variation_arms.sh` | Queue for the GPU arms, one at a time |
 
 Commands:
@@ -689,6 +690,11 @@ python -m rts.variations --only full_starved
 43 held-out changes, 43 faults, **1187 candidates per change** (k = 12 / 60 / 119 / 238 at the
 four budgets), 51,041 pairs, 28.2 min, 30.1 pairs/s. Recall:
 
+![starved arm on the full suite, both population sizes](figures/fig_starved_full_suite.png)
+
+*`artifacts/figures/fig_starved_full_suite.png` -- recall against budget for both population
+sizes (n=43 and n=141). SemIf is the red star; the coverage + BM25 tree is the blue line.*
+
 | model | b0.01 | b0.05 | b0.10 | b0.20 |
 |---|---|---|---|---|
 | **`xgboost_static_lex`** (coverage + BM25, **no history**) | **0.767** | **0.953** | **0.977** | **1.000** |
@@ -707,6 +713,11 @@ four budgets), 51,041 pairs, 28.2 min, 30.1 pairs/s. Recall:
 **The best classical selector on this arm is the one with the *fewest* features.** Dropping the
 history features from `xgboost_struct_lex` to get `xgboost_static_lex` moves b0.05 from 0.837 to
 **0.953**. A 2x2 over {history, coverage} with BM25 always on shows why:
+
+![history x coverage decomposition](figures/fig_history_coverage.png)
+
+*`artifacts/figures/fig_history_coverage.png` -- the decomposition at b0.05, with SemIf and the
+three-line structural rule as reference lines.*
 
 | model | coverage | history | BM25 | b0.05 |
 |---|---|---|---|---|
@@ -1264,7 +1275,15 @@ pursuing text-only models at all.
 Run in the order the previous session recommended -- which is value per unit cost, not
 P-number, so the subsections below appear as P5, P2, P3, P1. Raw numbers land in
 `artifacts/variations.json`; every experiment is reproducible with
-`python -m rts.variations --only <name>` once its score cache exists.
+`python -m rts.variations --only <name>` once its score cache exists, and every figure with
+`python -m rts.figures`.
+
+![every text-side lever fails](figures/fig_variation_levers.png)
+
+*`artifacts/figures/fig_variation_levers.png` -- all ten paired deltas at b0.05, one per
+intervention, each against the baseline that proposal was designed to beat. Filled markers are
+significant at p<0.05. Nothing is positive and significant: four levers move nothing at all, and
+the three that move something move it the wrong way.*
 
 ### P5 -- Is the transformer redundant? Mostly yes
 
@@ -1493,7 +1512,8 @@ python -m rts.direct_runner --starved 2 --batch-size 8 \
 Analysis and reporting:
 
 ```
-python -m rts.variations --only full_starved full_starved_seeds p5 p5_trained p2 p3 p1
+python -m rts.variations --only full_starved full_starved5 full_starved_seeds p5 p5_trained p2 p3 p1
+python -m rts.figures        # reads variations.json; writes artifacts/figures/*.png
 ```
 
 Everything lands in `artifacts/variations.json` (recall sweeps, paired bootstraps,
