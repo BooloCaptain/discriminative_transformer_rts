@@ -3,10 +3,13 @@
 How the RTS feasibility study is built, and what was measured. Study design is in
 `plan.md`. Raw numbers for the variation experiments are in `artifacts/variations.json`.
 
-**Bottom line: SemIf does not beat the classical selectors in any regime tested.** A
-coverage + BM25 tree reaches 0.953-0.972 recall at budget 0.05 where SemIf reaches
-0.674-0.681, and a three-line coverage-plus-filename rule matches or beats SemIf. All four
-text-side levers (features, prompt wording, code embedding, task formulation) fail.
+**Bottom line: on this benchmark SemIf loses in every regime where coverage is available, and
+wins only once it is removed.** With the full feature set a coverage + BM25 tree reaches
+0.908-0.972 recall at budget 0.05 where SemIf reaches 0.681-0.858; remove coverage and
+traceability and SemIf leads by **+0.170** (§12). All four text-side levers (features, prompt
+wording, code embedding, task formulation) fail. On real BugsInPy bugs, and on a real
+boundary-broken corpus (MicroPython), the picture is different again — see §12, which also
+corrects two numbers this document previously reported.
 
 ---
 
@@ -766,3 +769,176 @@ comparison citable rather than inferred.
   every result in this document is measured on an easier, structurally-biased subset.
 - Real data (proposals 4-5) showing multiple failing tests per change shifting the balance, or
   a different project behaving differently.
+
+---
+
+## 12. Traceability loss and real-bug data
+
+Section 11's agenda was reorganised around a sharper statement of the target regime — a test
+suite driving an embedded system **across a boundary**, so the changed code does not run in the
+test process. That kills four feature families at once: coverage, filename/path proximity,
+identifier overlap, and history. This section reports what was executed against that framing.
+Execution plan: `plan_next_steps.md`. Artifacts: `artifacts/ladder.json`,
+`artifacts/bugsinpy_results.json`, `artifacts/micropython_bridge_probe.json`.
+
+### 12.1 Two corrections to earlier numbers
+
+**The full-suite relabelling landed, and it is large.** mutmut runs only the tests covering the
+mutated function, so its labels cannot see a fault whose killer lies outside that set. Running
+all 1190 collected tests per mutant (fork-per-mutant from a once-collected parent, ~10 min for
+the full 2651-mutant population) changes the labels substantially:
+
+| quantity | mutmut labels | full-suite labels |
+|---|---|---|
+| old killing set ⊆ new | — | **2651/2651** |
+| killers per fault: median / mean / max | 1 / 1.0 / 1 | **8 / 58.4 / 759** |
+| faults with exactly one killer | 100% | **13.6%** |
+| fault-bearing changes | 2311 | **2327** |
+| out-of-coverage faults | 0, by construction | **5.5%** (128/2327) |
+| mutmut survivors that are real faults | 0 | **16/340** |
+
+So §2's "median killing tests per killed mutant is 1 (max 1 across all 2311)" and §10's
+"exactly one killing test per fault" are artefacts of mutmut's selection and are now removed.
+The *circularity* they were meant to address is smaller than assumed — 5.5%, and concentrated in
+four `class_registry` tests. `--labels {mutmut,full}` selects the source; `mutmut` reproduces
+every number in this document exactly (464 held-out faults, 1187 tests).
+
+**The starved filter collapses under the corrected labels.** `starved_mask` is keyed on the
+killing `(file, test)` pair's failure count, which was itself under-counted by mutmut's
+selection. With honest labels the same thresholds give **2** held-out faults at `failures <= 2`
+(was 43) and **11** at `<= 5` (was 141). §5.7's starved arm therefore no longer exists as a
+population; the ladder below uses the 141 changes that the old filter selected, for cache
+reuse, and names them for provenance rather than as "starved".
+
+### 12.2 The traceability-loss ladder (`rts.ladder`)
+
+Feature families are removed cumulatively by zeroing their columns, so a removed feature carries
+no information — which is the target condition — while one code path serves both the learned and
+the hand-built selectors. SemIf is a *text* model and its scores are unaffected by the rung, so
+the curve shows the classical floor falling beneath a flat semantic line. Population: 141
+held-out changes, full candidate set (1189 tests). `starved141` in the tables below.
+
+SemIf's margin over the **best** classical selector (positive = SemIf ahead), at budget 0.05:
+
+| rung | removed | mutmut labels | full labels |
+|---|---|---|---|
+| L0 | nothing | −0.255 | −0.050 |
+| L1 | history | −0.284 | −0.078 |
+| L2 | history + coverage | **+0.099** | **+0.170** |
+| L3 | history + coverage + traceability | **+0.177** | **+0.170** |
+
+At every other budget the same ordering holds (full labels, L2: +0.163/+0.170/+0.142/+0.114 at
+b0.01/0.05/0.10/0.20). The mechanism is visible in the levels rather than only the margins: at
+L0 the best classical selector is the coverage tree at 0.908 and at L2/L3 it is raw BM25 at
+0.688, while SemIf holds at 0.858 throughout.
+
+Four things follow.
+
+1. **Removing coverage is the single step that flips the result.** History removal does nothing
+   (consistent with §5.7); the crossing happens exactly at L2.
+2. **Traceability features add nothing once coverage is gone.** L2 and L3 are identical to four
+   decimal places under full labels, so filename matching and path proximity are not what the
+   classical floor is made of — coverage is.
+3. **The floor really is a floor.** At L3 the no-text tree collapses to 0.064 at b0.05, level
+   with the degenerate `coverage` and `recency` baselines, because nothing informative is left.
+4. **Under corrected labels SemIf is already near parity at L0** (−0.050), which is a much
+   weaker defeat than the −0.255 the mutmut labels report.
+
+This is the first regime in the study where SemIf leads, and it is the regime with the fewest
+features — which is the hypothesis. The caveat is structural and stated in §12.5: the ladder
+removes *features*, not the label structure.
+
+### 12.3 Real bugs: BugsInPy (`rts.bugsinpy`)
+
+71 usable bugs across 8 projects (tqdm, cookiecutter, httpie, PySnooper, sanic, thefuck, black,
+tornado), with **real failing tests** taken from each bug's `run_test.sh` and the real
+bug-inducing commit as the change text. No test execution is needed for the labels, so no
+per-project virtualenv is built. The candidate pool is enumerated by parsing test files with
+`ast`, which means parametrized variants collapse to their base function.
+
+This arm is structurally the ladder's **L3**: no coverage, no traceability features, and no
+history at all — the target regime's feature condition, on real data.
+
+Gate T0 (the textual-bridge audit) passes, but weakly:
+
+| | value |
+|---|---|
+| bugs where the failing test shares ≥1 token with the change | **87.3%** |
+| mean shared tokens, failing test | 2.66 |
+| mean shared tokens, other tests | 2.03 |
+
+So a bridge exists, but the lift over an arbitrary test is small and it is project-dependent: it
+is positive for cookiecutter (5.17 vs 1.99), thefuck (2.70 vs 1.93) and tornado (2.70 vs 1.78),
+and **absent or negative for black (1.39 vs 1.47) and sanic (3.00 vs 3.67)**. That is the regime
+the hypothesis predicts: enough lexical overlap for a text model to have something to condition
+on, not enough for overlap alone to settle it.
+
+Recall at budget 0.05 is 0.225 for BM25 against 0.014 for random, and 0.352 vs 0.211 at b0.20.
+Absolute levels are low because the pools are large (median ~200, up to 1114 tests) and a bug
+usually has exactly one failing test — median 1, max 4, and only 9 of 71 bugs have more than
+one. **The "several failing tests per change" expectation for real bugs is not supported here.**
+
+### 12.4 A real boundary: MicroPython (`scripts/micropython_bridge_probe.py`)
+
+The boundary property is **verified, not assumed**: `tests/run-tests.py` executes the
+interpreter under test with `subprocess.Popen` and `pty.openpty()`, the changed code is C in
+`py/`, `extmod/` and `ports/`, and it does not run in the test process. The pool is **1653 test
+files**, the "thousands of tests" scale.
+
+MicroPython ships no bug dataset and building it per revision needs a C toolchain, so this probe
+uses a **co-change proxy**: a commit that modifies both source and a test file. That is weaker
+than a failing-test label and is a limitation, but the measurement is exactly the RTS question —
+rank the whole suite by the change text and see where the related test lands.
+
+| budget | k | recall | random floor | lift |
+|---|---|---|---|---|
+| 0.001 | 2 | **0.242** | 0.001 | 200x |
+| 0.010 | 17 | **0.467** | 0.010 | 45x |
+| 0.050 | 83 | **0.648** | 0.050 | 13x |
+| 0.100 | 166 | **0.714** | 0.100 | 7x |
+
+Median rank of the related test: **26 of 1653**. 98.4% of them share a token with the change.
+
+**This contradicts the premise that the boundary destroys the lexical bridge.** The boundary
+removes *coverage*, which depends on execution, but not *naming*, which does not: MicroPython's
+tests are named after features and co-changes share vocabulary. At the target pool size BM25
+reaches 0.648 at b0.05, which is *better* than the same selector achieves on marshmallow's full
+pool (0.381). The two readings that follow are both uncomfortable for the hypothesis: either the
+co-change proxy is too generous (a feature commit names its test after the feature, so this
+measures the "usual suspect" case rather than the integration case), or the target regime is not
+as hostile to lexical methods as assumed. Settling it needs real failing-test labels on
+MicroPython, which needs the C toolchain.
+
+### 12.5 What the three arms jointly say
+
+| arm | structure | real labels | SemIf vs best classical |
+|---|---|---|---|
+| ladder L0 | all features | no | −0.050 (full labels) |
+| ladder L3 | no coverage/traceability/history | no | **+0.170** |
+| BugsInPy | no coverage/history/traceability | **yes** | see `artifacts/bugsinpy_results.json` |
+| MicroPython | boundary, 1653 tests | co-change proxy | lexical RTS works: 0.648 at b0.05 |
+
+The hypothesis is confirmed where it can be tested cleanly: **coverage is what defeats SemIf,
+and removing it reverses the ordering.** But the boundary itself does not remove the lexical
+bridge, and the arms with real labels do not show the large pools making the task easier for a
+semantic model. Two things are still unmeasured: real failing-test labels on a boundary-broken
+corpus, and whether the L3 win survives when the labels are real rather than coverage-defined.
+
+### 12.6 Limitations specific to this section
+
+- **The ladder moves features, not labels.** At L3 the killing tests are still the tests that
+  cover the changed function, so the win is "SemIf beats a feature-starved tree on
+  unit-test labels", not "SemIf wins in the target regime".
+- **The starved populations are gone** (§12.1), so the ladder's 141 changes are a held-out
+  subset chosen for cache reuse, not a starved population.
+- **BugsInPy pools are `ast`-enumerated**, so parametrized variants collapse and the pool is an
+  approximation of the real collected suite.
+- **BugsInPy labels are mostly single-test** (median 1, max 4), so it does not supply the
+  "several failing tests per change" property that was the reason to want real bugs.
+- **The MicroPython probe uses co-change, not failure.** It bounds the lexical bridge from above
+  and cannot distinguish "the test names the feature" from "the test fails because of the
+  change".
+- **SemIf on BugsInPy took ~29 min** for 22,323 pairs, i.e. ~12.8 pairs/s rather than the 30.1
+  pairs/s measured on marshmallow: prompt length, not batching, sets the throughput on larger
+  test files.
+

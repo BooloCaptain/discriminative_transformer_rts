@@ -166,7 +166,7 @@ STRUCTURED_NAMES = [
     "coverage_rank_prior",
     "path_distance",
     "n_tests_in_test_file",
-    "module_name_in_test_file",
+    "filename_stem_match",
     "test_duration",
     "test_n_lines",
     "test_n_tokens",

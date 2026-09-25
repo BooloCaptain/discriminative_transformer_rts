@@ -30,6 +30,36 @@ from . import config
 
 MUTANT_SUFFIX_RE = re.compile(r"__mutmut_(\d+|orig)$")
 
+# ``tests/test_deserialization.py`` parametrizes over ``dt.datetime.now()``, so two node ids
+# embed the collection wall-clock and change on every fresh collection:
+#     test_invalid_datetime_deserialization[13:45:28 2026-09-24]
+#     test_invalid_datetime_deserialization[09-24-2026 13:45:28]
+# The stats file was written by one collection, so any *other* collection produces ids that
+# cannot be looked up: they can never be selected, and they read as out-of-coverage killers.
+# Canonicalising both sides to a placeholder makes the pool stable across collections. Applied
+# only under ``RTS_LABELS=full`` so the historical ``mutmut`` numbers stay reproducible.
+_TS_PARAMS = (
+    re.compile(r"\[\d{2}:\d{2}:\d{2} \d{4}-\d{2}-\d{2}\]"),
+    re.compile(r"\[\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}\]"),
+)
+
+
+def canonical_nodeid(nodeid: str) -> str:
+    """Collapse wall-clock parametrization ids to ``[<TS>]``."""
+    out = nodeid
+    for pattern in _TS_PARAMS:
+        out = pattern.sub("[<TS>]", out)
+    return out
+
+
+def _canonicalize_ids(ids) -> list[str]:
+    return [canonical_nodeid(t) for t in ids]
+
+
+# Populated by ``build_changes`` when the full-suite label source is active: the pool of tests
+# that ran against every mutant. Empty under the historical mutmut labels.
+ALL_TEST_IDS: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class Change:
@@ -95,7 +125,10 @@ def load_stats() -> dict:
 
 def coverage_map() -> dict[str, list[str]]:
     """mangled function key -> tests that cover it."""
-    return load_stats()["tests_by_mangled_function_name"]
+    raw = load_stats()["tests_by_mangled_function_name"]
+    if config.LABELS == "full":
+        return {k: _canonicalize_ids(v) for k, v in raw.items()}
+    return raw
 
 
 def duration_by_test() -> dict[str, float]:
@@ -103,7 +136,19 @@ def duration_by_test() -> dict[str, float]:
 
 
 def all_test_nodeids() -> list[str]:
-    """Every collected test, which is the candidate set for every change."""
+    """Every collected test, which is the candidate set for every change.
+
+    Under ``RTS_LABELS=full`` this is the canonical pool recorded by the full-suite run
+    (1189 tests: the two wall-clock parametrizations merged, and the three tests mutmut
+    deselects included). Otherwise it is the stats file's 1187 tests, unchanged.
+    """
+    if config.LABELS == "full":
+        if not config.FULL_SUITE_TESTS_FILE.exists():
+            raise SystemExit(
+                f"missing {config.FULL_SUITE_TESTS_FILE}; run "
+                "scripts/emit_full_suite_outcomes.py first"
+            )
+        return json.loads(config.FULL_SUITE_TESTS_FILE.read_text())["test_ids"]
     return sorted(duration_by_test())
 
 
@@ -127,11 +172,16 @@ def load_spans() -> dict[str, dict[str, list[int]]]:
 
 
 def load_outcomes() -> dict[str, dict[str, str]]:
-    """mutant name -> {test nodeid: outcome}."""
+    """mutant name -> {test nodeid: outcome}, from whichever label source is active.
+
+    Under ``RTS_LABELS=full`` the log contains failures only (every test runs, so the
+    complement is "passed"); ``build_changes`` reconstructs ``ran`` as the whole pool.
+    """
     outcomes: dict[str, dict[str, str]] = {}
-    if not config.OUTCOMES_FILE.exists():
+    path = config.outcomes_file()
+    if not path.exists():
         return outcomes
-    with config.OUTCOMES_FILE.open() as fh:
+    with path.open() as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -205,6 +255,23 @@ def build_changes(require_outcomes: bool = True) -> list[Change]:
     verdicts = load_verdicts()
     spans_by_file = load_spans()
     outcomes = load_outcomes()
+    # Under full-suite labels every collected test ran against every mutant, so a mutant with
+    # no failure records is a *survivor*, not a missing run. The run set is recorded alongside
+    # the pool so the two can be told apart, and survivors are kept because they are the
+    # dataset's negative training signal.
+    ran_set: set[str] | None = None
+    global ALL_TEST_IDS
+    if config.LABELS == "full":
+        if not config.FULL_SUITE_TESTS_FILE.exists():
+            raise SystemExit(
+                f"missing {config.FULL_SUITE_TESTS_FILE}; run "
+                "scripts/emit_full_suite_outcomes.py first"
+            )
+        meta = json.loads(config.FULL_SUITE_TESTS_FILE.read_text())
+        ALL_TEST_IDS = tuple(meta["test_ids"])
+        ran_set = set(meta["mutants"])
+    else:
+        ALL_TEST_IDS = ()
 
     # Index spans by short name within each file for O(1) lookup.
     changes: list[Change] = []
@@ -251,10 +318,16 @@ def build_changes(require_outcomes: bool = True) -> list[Change]:
         )
 
         per_test = outcomes.get(change_id, {})
-        if require_outcomes and not per_test:
+        if config.LABELS == "full":
+            if ran_set is not None and change_id not in ran_set:
+                continue
+        elif require_outcomes and not per_test:
             continue
         killing = tuple(sorted(t for t, o in per_test.items() if o == "failed"))
-        ran = tuple(sorted(per_test))
+        # Under full-suite labels every collected test ran against every mutant, so "ran" is
+        # the whole pool; the log records only failures. Under mutmut labels the log is the
+        # authoritative record of what was actually selected.
+        ran = ALL_TEST_IDS if config.LABELS == "full" else tuple(sorted(per_test))
 
         changes.append(
             Change(

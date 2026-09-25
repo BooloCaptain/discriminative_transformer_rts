@@ -35,8 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset
-
+from . import artifacts, config, dataset
 # Measured on a 3090 with no prefix reuse (prefix reuse is a direct-mode feature).
 DECISIONS_PER_SECOND = 1.86
 
@@ -215,11 +214,20 @@ def load_scores(path: Path, ds: dataset.Dataset) -> np.ndarray:
             if not line:
                 continue
             record = json.loads(line)
-            row = record.get("change_row")
-            col = record.get("test_col")
-            if row is None or col is None:
+            row = col = None
+            # Prefer the stable identifiers over the row/col indices. The indices are only
+            # valid for the exact dataset the cache was written against, so a cache silently
+            # mis-maps if the candidate pool changes (e.g. under full-suite labels, where the
+            # pool grows from 1187 to 1189 and every later column shifts).
+            if "change_id" in record and "test_nodeid" in record:
                 row = ds.change_index.get(record["change_id"])
-                col = ds.test_index.get(record["test_nodeid"])
+                nodeid = record["test_nodeid"]
+                if config.LABELS == "full":
+                    nodeid = artifacts.canonical_nodeid(nodeid)
+                col = ds.test_index.get(nodeid)
+            if row is None or col is None:
+                row = record.get("change_row")
+                col = record.get("test_col")
             if row is None or col is None:
                 continue
             out[int(row), int(col)] = record["score"]

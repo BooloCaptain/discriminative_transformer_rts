@@ -5,6 +5,7 @@ See ``plan.md`` for the study design and ``implementation.md`` for tooling detai
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # --- Layout ---------------------------------------------------------------
@@ -20,7 +21,38 @@ TESTS_DIR = SUT / "tests"
 STATS_FILE = MUTANTS_DIR / "mutmut-stats.json"
 OUTCOMES_FILE = SUT / "mutmut-test-outcomes.jsonl"
 
+# Full-suite relabelling (see plan_next_steps.md). mutmut runs only the tests covering the
+# mutated function, so its log cannot see a fault whose killer lies outside that set. The
+# full-suite log runs all 1190 collected tests per mutant and is written by
+# ``scripts/emit_full_suite_outcomes.py``.
+FULL_SUITE_OUTCOMES_FILE = SUT / "mutmut-full-suite-outcomes.jsonl"
+FULL_SUITE_TESTS_FILE = SUT / "mutmut-full-suite-tests.json"
+
 ARTIFACTS = WORKSPACE / "artifacts"
+
+# --- Label source ---------------------------------------------------------
+
+# Which outcome log defines the fault labels.
+#   "mutmut" -- mutmut's selected tests only (the historical, documented default)
+#   "full"   -- all 1190 collected tests (the corrected labels)
+# Kept as module state rather than a parameter because it is a study-wide choice: every
+# selector, feature and evaluation must agree on it, and threading it through ~20 call sites
+# of ``dataset.build`` would be error-prone. Set with ``--labels`` on the CLIs, or the
+# ``RTS_LABELS`` environment variable.
+LABELS = os.environ.get("RTS_LABELS", "mutmut")
+
+
+def set_labels(name: str) -> str:
+    """Set the study-wide label source. Returns the previous value."""
+    global LABELS
+    if name not in ("mutmut", "full"):
+        raise ValueError(f"unknown label source: {name!r}")
+    previous, LABELS = LABELS, name
+    return previous
+
+
+def outcomes_file() -> Path:
+    return FULL_SUITE_OUTCOMES_FILE if LABELS == "full" else OUTCOMES_FILE
 
 # --- Pinned choices -------------------------------------------------------
 

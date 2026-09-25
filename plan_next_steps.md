@@ -281,23 +281,28 @@ multi-week one.
 
 ## 3. Code changes required
 
-Concrete, all small:
+**All done.** Recorded here because the reasoning matters for reading the results:
 
-1. **A new feature-exclusion family.** `models.py` has `HISTORY_FEATURES` and `COVERAGE_FEATURES`
-   only. Add `TRACEABILITY_FEATURES = ("module_name_in_test_file", "path_distance",
-   "n_tests_in_file")` and an `exclude_traceability` flag, so L3 is one constructor argument.
-2. **Fix a mislabelled feature.** `STRUCTURED_NAMES[5]` is `"module_name_in_test_file"`, but the
-   array slot holds `name_match` — a *filename-stem* match indicator
-   (`change_stems[i] in test_names[j]`), not a module-name test. `StructuralRuleSelector` reads
-   it by that name. Rename to `filename_stem_match`; a pure rename, but it makes the
-   transferability argument legible.
-3. **Global history removal, not the starved subset.** The starved *filter* selects changes whose
-   killing pair is cold — a subset. The target regime is *uniformly* cold, so the right
-   manipulation is `exclude_history=True` for everyone, with the starved subset kept only as a
-   separate sensitivity analysis. A framing change in reporting, not new code.
-4. **`--candidates full` as the default** for every comparison from here on. The `covered` mask
-   presupposes per-test coverage, precisely the data the target regime lacks.
-5. **A seconds-based budget** alongside the count-based one, for the time-budget axis of W1.
+1. **A feature-exclusion family.** `models.TRACEABILITY_FEATURES = ("filename_stem_match",
+   "path_distance", "n_tests_in_file")` now exists. The ladder does not use an exclusion flag;
+   it *zeroes* the columns of the removed families, because a zeroed column is exactly "a
+   feature that carries no information" and it keeps one code path for the learned and the
+   hand-built selectors — so `structural_rule` degrades to "shortest test first" rather than
+   crashing, which is the honest behaviour of a method whose input has ceased to exist.
+2. **Mislabelled feature fixed.** `STRUCTURED_NAMES[5]` was `"module_name_in_test_file"` but
+   held a *filename-stem* match indicator; renamed to `filename_stem_match` across all five
+   call sites.
+3. **Label source wired.** `config.LABELS` / `RTS_LABELS` selects `mutmut` or `full`, with
+   `--labels` on the CLIs. Module state rather than a parameter, because every selector, feature
+   and evaluation must agree and threading it through ~20 `dataset.build` call sites would be
+   error-prone. `mutmut` stays the default and reproduces every documented number exactly.
+4. **Node-id canonicalisation.** `artifacts.canonical_nodeid` collapses the two wall-clock
+   parametrization ids that change on every collection. Applied only under `full` labels.
+5. **SemIf caches made pool-independent.** `semif.load_scores` now prefers `change_id` /
+   `test_nodeid` over `change_row` / `test_col`. The indices are only valid for the exact
+   dataset the cache was written against, so a cache silently mis-mapped when the pool grew from
+   1187 to 1189.
+6. **`--candidates full`** is used for every ladder and BugsInPy number.
 
 ---
 
@@ -324,19 +329,24 @@ passes.
 
 ## 5. Falsifiers
 
-Pre-registered, so a null is informative:
+Pre-registered, so a null is informative. Outcomes measured so far are marked.
 
 * **W1 falsifies the hypothesis** if, at L2 and L3, SemIf does not exceed the BM25-only tree on
-  the full candidate set with corrected labels. Current evidence says it will (0.681 vs 0.582 at
-  n=141), so a failure would be informative.
-* **W1 confirms the hypothesis** if SemIf's margin over the BM25-only tree grows monotonically
-  across L0 → L3. The interesting quantity is the *slope*, not the level.
-* **Gate T0 kills the direction** if the killing test shares no tokens with the change text in
-  the target corpus. That would mean the task is not text-solvable, and it is a legitimate
-  finding rather than a failure.
-* **W2a changes the picture** if real labels (several failing tests per change, not defined by
-  coverage) move the ordering at all. The study predicts more killers makes RTS easier and
-  compresses differences, which would weaken SemIf's position — the opposite of the hypothesis.
+  the full candidate set with corrected labels. **Not falsified — confirmed.** SemIf leads by
+  +0.170 at b0.05 under corrected labels, and the margin is positive at every budget. The
+  crossing happens exactly at L2, i.e. when coverage is removed.
+* **W1 confirms the hypothesis** if SemIf's margin grows monotonically across L0 → L3. Margin
+  goes −0.050 → −0.078 → +0.170 → +0.170 under corrected labels. **Confirmed through L2; L3 adds
+  nothing**, so the honest statement is that coverage is the whole effect and filename/path
+  proximity is irrelevant. The interesting quantity was the slope, and the slope is a step.
+* **Gate T0 kills the direction** if the killing test shares no tokens with the change. **Passes
+  weakly on BugsInPy** (87.3% share ≥1 token, but only 2.66 vs 2.03 tokens of lift, and *no*
+  lift at all for black and sanic), and **passes strongly on MicroPython** (98.4%). So the task
+  is text-solvable in both, which removes the main reason to abandon the direction but also
+  undercuts the reason to expect a semantic model to be needed.
+* **W2a changes the picture** if real labels move the ordering. Pending the scoring pass.
+  One expectation is already refuted: BugsInPy bugs have a median of **one** failing test, so
+  "more killers makes RTS easier" does not apply to it.
 
 ---
 

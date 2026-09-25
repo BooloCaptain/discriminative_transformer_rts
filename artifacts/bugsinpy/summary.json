@@ -1,0 +1,50 @@
+{
+  "tqdm": {
+    "bugs": 8,
+    "pool": 96,
+    "failing_per_bug": 1.12,
+    "bytes": 129601
+  },
+  "cookiecutter": {
+    "bugs": 4,
+    "pool": 274,
+    "failing_per_bug": 1.25,
+    "bytes": 223087
+  },
+  "httpie": {
+    "bugs": 5,
+    "pool": 249,
+    "failing_per_bug": 1.0,
+    "bytes": 139678
+  },
+  "PySnooper": {
+    "bugs": 1,
+    "pool": 29,
+    "failing_per_bug": 1.0,
+    "bytes": 36309
+  },
+  "sanic": {
+    "bugs": 4,
+    "pool": 479,
+    "failing_per_bug": 1.0,
+    "bytes": 442859
+  },
+  "thefuck": {
+    "bugs": 24,
+    "pool": 677,
+    "failing_per_bug": 1.25,
+    "bytes": 769907
+  },
+  "black": {
+    "bugs": 21,
+    "pool": 151,
+    "failing_per_bug": 1.05,
+    "bytes": 231575
+  },
+  "tornado": {
+    "bugs": 10,
+    "pool": 1114,
+    "failing_per_bug": 1.0,
+    "bytes": 1271984
+  }
+}

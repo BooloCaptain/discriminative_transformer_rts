@@ -31,6 +31,17 @@ COVERAGE_FEATURES = (
     "coverage_rank_prior",
 )
 
+# Features that exist only because tests are co-located with the code, conventionally
+# named, and instrumented in the same process. None of these survive a boundary that puts
+# the changed code outside the test process -- which is the regime of interest, see
+# plan_next_steps.md. Kept as a named family so the traceability ladder can remove them as
+# a group.
+TRACEABILITY_FEATURES = (
+    "filename_stem_match",
+    "path_distance",
+    "n_tests_in_file",
+)
+
 
 @dataclass
 class Context:
@@ -110,17 +121,17 @@ class StructuralRuleSelector(Selector):
     """Hand-built rule: covered tests whose file name matches the changed module.
 
     This exists because it turns out to explain most of the achievable recall. The
-    conjunction ``covers_function AND module_name_in_test_file`` narrows the suite
-    to a median of 9 candidate tests, so most of the task is solved by cheap
-    structural funneling rather than by anything semantic. Any model claiming to
-    work must be measured against this, not just against random.
+    conjunction ``covers_function AND filename_stem_match`` narrows the suite to a
+    median of 9 candidate tests, so most of the task is solved by cheap structural
+    funneling rather than by anything semantic. Any model claiming to work must be
+    measured against this, not just against random.
     """
 
     name = "structural_rule"
 
     def scores(self, ctx: Context) -> np.ndarray:
         covered = ctx.feature("covers_function")
-        name_match = ctx.feature("module_name_in_test_file")
+        name_match = ctx.feature("filename_stem_match")
         n_lines = ctx.feature("test_n_lines")
         # Covered first, then name-matching, then shortest test first.
         return covered * 2.0 + name_match + 1.0 / (1.0 + n_lines)

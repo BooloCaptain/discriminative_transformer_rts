@@ -1,0 +1,133 @@
+{
+  "n_bugs": 71,
+  "projects": [
+    "PySnooper",
+    "black",
+    "cookiecutter",
+    "httpie",
+    "sanic",
+    "thefuck",
+    "tornado",
+    "tqdm"
+  ],
+  "bridge_audit": {
+    "overall": {
+      "bugs": 71,
+      "share_any_token": 0.8732394366197183,
+      "fail_overlap_mean": 2.6619718309859155,
+      "other_overlap_mean": 2.0346640445006545
+    },
+    "per_project": {
+      "PySnooper": {
+        "bugs": 1,
+        "share_any_token": 1.0,
+        "fail_overlap_mean": 7.0,
+        "other_overlap_mean": 7.0
+      },
+      "black": {
+        "bugs": 19,
+        "share_any_token": 0.7894736842105263,
+        "fail_overlap_mean": 1.394736842105263,
+        "other_overlap_mean": 1.4692783965229685
+      },
+      "cookiecutter": {
+        "bugs": 3,
+        "share_any_token": 0.6666666666666666,
+        "fail_overlap_mean": 5.166666666666667,
+        "other_overlap_mean": 1.9937599574336666
+      },
+      "httpie": {
+        "bugs": 4,
+        "share_any_token": 0.75,
+        "fail_overlap_mean": 3.25,
+        "other_overlap_mean": 1.6632896384630111
+      },
+      "sanic": {
+        "bugs": 3,
+        "share_any_token": 1.0,
+        "fail_overlap_mean": 3.0,
+        "other_overlap_mean": 3.674124636466853
+      },
+      "thefuck": {
+        "bugs": 23,
+        "share_any_token": 1.0,
+        "fail_overlap_mean": 2.6956521739130435,
+        "other_overlap_mean": 1.925257052770372
+      },
+      "tornado": {
+        "bugs": 10,
+        "share_any_token": 0.9,
+        "fail_overlap_mean": 2.7,
+        "other_overlap_mean": 1.784918914838141
+      },
+      "tqdm": {
+        "bugs": 8,
+        "share_any_token": 0.75,
+        "fail_overlap_mean": 3.625,
+        "other_overlap_mean": 2.969742990994559
+      }
+    }
+  },
+  "results": {
+    "random": {
+      "0.01": {
+        "recall": 0.0,
+        "lo": 0.0,
+        "hi": 0.0,
+        "n": 71,
+        "mean_k": 3.6056338028169015
+      },
+      "0.05": {
+        "recall": 0.014084507042253521,
+        "lo": 0.0,
+        "hi": 0.04225352112676056,
+        "n": 71,
+        "mean_k": 16.225352112676056
+      },
+      "0.10": {
+        "recall": 0.08450704225352113,
+        "lo": 0.028169014084507043,
+        "hi": 0.15492957746478872,
+        "n": 71,
+        "mean_k": 31.887323943661972
+      },
+      "0.20": {
+        "recall": 0.2112676056338028,
+        "lo": 0.12640845070422538,
+        "hi": 0.30985915492957744,
+        "n": 71,
+        "mean_k": 63.29577464788732
+      }
+    },
+    "bm25_lexical": {
+      "0.01": {
+        "recall": 0.08450704225352113,
+        "lo": 0.028169014084507043,
+        "hi": 0.15492957746478872,
+        "n": 71,
+        "mean_k": 3.6056338028169015
+      },
+      "0.05": {
+        "recall": 0.22535211267605634,
+        "lo": 0.1267605633802817,
+        "hi": 0.323943661971831,
+        "n": 71,
+        "mean_k": 16.225352112676056
+      },
+      "0.10": {
+        "recall": 0.30985915492957744,
+        "lo": 0.19718309859154928,
+        "hi": 0.4084507042253521,
+        "n": 71,
+        "mean_k": 31.887323943661972
+      },
+      "0.20": {
+        "recall": 0.352112676056338,
+        "lo": 0.23943661971830985,
+        "hi": 0.4510563380281687,
+        "n": 71,
+        "mean_k": 63.29577464788732
+      }
+    }
+  }
+}

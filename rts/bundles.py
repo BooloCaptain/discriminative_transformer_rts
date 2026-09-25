@@ -237,7 +237,7 @@ def bundle_arrays(
     X_base, names = features.structured_features(ds)
     ix = {n: i for i, n in enumerate(names)}
     cov = X_base[:, :, ix["covers_function"]] > 0.5
-    nm = X_base[:, :, ix["module_name_in_test_file"]] > 0.5
+    nm = X_base[:, :, ix["filename_stem_match"]] > 0.5
     pd = X_base[:, :, ix["path_distance"]]
     dur = X_base[:, :, ix["test_duration"]]
     nlin = X_base[:, :, ix["test_n_lines"]]

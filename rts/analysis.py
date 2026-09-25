@@ -7,7 +7,7 @@ model is evaluated on the same bins.
 
 Panel C -- the mechanism. For the same bins, what fraction of killing tests lie
 inside the cheap structural funnel (``covers_function AND
-module_name_in_test_file``), and what fraction the structural models actually
+filename_stem_match``), and what fraction the structural models actually
 recover. If the funnel fraction collapses as sparsity rises while SemIf's recall
 does not, that is *why* the crossover happens: structural methods fail exactly
 where the killer is not the file's usual suspect.
@@ -126,7 +126,7 @@ def panel_c(
     ix = {n: i for i, n in enumerate(features.STRUCTURED_NAMES)}
     X, _ = features.structured_features(ds)
     covered = X[:, :, ix["covers_function"]]
-    name_match = X[:, :, ix["module_name_in_test_file"]]
+    name_match = X[:, :, ix["filename_stem_match"]]
 
     funnel, cov_only, median_rank = [], [], []
     funnel_size, rank_in_funnel = [], []

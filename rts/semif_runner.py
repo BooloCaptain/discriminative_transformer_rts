@@ -218,7 +218,7 @@ def format_features(
     else:
         selected = list(range(len(names)))
 
-    boolean = {"covers_function", "module_name_in_test_file"}
+    boolean = {"covers_function", "filename_stem_match"}
     integer = {
         "n_covering_tests", "n_tests_in_test_file", "test_n_lines", "test_n_tokens",
         "change_size", "change_added_lines", "change_removed_lines", "test_runs_cum",
