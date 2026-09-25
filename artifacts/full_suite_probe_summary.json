@@ -1,0 +1,260 @@
+{
+  "probe_dir": "artifacts/probe_full_suite",
+  "mutants_summarised": 2651,
+  "population": 2651,
+  "zero_outcome": 0,
+  "zero_outcome_mutants": [],
+  "wrong_outcome_count": 0,
+  "gate2_subset_ok": 2651,
+  "gate2_violations": [],
+  "fault_bearing": 2327,
+  "killers": {
+    "median": 8.0,
+    "mean": 58.379028792436614,
+    "max": 759,
+    "q25": 3.0,
+    "q75": 33.0,
+    "q95": 358.0,
+    "single_killer_faults": 317,
+    "total_killers": 135848
+  },
+  "killed": {
+    "fault_bearing": 2311,
+    "with_out_of_coverage_killer": 113,
+    "share_out_of_coverage": 0.04889658156642146,
+    "killers_not_in_pool": 275,
+    "mutants_with_off_pool_killers": 95,
+    "examples": [
+      {
+        "mutant": "marshmallow.fields.x\u01c1Field\u01c1__init____mutmut_54",
+        "covering": 760,
+        "killers": 755,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_39",
+        "covering": 357,
+        "killers": 358,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaMeta\u01c1__init____mutmut_10",
+        "covering": 354,
+        "killers": 355,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x__get_fields__mutmut_1",
+        "covering": 358,
+        "killers": 361,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_47",
+        "covering": 357,
+        "killers": 358,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaMeta\u01c1__init____mutmut_11",
+        "covering": 354,
+        "killers": 355,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_get_class__mutmut_7",
+        "covering": 8,
+        "killers": 5,
+        "outside": [
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.fields.x\u01c1Field\u01c1__init____mutmut_27",
+        "covering": 760,
+        "killers": 757,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_45",
+        "covering": 357,
+        "killers": 358,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_76",
+        "covering": 357,
+        "killers": 356,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      }
+    ]
+  },
+  "survivors": {
+    "population": 340,
+    "sampled": 340,
+    "converted_to_fault": 16,
+    "fault_bearing": 16,
+    "with_out_of_coverage_killer": 15,
+    "share_out_of_coverage": 0.9375,
+    "killers_not_in_pool": 37,
+    "mutants_with_off_pool_killers": 15,
+    "examples": [
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_8",
+        "covering": 351,
+        "killers": 115,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_4",
+        "covering": 351,
+        "killers": 254,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_10",
+        "covering": 351,
+        "killers": 190,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_115",
+        "covering": 357,
+        "killers": 8,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_11",
+        "covering": 351,
+        "killers": 1,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_9",
+        "covering": 351,
+        "killers": 6,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_15",
+        "covering": 351,
+        "killers": 317,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.schema.x\u01c1SchemaOpts\u01c1__init____mutmut_109",
+        "covering": 357,
+        "killers": 8,
+        "outside": [
+          "tests/test_registry.py::test_multiple_classes_with_all",
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_2",
+        "covering": 351,
+        "killers": 5,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module"
+        ]
+      },
+      {
+        "mutant": "marshmallow.class_registry.x_register__mutmut_16",
+        "covering": 351,
+        "killers": 98,
+        "outside": [
+          "tests/test_registry.py::test_serializer_class_registry_override_if_same_classname_same_module",
+          "tests/test_registry.py::test_serializer_class_registry_register_same_classname_different_module",
+          "tests/test_schema.py::test_class_registry_returns_schema_type"
+        ]
+      }
+    ]
+  },
+  "top_out_of_coverage_killers": [
+    {
+      "test": "test_multiple_classes_with_all",
+      "occurrences": 114
+    },
+    {
+      "test": "test_serializer_class_registry_override_if_same_classname_same_module",
+      "occurrences": 106
+    },
+    {
+      "test": "test_serializer_class_registry_register_same_classname_different_module",
+      "occurrences": 105
+    },
+    {
+      "test": "test_class_registry_returns_schema_type",
+      "occurrences": 101
+    }
+  ]
+}

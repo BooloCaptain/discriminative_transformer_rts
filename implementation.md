@@ -681,7 +681,9 @@ arms, `--exclude-scored`), `rts/direct_runner.py`, `rts/embed.py`, `rts/variatio
 ### Next steps, in priority order
 
 > The same agenda, in a form meant to be read on its own, is in `plan.md` under **Next steps**.
-> Keep the two in sync if either changes.
+> Keep the two in sync if either changes. Detailed execution plan — design decisions, costs,
+> validation gates, and the reconnaissance results that re-scope Gap 2 — is in
+> `plan_next_steps.md`.
 
 The five proposals below come from a review of how this benchmark diverges from the target
 setting (long-running integration tests of embedded systems). The important observation is

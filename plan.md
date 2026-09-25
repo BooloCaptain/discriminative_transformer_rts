@@ -57,6 +57,10 @@ section 5.7 of `implementation.md`.
 
 # Next steps
 
+> Detailed execution plan, with reconnaissance results and per-step costs: `plan_next_steps.md`.
+> That file holds the design decisions, the validation gates, and the measured de-lexicalisation
+> gate that re-scopes Gap 2. Update it as the work lands.
+
 This is the agenda for the next session. The study's question is answered — SemIf does not
 beat the classical selectors in any regime tested, and all four text-side levers failed
 (`implementation.md` §6 and §11) — so what follows is the work that could still change that,
