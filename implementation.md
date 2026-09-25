@@ -305,7 +305,9 @@ comparison honest.
    therefore removes the tree's best feature. What *does* survive is the mechanism:
    SemIf's recall does not degrade as failure history is removed, because it never used
    history. That is a real property of a text-only model and it is simply not worth
-   enough to beat structure. See **Full-suite starved arm** below.
+   enough to beat structure. **Confirmed at n=141**, where SemIf loses to the coverage+BM25 tree
+   at every budget (p<0.0001) and to the three-line structural rule at three of four. See
+   **Full-suite starved arm** below.
 
 So the answer to the study's question **is a flat no**, and now it is a clean one.
 XGBoost on cheap structural features wins comfortably everywhere, and the regime where
@@ -814,11 +816,57 @@ which is not how RTS is deployed. The corrected gap is also *larger* than the or
 result claimed in the other direction: the best classical model on this arm uses four columns,
 not fifteen.
 
-Remaining caveat, and it is the honest one: n=43. That is small, and the `failures <= 5` version
-(141 faults, 167k pairs, ~95 min) is the decision-grade confirmation, listed as outstanding. It
-is a caveat about precision, not about direction: every one of the 32 seed/budget cells across
-two trees favours the classical model, and against the strongest tree all four budgets are
-p<0.0001 even at n=43.
+This was the one caveat that mattered, and **it has since been resolved at n=141** (see the
+confirmation subsection below): the direction and significance both hold, and the two cells that
+were soft at n=43 -- the b0.05 comparison against the structural rule and the margin over the
+BM25-only tree -- both move *against* SemIf when the arm grows. So n=43 was generous, not
+unrepresentative.
+
+#### n=141 confirmation: the correction strengthens
+
+The arm above is n=43, and at b0.05 its comparison against the structural rule was a tie. The
+decision-grade version is the `failures <= 5` population: 141 held-out faults, 167,367 pairs.
+Only the 98 changes not already in the n=43 cache needed scoring (116,326 pairs, 62 min at
+31 pairs/s) via the new `--exclude-scored` flag; the two caches are merged on read.
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| **`xgboost_static_lex`** (coverage + BM25, no history) | **0.865** | **0.972** | **0.979** | **1.000** |
+| `xgboost_struct_lex` | 0.823 | 0.936 | 0.979 | 0.993 |
+| `xgboost_struct` | 0.745 | 0.901 | 0.965 | 1.000 |
+| `structural_rule` | 0.574 | 0.759 | 0.908 | 0.979 |
+| `coverage` | 0.461 | 0.652 | 0.730 | 0.816 |
+| `rankaverage_xgb_semif` | 0.532 | 0.723 | 0.787 | 0.901 |
+| `xgboost_static_nocov_lex` (BM25 only) | 0.326 | 0.582 | 0.723 | 0.872 |
+| **`semif_textonly`** | **0.426** | **0.681** | **0.745** | **0.837** |
+| `bm25_lexical` | 0.305 | 0.504 | 0.553 | 0.617 |
+| `failure_rate` | 0.028 | 0.085 | 0.206 | 0.418 |
+| `random` | 0.000 | 0.043 | 0.085 | 0.191 |
+
+Paired bootstrap (n=141):
+
+| comparison | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| vs `xgboost_static_lex` | **-0.440** p<0.0001 | **-0.291** p<0.0001 | **-0.234** p<0.0001 | **-0.163** p<0.0001 |
+| vs `structural_rule` | **-0.149** p=0.004 | -0.078 p=0.121 | **-0.163** p<0.0001 | **-0.142** p<0.0001 |
+| vs `xgboost_static_nocov_lex` | **+0.099** p=0.015 | **+0.099** p=0.025 | +0.021 p=0.68 | -0.035 p=0.44 |
+
+**Reading:**
+
+1. **Every n=43 conclusion holds and tightens.** SemIf loses to the best classical model at
+   every budget, now by -0.16 to -0.44 with p<0.0001 throughout.
+2. **The b0.05 tie with the structural rule was noise, and it resolves against SemIf.** At n=141
+   the three-line rule beats SemIf at three of four budgets (-0.149 p=0.004, -0.163 p<0.0001,
+   -0.142 p<0.0001) and leads at b0.05 as well (-0.078, p=0.121). So SemIf does not even match a
+   rule that only checks coverage plus test-filename matching -- a rule with no model, no
+   training, and no text.
+3. **The residual value of the text model is now precisely bounded.** SemIf's edge over the
+   deliberately cheap tree (BM25 only) survives only at the two tightest budgets, +0.099
+   (p=0.015 and p=0.025), and disappears by b0.10. That ~0.10 at b<=0.05 is the entire
+   contribution of a 4B reranker over bag-of-words on this benchmark, on a population where
+   every classical model except BM25-only does substantially better.
+4. **The n=43 arm was generous to SemIf.** Both the b0.05 structural-rule tie and the wider
+   cheap-tree margin were small-sample artifacts; the larger arm moves both against it.
 
 ### Full-suite arm reveals a second problem: candidate-only vs all-pairs training
 
@@ -1489,11 +1537,13 @@ models rely on, so the classical baselines were being scored on a task with thei
 feature removed. Re-scored against the full 1187-test suite on the same 43 faults,
 SemIf reaches 0.674 at b0.05 while a coverage + BM25 tree (four columns, no history) reaches
 **0.953** and a three-line structural rule reaches 0.674. SemIf loses to that tree at every
-budget, all four at p<0.0001.
+budget, all four at p<0.0001. The same holds on the decision-grade 141-fault population, where
+SemIf scores 0.681 against 0.972 and loses to the structural rule at three of four budgets.
 
 | regime | SemIf | best classical | verdict |
 |---|---|---|---|
 | full held-out, 464 faults, covered | 0.306 | 0.700 XGBoost | loses 2.3x |
+| starved `failures <= 5`, 141 faults, **full suite** | 0.681 | **0.972** XGBoost | **loses 1.4x** |
 | starved `failures <= 2`, 43 faults, **full suite** | 0.674 | **0.953** XGBoost | **loses 1.4x** |
 | starved `failures <= 2`, 43 faults, covered (superseded) | 0.442 | 0.256 XGBoost | "won" 1.7x -- **artifact** |
 | 6 mutations, cross-file | 0.190 | 0.525 XGBoost | loses |
@@ -1534,8 +1584,11 @@ features plus BM25 reaches 0.700, and a three-line coverage-plus-filename rule r
 - Documentation corrected three times after its own claims failed verification
   (the 94.6% importance figure, the mirror-degradation direction, and the funnel-size
   mechanism). Treat earlier-sounding claims in this document with that history in mind.
-- **Full-suite starved arm** (outstanding item 1): 51,041 pairs scored, and the result
-  reverses the starved conclusion. See the correction section above.
+- **Full-suite starved arm** (outstanding item 1): 51,041 pairs at n=43 and a further 116,326
+  at n=141 (via a new `--exclude-scored` flag, so the superset arm only paid for the 98 new
+  changes). The result reverses the starved conclusion and strengthens with n.
+- **A history x coverage decomposition** and a four-seed robustness check, which turn the
+  correction from an observation into a measured mechanism.
 - **P5** both arms (`rts/variations.py --only p5 p5_trained`), **P2** five wordings at two
   starvation thresholds, **P3** code-embedding baseline, **P1** direct mode pairwise (all
   8,329 pairs, 43 changes, 104 min), plus a history x coverage decomposition and a four-seed
@@ -1550,15 +1603,7 @@ features plus BM25 reaches 0.700, and a three-line coverage-plus-filename rule r
 
 ### Outstanding, in priority order
 
-1. **`failures <= 5` full-suite run** (141 faults, 167,367 pairs, ~95 min). The corrected
-   conclusion rests on n=43. Against the strongest classical model that is already decisive
-   (all four budgets p<0.0001), so the marginal value here is in the two comparisons that are
-   still soft at n=43: SemIf versus the three-line `structural_rule` (p=0.090 at b0.01,
-   p=0.052 at b0.10, p=0.032 at b0.20) and SemIf versus the *cheap* tree. A tie with a
-   three-line rule is a meaningful finding in its own right, and 141 is the population the
-   iteration-cost analysis already identified as the arm-development sweet spot. Highest value
-   remaining.
-2. **The 16-option direct-mode variant, and P1 at larger n.** Both are blocked on throughput,
+1. **The 16-option direct-mode variant, and P1 at larger n.** Both are blocked on throughput,
    not on design. Qwen3.5-4B runs at 1.3 pairs/s here purely because two optional kernels are
    missing; installing `flash-linear-attention` (Triton, ROCm-capable) and, if it builds,
    `causal_conv1d` would make the full 464-change covered run (~16 h today) and the
@@ -1567,7 +1612,7 @@ features plus BM25 reaches 0.700, and a three-line coverage-plus-filename rule r
    up to 16 options and a softmax over slots -- which needs a tournament or cross-window
    normalisation to produce a global ranking. Worth doing only after the kernels are installed,
    since the complexity ladder predicts the large multi-topic window will hurt regardless.
-3. **Test-complexity axis** (bundle tests into coarse groups, emulating long-running
+2. **Test-complexity axis** (bundle tests into coarse groups, emulating long-running
    integration tests). Still the only remaining manipulation likely to favour a text
    model, because it breaks coverage and filename matching simultaneously. **Design note
    before attempting it:** the naive version is not interpretable. To score a coarse
@@ -1576,13 +1621,13 @@ features plus BM25 reaches 0.700, and a three-line coverage-plus-filename rule r
    controls both predict will destroy recall for reasons that have nothing to do with
    semantic signal. A token-budget-matched control (the `bundle_text(token_budget=)`
    variant already built but never run) is required to separate the two.
-4. **`after_document` re-run on all 464 held-out faults** (~74 min) so the full-set
+3. **`after_document` re-run on all 464 held-out faults** (~74 min) so the full-set
    fairness comparison is citable rather than inferred from the 141-change subset.
    Deliberately dropped this session in favour of the items above.
-5. **Second SUT, and a real-commit dataset.** Everything rests on one project, one
-   revision, and mutation-derived labels. Given that five variations all failed to move
-   the result, this is now the highest-value *scientific* next step, not just a
-   robustness check.
+4. **Second SUT, and a real-commit dataset.** Everything rests on one project, one
+   revision, and mutation-derived labels. Given that five variations and the corrected
+   starved arm all failed to move the result, this is now the highest-value *scientific*
+   next step, not just a robustness check.
 
 ### Things that would change the verdict
 

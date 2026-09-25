@@ -664,6 +664,7 @@ def score_heldout(
     feature_mode: str | None = None,
     placement: str = "instruct",
     train_prefix: int | None = None,
+    exclude_scored: Path | None = None,
 ) -> dict:
     """Score every held-out change (or a starved subset) against its candidates.
 
@@ -701,6 +702,21 @@ def score_heldout(
         rows = ds.test_idx[mask[ds.test_idx]]
     if train_prefix is not None:
         rows = ds.train_idx[-train_prefix:]
+    if exclude_scored is not None:
+        # Score only the changes a previous arm has not already covered. Used to
+        # build a superset arm incrementally: `failures <= 2` is a subset of
+        # `failures <= 5`, so the 141-change arm only needs the 98 new changes.
+        done = load_done_keys(exclude_scored)
+        before = len(rows)
+        rows = np.array(
+            [
+                int(r) for r in rows
+                if not all((int(r), int(j)) in done for j in np.flatnonzero(candidates[r]))
+            ],
+            dtype=np.int64,
+        )
+        print(f"excluded already-scored: {before - len(rows)} of {before} changes "
+              f"(from {exclude_scored.name})")
     if feature_mode is None and include_features:
         feature_mode = "full"
     pair_set = build_pair_set(
@@ -819,6 +835,8 @@ if __name__ == "__main__":
                         help="question wording (P2 sweep)")
     parser.add_argument("--out", type=Path, default=None,
                         help="explicit output cache path")
+    parser.add_argument("--exclude-scored", type=Path, default=None,
+                        help="skip changes already fully scored in this cache")
     args = parser.parse_args()
 
     if args.controls:
@@ -842,6 +860,7 @@ if __name__ == "__main__":
             starved_max_failures=args.starved,
             instruction=instruction,
             train_prefix=args.train_prefix,
+            exclude_scored=args.exclude_scored,
         )
     elif args.pilot:
         pilot(

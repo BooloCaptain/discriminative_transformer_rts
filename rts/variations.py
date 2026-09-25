@@ -163,8 +163,53 @@ def _selectors(ds: dataset.Dataset, ctx: models.Context, candidates_mode: str) -
 # --- experiment 1: full-suite starved arm ----------------------------------
 
 
+def merge_caches(paths: list[Path], out_path: Path) -> Path:
+    """Concatenate score caches, de-duplicating by (change_row, test_col).
+
+    Used to assemble a superset arm incrementally: `failures <= 2` is a subset of
+    `failures <= 5`, so the 141-change arm is built from the 43-change cache plus a
+    98-change delta rather than re-scoring 51k pairs that already exist.
+    """
+    merged: dict[tuple[int, int], dict] = {}
+    for path in paths:
+        with Path(path).open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if "change_row" in record and "test_col" in record:
+                    merged[(int(record["change_row"]), int(record["test_col"]))] = record
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as fh:
+        for record in merged.values():
+            fh.write(json.dumps(record) + "\n")
+    print(f"[merge] {out_path.name}: {len(merged):,} unique pairs from {len(paths)} caches")
+    return out_path
+
+
 def full_starved(max_failures: int = 2) -> dict:
-    cache = config.ARTIFACTS / f"semif_scores_starved{max_failures}_full.jsonl"
+    """Re-evaluate the starved arm with the full 1187-test candidate set.
+
+    ``max_failures=2`` is the 43-fault arm that produced the original positive
+    result; ``max_failures=5`` is the 141-fault decision-grade confirmation. The
+    second is assembled from the first plus a scored delta (see ``merge_caches``).
+    """
+    if max_failures == 2:
+        cache = config.ARTIFACTS / "semif_scores_starved2_full.jsonl"
+    else:
+        cache = config.ARTIFACTS / f"semif_scores_starved{max_failures}_full.jsonl"
+        if not cache.exists():
+            merge_caches(
+                [
+                    config.ARTIFACTS / "semif_scores_starved2_full.jsonl",
+                    config.ARTIFACTS / f"semif_scores_starved{max_failures}_extra_full.jsonl",
+                ],
+                cache,
+            )
     if not cache.exists():
         raise FileNotFoundError(f"missing {cache}; run the starved full-suite scoring arm first")
 
@@ -216,7 +261,6 @@ def full_starved(max_failures: int = 2) -> dict:
         "candidates": "full",
         **group,
     }
-
 
 # --- experiment 5: is the transformer redundant? ---------------------------
 
@@ -690,7 +734,8 @@ def main(only: list[str] | None = None) -> dict:
     if report_path.exists():
         report = json.loads(report_path.read_text())
 
-    todo = only or ["full_starved", "full_starved_seeds", "p5", "p5_trained", "p2", "p3", "p1"]
+    todo = only or ["full_starved", "full_starved5", "full_starved_seeds", "p5", "p5_trained",
+                    "p2", "p3", "p1"]
     for name in todo:
         print("\n" + "=" * 78, flush=True)
         print(f"EXPERIMENT: {name}", flush=True)
@@ -698,6 +743,8 @@ def main(only: list[str] | None = None) -> dict:
         try:
             if name == "full_starved":
                 report["full_starved"] = full_starved()
+            elif name == "full_starved5":
+                report["full_starved5"] = full_starved(max_failures=5)
             elif name == "full_starved_seeds":
                 report["full_starved_seeds"] = full_starved_seeds()
             elif name == "p5":
@@ -725,7 +772,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", nargs="*", default=None,
-                        choices=["full_starved", "full_starved_seeds", "p5", "p5_trained",
-                                 "p2", "p3", "p1"])
+                        choices=["full_starved", "full_starved5", "full_starved_seeds", "p5",
+                                 "p5_trained", "p2", "p3", "p1"])
     args = parser.parse_args()
     main(args.only)
