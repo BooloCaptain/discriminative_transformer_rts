@@ -55,6 +55,15 @@ SEMIF_MODEL_REVISION = "22e683669bc0f0bd69640a1354a6d0aebcfeede5"
 SEMIF_MAX_TOKENS = 8192
 SEMIF_SCORES_FILE = ARTIFACTS / "semif_scores.jsonl"
 
+# P1: SemIf's ``--mode direct`` checkpoint, pinned by the repo manifest at
+# manifests/models.json (role ``direct_option_logits``).
+DIRECT_MODEL = "Qwen/Qwen3.5-4B"
+DIRECT_MODEL_REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+
+# P3: code-specialised encoder for the embedding baseline.
+EMBED_MODEL = "microsoft/codebert-base"
+EMBED_MODEL_REVISION = "3b0952feddeffad0063f274080e3c23d75e7eb39"
+
 
 def ensure_artifacts_dir() -> Path:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)

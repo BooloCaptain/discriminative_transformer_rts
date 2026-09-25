@@ -9,6 +9,7 @@ cumulative, and XGBoost is fit on the training window only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -159,6 +160,8 @@ class XGBoostSelector(Selector):
         max_depth: int = 6,
         learning_rate: float = 0.15,
         seed: int = config.SEED,
+        extra_score_files: dict[str, Path] | None = None,
+        candidates_mode: str | None = None,
     ):
         self.include_lexical = include_lexical
         self.exclude_history = exclude_history
@@ -167,15 +170,30 @@ class XGBoostSelector(Selector):
         self.max_depth = max_depth
         self.learning_rate = learning_rate
         self.seed = seed
+        # P5: extra per-(change, test) score columns supplied by another model.
+        # The canonical use is adding the SemIf reranker score to the structured
+        # features to test whether the transformer is redundant given BM25 plus
+        # cheap structure.
+        self.extra_score_files = dict(extra_score_files or {})
+        # When set, XGBoost trains only on the candidate pairs it will actually be
+        # asked to rank. Training over the whole suite (the historical default)
+        # lets it spend its capacity learning the candidate mask, which is
+        # constant at evaluation time -- that is what produced the once-reported
+        # 0.71 importance on ``covers_function``. None preserves the old behaviour
+        # so existing documented numbers stay reproducible.
+        self.candidates_mode = candidates_mode
         parts = ["xgboost"]
         parts.append("struct" if not exclude_history else "static")
         if exclude_coverage:
             parts.append("nocov")
         if include_lexical:
             parts.append("lex")
+        for tag in self.extra_score_files:
+            parts.append(tag)
         self.name = "_".join(parts)
         self._model = None
         self.importances_: dict[str, float] = {}
+        self._extra_cache: dict[str, np.ndarray] = {}
 
     def _dropped(self) -> set[str]:
         dropped: set[str] = set()
@@ -189,20 +207,46 @@ class XGBoostSelector(Selector):
         dropped = self._dropped()
         return [i for i, n in enumerate(ctx.names) if n not in dropped]
 
-    def _design(self, ctx: Context, rows: np.ndarray) -> np.ndarray:
+    def _extras(self, ctx: Context) -> list[tuple[str, np.ndarray]]:
+        """Extra score matrices, loaded from cache on first use."""
+        for tag, path in self.extra_score_files.items():
+            if tag not in self._extra_cache:
+                self._extra_cache[tag] = semif.load_scores(path, ctx.ds)
+        return [(tag, self._extra_cache[tag]) for tag in self.extra_score_files]
+
+    def _design(
+        self,
+        ctx: Context,
+        rows: np.ndarray,
+        cols_mask: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Flattened design matrix over (change, test) pairs.
+
+        ``cols_mask`` (shape ``[len(rows), n_tests]``) restricts the output to a
+        subset of the pairs, which is how candidate-only training is implemented.
+        """
         keep = self._kept_columns(ctx)
-        block = ctx.X[rows][:, :, keep].reshape(len(rows) * ctx.ds.n_tests, len(keep))
-        if self.include_lexical:
-            extra = ctx.bm25[rows].reshape(-1, 1)
-            block = np.hstack([block, extra])
-        return block
+        block = ctx.X[rows][:, :, keep]
+        extras = [ctx.bm25[rows]] if self.include_lexical else []
+        extras.extend(matrix[rows] for _, matrix in self._extras(ctx))
+        if cols_mask is not None:
+            block = block[cols_mask]
+            extras = [extra[cols_mask] for extra in extras]
+        flat = block.reshape(-1, len(keep))
+        if extras:
+            flat = np.hstack([flat] + [extra.reshape(-1, 1) for extra in extras])
+        return flat
 
     def scores(self, ctx: Context) -> np.ndarray:
         import xgboost as xgb
 
         train_rows = ctx.ds.train_idx
-        X_train = self._design(ctx, train_rows)
-        y_train = ctx.ds.labels[train_rows].reshape(-1)
+        train_mask = None
+        if self.candidates_mode is not None:
+            train_mask = dataset.candidate_mask(ctx.ds, self.candidates_mode)[train_rows]
+        X_train = self._design(ctx, train_rows, train_mask)
+        labels = ctx.ds.labels[train_rows]
+        y_train = (labels[train_mask] if train_mask is not None else labels).reshape(-1)
 
         model = xgb.XGBClassifier(
             n_estimators=self.n_estimators,
@@ -223,6 +267,8 @@ class XGBoostSelector(Selector):
         feature_names = [ctx.names[i] for i in keep]
         if self.include_lexical:
             feature_names.append("bm25")
+        for tag, _ in self._extras(ctx):
+            feature_names.append(tag)
         self.importances_ = dict(
             sorted(
                 zip(feature_names, model.feature_importances_.tolist()),

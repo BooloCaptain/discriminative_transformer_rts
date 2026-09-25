@@ -40,6 +40,44 @@ INSTRUCTION = (
     "if the test would plausibly need to run for this change."
 )
 
+# P2 instruction sweep. The diagnosis in implementation.md is that the pinned
+# reranker was trained for *topical relevance over natural language*, while RTS
+# asks an *executional and causal* question, so the instruction is a real lever
+# rather than boilerplate. Each variant changes exactly one thing: the framing of
+# the question. The rest of the prompt skeleton is identical, so any difference is
+# attributable to the wording.
+#
+#   default   -- the reference wording used by every existing cache.
+#   execution -- the diagnosis made explicit: ask about observable runtime
+#                behaviour rather than topical relevance.
+#   fault     -- ask for the prediction directly ("will it fail").
+#   retrieval -- *negative control*: lean into the native reranker prior
+#                (topical relevance). If leaning in helps, the prior-mismatch
+#                diagnosis is wrong.
+#   terse     -- shortest possible question, testing whether the instruction block
+#                is mostly dilution. The placement controls showed ~200 tokens of
+#                uninformative prefix text cost 0.21 recall, and this instruction
+#                is ~35 tokens instead of ~40, so the effect should be small unless
+#                the content is actively misleading.
+INSTRUCTION_VARIANTS: dict[str, str] = {
+    "default": INSTRUCTION,
+    "execution": (
+        "Would running the test below against the changed code produce a different "
+        "result? Answer yes only if executing this test would observe the change, "
+        "for example because it calls the changed code or asserts on behaviour the "
+        "change alters."
+    ),
+    "fault": (
+        "Will the test below fail if this code change is applied? Answer yes only "
+        "if the change would make this test fail."
+    ),
+    "retrieval": (
+        "Is the test below relevant to the code change? Answer yes if the test "
+        "concerns the part of the code that this change modifies."
+    ),
+    "terse": "Does this test depend on the behaviour that this change modifies?",
+}
+
 # Structured features that never vary across a change's candidates under the
 # `covered` mask, and so cannot help rank within that change. Verified empirically:
 # path_distance is included because every test lives in the same directory tree, so
@@ -81,6 +119,7 @@ def build_prompt(
     orientation: str = "change_query",
     features_block: str = "",
     placement: str = "instruct",
+    instruction: str | None = None,
 ) -> str:
     """Render one pair.
 
@@ -89,12 +128,16 @@ def build_prompt(
     ``change_query`` treats the change as the information need and the test as the
     candidate document; ``test_query`` inverts it.
 
+    ``instruction`` overrides the question text (see ``INSTRUCTION_VARIANTS``).
+
     ``features_block`` carries the structured features for the fairness arm.
     ``placement`` controls where it goes: inside ``<Instruct>`` (before the
     Query/Document, which also pushes the content further from the final position
     the reranker reads) or appended after ``<Document>``. The placement switch
     isolates a position/length effect from a content effect.
     """
+    if instruction is None:
+        instruction = INSTRUCTION
     if orientation == "change_query":
         query, document = change_text, test_text
     elif orientation == "test_query":
@@ -102,15 +145,15 @@ def build_prompt(
     else:
         raise ValueError(f"unknown orientation: {orientation!r}")
     if placement == "instruct":
-        instruction = INSTRUCTION + (f"\n\n{features_block}" if features_block else "")
+        head = instruction + (f"\n\n{features_block}" if features_block else "")
         body = (
-            f"<Instruct>: {instruction}\n"
+            f"<Instruct>: {head}\n"
             f"<Query>: {query.strip()}\n"
             f"<Document>: {document.strip()}"
         )
     elif placement == "after_document":
         body = (
-            f"<Instruct>: {INSTRUCTION}\n"
+            f"<Instruct>: {instruction}\n"
             f"<Query>: {query.strip()}\n"
             f"<Document>: {document.strip()}"
         )
@@ -266,6 +309,7 @@ def score_pairs(
     empty_cache_every: int = 50,
     placement: str = "instruct",
     bucket_by_length: bool = False,
+    instruction: str | None = None,
 ) -> tuple[list[float], dict]:
     """Score (change_text, test_text) pairs in batches. Returns scores and stats.
 
@@ -309,6 +353,7 @@ def score_pairs(
                 orientation=orientation,
                 features_block=blocks[i] if blocks else "",
                 placement=placement,
+                instruction=instruction,
             )
             for i, (c, t) in enumerate(chunk)
         ]
@@ -343,6 +388,8 @@ def score_pairs(
         "pairs_per_second": len(pairs) / max(wall, 1e-9),
         "mirror": bool(feature_blocks),
         "bucketed": bool(bucket_by_length),
+        "orientation": orientation,
+        "instruction": instruction or INSTRUCTION,
     }
     return scores, stats
 
@@ -356,6 +403,7 @@ class PairSet:
     index: list[tuple[int, int]]
     feature_blocks: list[str] | None = None
     placement: str = "instruct"
+    instruction: str | None = None
 
 
 def build_pair_set(
@@ -367,6 +415,7 @@ def build_pair_set(
     include_features: bool = False,
     feature_mode: str | None = None,
     placement: str = "instruct",
+    instruction: str | None = None,
 ) -> PairSet:
     """Build pairs, optionally with a prompt metadata block.
 
@@ -413,7 +462,8 @@ def build_pair_set(
                         mode=feature_mode, value_col=value_sources[pos],
                     )
                 )
-    return PairSet(pairs=pairs, index=index, feature_blocks=blocks, placement=placement)
+    return PairSet(pairs=pairs, index=index, feature_blocks=blocks, placement=placement,
+                   instruction=instruction)
 
 
 def load_done_keys(path: Path) -> set[tuple[int, int]]:
@@ -496,7 +546,7 @@ def score_to_cache(
             model, tokenizer, pairs,
             batch_size=batch_size, max_tokens=max_tokens, orientation=orientation,
             feature_blocks=blocks, batch_callback=write_batch,
-            placement=pair_set.placement,
+            placement=pair_set.placement, instruction=pair_set.instruction,
         )
     finally:
         handle.close()
@@ -608,8 +658,14 @@ def score_heldout(
     include_features: bool = False,
     out_path: Path | None = None,
     seed: int = config.SEED,
+    candidates_mode: str = "covered",
+    starved_max_failures: int | None = None,
+    instruction: str | None = None,
+    feature_mode: str | None = None,
+    placement: str = "instruct",
+    train_prefix: int | None = None,
 ) -> dict:
-    """Score every held-out change against its covered candidates.
+    """Score every held-out change (or a starved subset) against its candidates.
 
     SemIf is zero-shot, so the training window is never needed: scoring only the
     held-out changes keeps all 464 faults and costs a fifth of the full grid.
@@ -618,27 +674,57 @@ def score_heldout(
     ``include_features`` selects the fairness arm: with it, the prompt carries the
     same 15 structured features XGBoost receives. Without it the prompt is
     text-only, which is the control.
+
+    Three extensions added for the variation experiments:
+
+    * ``candidates_mode="full"`` scores the whole 1187-test suite. This is the
+      outstanding "full-suite starved arm": with ``covered`` candidates the
+      ``coverage`` baseline is degenerate (every candidate already covers the
+      mutated function), so this is what makes the one positive result comparable
+      to how RTS is actually deployed.
+    * ``starved_max_failures`` restricts rows to the starved population, so the
+      full suite only has to be scored for those changes.
+    * ``instruction`` swaps the question text (see ``INSTRUCTION_VARIANTS``); the
+      prompt skeleton is otherwise identical.
+    * ``train_prefix`` scores the last N changes of the *training* window instead of
+      the held-out window. The P5 "SemIf as an XGBoost column" variant needs the
+      feature on training rows, and the cache only covers held-out changes. Scoring
+      the whole training window is 329k pairs (~3 h); a temporally adjacent prefix
+      of 400 changes is ~62k pairs and is enough to fit the column comparison, with
+      the baseline trained on exactly the same rows.
     """
     ds = dataset.build(seed=seed)
-    candidates = dataset.candidate_mask(ds, "covered")
+    candidates = dataset.candidate_mask(ds, candidates_mode)
     rows = ds.test_idx
+    if starved_max_failures is not None:
+        mask = dataset.starved_mask(ds, max_failures=starved_max_failures)
+        rows = ds.test_idx[mask[ds.test_idx]]
+    if train_prefix is not None:
+        rows = ds.train_idx[-train_prefix:]
+    if feature_mode is None and include_features:
+        feature_mode = "full"
     pair_set = build_pair_set(
         ds, rows, candidates, shuffle=shuffle, seed=seed,
-        include_features=include_features,
+        feature_mode=feature_mode, placement=placement, instruction=instruction,
     )
 
     if out_path is None:
         if shuffle:
             out_path = config.ARTIFACTS / "semif_scores_shuffled.jsonl"
-        elif include_features:
+        elif feature_mode == "full":
             out_path = config.ARTIFACTS / "semif_scores_mirror.jsonl"
         else:
             out_path = config.SEMIF_SCORES_FILE
 
     print(f"orientation     : {orientation}")
     print(f"shuffle         : {shuffle}")
-    print(f"mirror features : {include_features}")
-    print(f"held-out changes: {len(rows)}")
+    print(f"feature mode    : {feature_mode}")
+    print(f"placement       : {placement}")
+    print(f"instruction     : {'default' if instruction is None else 'override'}")
+    print(f"candidates      : {candidates_mode}")
+    print(f"starved <=      : {starved_max_failures}")
+    print(f"train prefix    : {train_prefix}")
+    print(f"changes         : {len(rows)}")
     print(f"pairs           : {len(pair_set.pairs):,}")
     print(f"output          : {out_path}")
 
@@ -722,6 +808,17 @@ if __name__ == "__main__":
     parser.add_argument("--orientation", default="change_query",
                         choices=["change_query", "test_query"])
     parser.add_argument("--max-tokens", type=int, default=None)
+    parser.add_argument("--candidates", default="covered", choices=["covered", "full"],
+                        help="candidate set to score; 'full' is the whole 1187-test suite")
+    parser.add_argument("--starved", type=int, default=None,
+                        help="restrict to the starved population with this failure cap")
+    parser.add_argument("--train-prefix", type=int, default=None,
+                        help="score the last N training-window changes (for the P5 column)")
+    parser.add_argument("--instruction", default="default",
+                        choices=sorted(INSTRUCTION_VARIANTS),
+                        help="question wording (P2 sweep)")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="explicit output cache path")
     args = parser.parse_args()
 
     if args.controls:
@@ -731,12 +828,20 @@ if __name__ == "__main__":
             max_tokens=args.max_tokens,
         )
     elif args.heldout:
+        instruction = (
+            None if args.instruction == "default" else INSTRUCTION_VARIANTS[args.instruction]
+        )
         score_heldout(
             batch_size=args.batch_size,
             orientation=args.orientation,
             max_tokens=args.max_tokens,
             shuffle=args.shuffle,
             include_features=args.mirror,
+            out_path=args.out,
+            candidates_mode=args.candidates,
+            starved_max_failures=args.starved,
+            instruction=instruction,
+            train_prefix=args.train_prefix,
         )
     elif args.pilot:
         pilot(

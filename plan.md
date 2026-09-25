@@ -29,3 +29,27 @@ Tooling, harness details, and measured verification results: see `implementation
 # Undecided
 - Query/document roles for the reranker: which side is the change and which is the test. Rerankers are asymmetric, so this is a real design choice.
 - Precise definition and threshold for the "sparse" change filter (granularity, window, cutoff).
+
+# Resolution status
+
+Both items were carried into the SemIf work and are now partly settled. See
+`implementation.md` for the numbers.
+
+**Sparse filter.** Implemented as `dataset.starved_mask(max_failures=...)` keyed on the
+killing `(file, test)` pair's *failure* count. Thresholds 2 (43 held-out faults) and 5
+(141) are the practical ones; adding the `max_runs` half of the "run once or twice"
+condition collapses the sample to 27/15/8 faults and is not usable. Note the threshold
+was chosen after seeing the data, which the implementation document flags.
+
+**Query/document roles.** Still open. The original comparison was n=10 and favoured
+`test_query`, which is why every cached arm uses `change_query` only after that pilot;
+the planned re-test at adequate n was dropped for time. This matters less than it
+looked: P2's instruction sweep shows the model is insensitive to how the question is
+phrased, and P1 tested a different formulation (direct mode) rather than the
+orientation. If the orientation is ever re-tested it should be done on the full
+candidate set, since the covered mask is now known to distort the comparison.
+
+**Superseded by the results.** The "sparse change filter" arm was the study's main hope
+for finding a regime where a semantic model wins. It does not: re-scoring the starved
+population against the full 1187-test suite shows the classical selectors ahead at every
+budget. See **Full-suite starved arm** in `implementation.md`.

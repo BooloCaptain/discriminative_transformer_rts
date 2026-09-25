@@ -12,11 +12,16 @@ what was measured.
 - **Hardware**: AMD Radeon RX 9070 XT, 17 GB VRAM, via ROCm. `nvidia-smi` is absent;
   `torch.cuda.is_available()` is True and reports the AMD device. All SemIf numbers
   here were produced on this card.
-- **Hugging Face cache**: `/home/noaha/hf_cache` (~7.6 GB). Export `HF_HOME` before
-  any score run or the checkpoint is re-downloaded.
+- **Hugging Face cache**: `/home/noaha/hf_cache`. Export `HF_HOME` before
+  any score run or the checkpoint is re-downloaded. Three checkpoints are now cached:
+  `Qwen/Qwen3-Reranker-4B` (7.6 GB, the main arm), `Qwen/Qwen3.5-4B` (~8 GB, P1 direct
+  mode), and `microsoft/codebert-base` (~0.5 GB, P3), all pinned by revision in
+  `rts/config.py`.
 - Packages added for this work: `mutmut` 3.8.0, `coverage`, `simplejson`,
   `xgboost` 3.4.1, `matplotlib` 3.10.8. Pre-existing: `numpy`, `pandas` 3.0.1,
-  `scikit-learn` 1.8.0, `pytest` 9.0.3.
+  `scikit-learn` 1.8.0, `pytest` 9.0.3. No new packages were installed for the
+  variation experiments: `flash-linear-attention` and `causal_conv1d` were deliberately
+  **not** installed, which is why direct mode runs at 1.25 pairs/s (see below).
 - **SemIf installed in place** at pinned commit `23cf1f39fc9534fe81437200959b6dfc7106e45a`
   (`pip install -e .`, base deps only). `[test]` was deliberately **not** installed:
   it pins `pytest==8.4.2`, which would downgrade 9.0.3 and risk the mutmut harness.
@@ -125,8 +130,15 @@ Package `rts/`, run from the workspace root with `/home/noaha/graphrnn_env/bin/p
 | `rts/features.py` | Cumulative structured features, BM25 scorer, shuffle transforms |
 | `rts/models.py` | All selectors |
 | `rts/semif.py` | SemIf pair builder, cost estimator, score cache |
+| `rts/semif_runner.py` | Batched pairwise reranker scorer; instruction variants; `--candidates full` and `--starved` arms |
 | `rts/evaluate.py` | Per-change budget, metric sweep, paired bootstrap |
 | `rts/pipeline.py` | End-to-end orchestration |
+| `rts/bundles.py` | Change-complexity ladder (rungs 0-5) and coherent bundling |
+| `rts/analysis.py` | Panels A and C of the sparsity sweep, figures, CSVs |
+| `rts/embed.py` | P3: code-embedding similarity baseline (CPU-capable) |
+| `rts/direct_runner.py` | P1: SemIf direct mode, pairwise, batched and resumable |
+| `rts/variations.py` | P1-P5 experiment driver; writes `artifacts/variations.json` |
+| `scripts/run_variation_arms.sh` | Queue for the GPU arms, one at a time |
 
 Commands:
 
@@ -281,24 +293,33 @@ comparison honest.
    XGBoost at 0.970-0.983, the space a semantic model could win is roughly 2
    points at b0.05 and essentially zero at b0.20 (XGBoost is at 1.000).
 
-7. **But in a data-starved history, SemIf overtakes XGBoost.** Filtering to
-   changes whose killing `(file, test)` pair has essentially no failure history
-   (the proxy for a huge codebase where a file has not changed in years), SemIf
-   reaches 0.442 at b0.05 against 0.256 for the best XGBoost, and leads at every
-   budget. The effect is monotone in starvation (XGBoost 2.1x ahead on the full
-   set, 1.2x on `failures <= 5`, 1.7x *behind* on `failures <= 2`), and the
-   mechanism is coherent: the history baselines collapse to near-random while
-   SemIf's relative recall *rises* as history is removed. The margins are marginal
-   under multiple-comparison correction and n is small (43), so see
-   **Starved regime** below for the caveats before citing this.
+7. **The starved regime looked like the exception, and it was not.** Filtering to
+   changes whose killing `(file, test)` pair has essentially no failure history (the
+   proxy for a huge codebase where a file has not changed in years) makes SemIf reach
+   0.442 at b0.05 against 0.256 for the best XGBoost, leading at every budget. That was
+   the one positive result. **It does not survive re-scoring against the full 1187-test
+   suite**, where the same 43 faults put SemIf at 0.674 and a coverage + BM25 tree
+   (`xgboost_static_lex`, four columns, no history) at 0.953, with a three-line
+   structural rule at 0.674. The win came
+   from the `covered` candidate mask, which makes `covers_function` constant and
+   therefore removes the tree's best feature. What *does* survive is the mechanism:
+   SemIf's recall does not degrade as failure history is removed, because it never used
+   history. That is a real property of a text-only model and it is simply not worth
+   enough to beat structure. See **Full-suite starved arm** below.
 
-So the answer to the study's question is not a flat no. **XGBoost wins comfortably
-on a history-rich benchmark, but SemIf wins in the starved regime that the study
-was actually built to probe.** Both halves are needed to state the result honestly.
+So the answer to the study's question **is a flat no**, and now it is a clean one.
+XGBoost on cheap structural features wins comfortably everywhere, and the regime where
+SemIf appeared to win turns out to have been an artifact of the evaluation mask rather
+than a property of the task.
 
 ## SemIf status
 
-**Setup is complete and the model runs.** Scoring the full grid has not been done.
+**Setup is complete, the model runs, and the scoring grid is done for every arm this study
+needs.** Four reranker arms cover all 530 held-out changes (text-only, mirror, after-document,
+change-shuffled), four diagnostic controls cover the 141-change starved subset, a fifth
+arm covers the 43 starved changes against the full 1187-test suite, four instruction
+variants cover the starved subset, and one direct-mode arm covers the 43 starved changes.
+What remains unscored is listed under **Outstanding** at the end.
 
 ### Environment
 
@@ -368,6 +389,21 @@ gives a **12x speedup**, which changes the budget entirely:
 So the full held-out pass is a one-hour job, not a multi-day one. The earlier
 "61 h" figure in this document was based on the repo's batch-1 number and is
 superseded.
+
+**Later measurement, better configuration: 30.1 pairs/s at batch 8** (344.7 padded
+tokens/pair), measured on the 51,041-pair full-suite starved arm. That is the fastest
+configuration found and the figure the variation experiments were costed against; the
+22.3-22.8 pairs/s above was batch 16 on the covered mask. Cost is therefore
+`pairs / 30` seconds, and the 1.86 decisions/s in the SemIf configuration section above
+is 16x too slow an estimate for batched scoring.
+
+**Direct mode is a different story: 1.25 pairs/s.** `Qwen/Qwen3.5-4B` is a hybrid
+gated-delta-net model, and with `flash-linear-attention` and `causal_conv1d` absent it
+falls back to reference PyTorch implementations and warns that they are "much slower".
+Measured 1.25 pairs/s at batch 4 and 1.0-1.2 pairs/s at batch 8 on the real run, with
+328 tokens/pair -- a **24x penalty** against the reranker, and the reason P1 is scoped to
+the 43-change starved population rather than the full grid (which would be ~16 h).
+Installing the two optional kernels is the obvious fix and is listed as outstanding.
 
 ### Full held-out result, text-only arm (464 faults, covered candidates)
 
@@ -452,6 +488,13 @@ change-shuffle ablation are running to firm it up.
 
 
 ### Starved regime: SemIf overtakes XGBoost
+
+> **Superseded.** The result in this subsection is measured inside the `covered` candidate
+> mask, where `covers_function` is constant and `coverage` is therefore degenerate. Re-scoring
+> the same population against the full 1187-test suite reverses the conclusion -- see
+> **Full-suite starved arm: the one positive result does not survive** below. This subsection is
+> kept because the *mechanism* it identifies (SemIf is the model that does not need history) is
+> real and survives; only the competitive claim does not.
 
 Filter: changes whose killing `(file, test)` pair has almost no failure history
 (`dataset.starved_mask`). This targets the data-starved deployment regime -- a huge
@@ -623,6 +666,169 @@ Moderate, not decisive. Stated plainly:
 - Test several instruction wordings; the mirror arm predicts features will *not* help
   here, since they are uninformative by construction.
 
+
+### Full-suite starved arm: the one positive result does not survive
+
+**This is the correction the study needed, and it overturns the starved win.**
+
+Every SemIf number above was measured inside the `covered` candidate mask. That mask is
+*degenerate for the coverage baselines by construction*: every candidate already covers the
+mutated function, so `covers_function` is constant within the pool, `coverage` reads 0.000 in
+every sparsity bin, and the tree models lose their single most useful feature. The previous
+session flagged this as a caveat and listed re-scoring the starved population against the full
+suite as the highest-value outstanding item. Done here:
+
+```
+python -m rts.semif_runner --heldout --candidates full --starved 2 \
+  --out artifacts/semif_scores_starved2_full.jsonl
+python -m rts.variations --only full_starved
+```
+
+43 held-out changes, 43 faults, **1187 candidates per change** (k = 12 / 60 / 119 / 238 at the
+four budgets), 51,041 pairs, 28.2 min, 30.1 pairs/s. Recall:
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| **`xgboost_static_lex`** (coverage + BM25, **no history**) | **0.767** | **0.953** | **0.977** | **1.000** |
+| `xgboost_struct_lex` (history + coverage + BM25) | 0.628 | 0.837 | 0.953 | 1.000 |
+| `xgboost_struct` (history + coverage) | 0.535 | 0.767 | 0.930 | 1.000 |
+| `structural_rule` | 0.605 | 0.674 | 0.837 | 0.930 |
+| `coverage` | 0.395 | 0.581 | 0.674 | 0.791 |
+| `xgboost_static_nocov_lex` (BM25 only) | 0.186 | 0.512 | 0.674 | 0.837 |
+| `bm25_lexical` | 0.302 | 0.465 | 0.535 | 0.605 |
+| **`semif_textonly`** | **0.442** | **0.674** | **0.674** | **0.791** |
+| `rankaverage_xgb_semif` | 0.442 | 0.628 | 0.721 | 0.884 |
+| `xgboost_struct_nocov_lex` (history + BM25) | 0.186 | 0.326 | 0.419 | 0.674 |
+| `failure_rate` | 0.000 | 0.023 | 0.116 | 0.140 |
+| `random` | 0.000 | 0.047 | 0.093 | 0.186 |
+
+**The best classical selector on this arm is the one with the *fewest* features.** Dropping the
+history features from `xgboost_struct_lex` to get `xgboost_static_lex` moves b0.05 from 0.837 to
+**0.953**. A 2x2 over {history, coverage} with BM25 always on shows why:
+
+| model | coverage | history | BM25 | b0.05 |
+|---|---|---|---|---|
+| `xgboost_static_lex` | yes | no | yes | **0.953** |
+| `xgboost_struct_lex` | yes | yes | yes | 0.837 |
+| `xgboost_static_nocov_lex` | no | no | yes | 0.512 |
+| `xgboost_struct_nocov_lex` | no | yes | yes | 0.326 |
+
+Two clean readings. **Coverage is the entire effect**: adding it to BM25 moves 0.512 -> 0.953
+(+0.441), which is the "removing the mask restores the tree's best feature" mechanism measured
+directly rather than inferred. And **history is worse than useless in this population**: it costs
+0.116 when coverage is present (0.953 -> 0.837) and 0.186 when it is not (0.512 -> 0.326), because
+the starved filter has removed the signal those features carried and left only noise. That is
+consistent with the earlier finding that history features contribute nothing, and it means the
+strongest comparison for SemIf is not the full-feature model but the coverage + BM25 one, which
+uses four columns: `covers_function`, `n_covering_tests`, `coverage_rank_prior`, and `bm25`.
+
+Precision, F-measure and suite reduction at b0.05, which `plan.md` asks for alongside recall:
+
+| model | precision | F1 | suite reduction |
+|---|---|---|---|
+| `xgboost_struct_lex` | 0.014 | 0.027 | 0.949 |
+| `structural_rule` | 0.011 | 0.022 | 0.949 |
+| `semif_textonly` | 0.011 | 0.022 | 0.949 |
+| `bm25_lexical` | 0.008 | 0.015 | 0.949 |
+| `random` | 0.001 | 0.002 | 0.949 |
+
+Two things to note rather than read as results. Suite reduction is **identical** for every
+selector by construction: the per-change budget fixes how many tests are selected, so reduction
+is a property of the budget, not of the model. And precision is tiny for every model because the
+benchmark has exactly one killing test per fault while b0.05 on the full suite selects ~60 tests
+-- the "find the one needle" property flagged under **Remaining risks**. Recall is the metric
+that discriminates here, which is why every comparison above is stated in recall.
+
+Paired bootstrap, SemIf as reference (n=43):
+
+| comparison | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| vs `xgboost_static_lex` (**strongest**) | **-0.326** p<0.0001 | **-0.279** p<0.0001 | **-0.302** p<0.0001 | **-0.209** p<0.0001 |
+| vs `xgboost_struct_lex` | -0.186 p=0.033 | -0.163 p=0.075 | -0.279 p<0.0001 | -0.209 p<0.0001 |
+| vs `structural_rule` | -0.163 p=0.090 | 0.000 p=1.000 | -0.163 p=0.052 | -0.140 p=0.032 |
+| vs `xgboost_static_nocov_lex` | +0.256 p<0.0001 | +0.163 p=0.051 | 0.000 p=1.000 | -0.047 p=0.733 |
+
+Against the strongest classical selector the verdict is unambiguous: **SemIf loses at every
+budget, all four at p<0.0001**, by -0.21 to -0.33. Against the full-feature tree the b0.05 cell is
+p=0.075, and it is worth being explicit that this is not a weaker result for SemIf -- it is a
+*weaker baseline*, since the history features that tree carries are harmful here.
+
+**Reading:**
+
+1. **The starved win was an artifact of the candidate mask.** SemIf still beats the
+   deliberately cheap tree (`static_nocov_lex`), which is the comparison the earlier session
+   made, but it loses to the strongest classical model at **every** budget, all four at
+   p<0.0001. It ties the three-line structural rule at b0.05 (0.674 both, p=1.000) and loses at
+   b0.01 and b0.20.
+2. **The mechanism is exactly the one the caveat predicted, and the decomposition measures it.**
+   Removing `covers_function` from the candidate pool made it a *constant*; restoring the full
+   suite makes it the dominant discriminator. Adding coverage to BM25 moves b0.05 from 0.512 to
+   0.953 (+0.441) and `coverage` alone rises from 0.073 (covered) to 0.581 (full). Every other
+   feature is worth less than nothing here. The classical side gains far more from the honest
+   candidate set than SemIf does.
+3. **The correction is not a lucky tree fit.** Refitting both trees under four seeds gives 32
+   SemIf-minus-tree deltas, **all 32 negative**, between -0.163 and -0.349
+   (`--only full_starved_seeds`):
+
+   | tree | seed | b0.01 | b0.05 | b0.10 | b0.20 |
+   |---|---|---|---|---|---|
+   | `static_lex` | 1 | -0.256 | -0.256 | -0.302 | -0.209 |
+   | `static_lex` | 2 | -0.279 | -0.279 | -0.326 | -0.209 |
+   | `static_lex` | 3 | -0.279 | -0.256 | -0.302 | -0.209 |
+   | `static_lex` | 4 | -0.349 | -0.233 | -0.279 | -0.209 |
+   | `struct_lex` | 1 | -0.233 | -0.209 | -0.256 | -0.209 |
+   | `struct_lex` | 2 | -0.163 | -0.163 | -0.302 | -0.209 |
+   | `struct_lex` | 3 | -0.256 | -0.186 | -0.256 | -0.186 |
+   | `struct_lex` | 4 | -0.209 | -0.163 | -0.302 | -0.209 |
+   | `struct_lex` | reported 20260924 | -0.186 | -0.163 | -0.279 | -0.209 |
+
+   The reported fit sits at the *mild* end, so if anything the headline understates the tree's
+   advantage, and the stronger `static_lex` baseline widens it further. SemIf itself is
+   deterministic (greedy forward passes, no sampling), so there is no SemIf-side seed to vary.
+   The dataset seed fixes the imposed change order and the temporal split, and the SemIf cache
+   rows are keyed to that order, so it cannot be varied without invalidating the pairing.
+4. **The starved filter still works as designed.** `failure_rate` collapses to 0.000-0.023 and
+   `recency` to 0.000-0.070, so the failure-history features really are dead in this population.
+   The filter is not the problem; the *evaluation mask* was.
+5. **SemIf's apparent resilience to starvation is real but worthless.** Its recall does hold up
+   better than history-driven models when history is removed. That is a true property of a
+   text-only model. It is simply not enough to beat a tree that has coverage and structure.
+
+**Reproducibility caveat: batched bfloat16 scoring is not bitwise reproducible.** Re-scoring
+the same pairs in a different batch configuration changes the log-odds by small amounts
+quantised to the bf16 grid (observed multiples of 1/64, largest 0.5, **median difference
+exactly 0** across the 8,329 pairs the two caches share). This is a property of batched bf16
+inference, not of the prompt: the two caches agree on inputs, and the difference is numerical.
+To bound the effect on the headline, substituting the covered-mask values for the shared pairs
+in the full-suite matrix moves SemIf's recall from 0.674 to 0.651 at b0.05 -- **a run-to-run
+variation of roughly +-0.02 recall**, against a 0.279 gap to the strongest classical model. The
+conclusion is unaffected, but any future re-run with a different batch size should expect
+numbers to move by about that much, and a difference smaller than ~0.03 should not be treated
+as a finding.
+
+So the previous session's bottom line -- "exactly one regime favours SemIf" -- is **wrong**.
+Corrected: **SemIf does not beat the classical selectors in any regime tested once those
+selectors are allowed the realistic full candidate set.** The earlier positive result came from
+evaluating classical methods on a pool that had been constructed to make coverage uninformative,
+which is not how RTS is deployed. The corrected gap is also *larger* than the original positive
+result claimed in the other direction: the best classical model on this arm uses four columns,
+not fifteen.
+
+Remaining caveat, and it is the honest one: n=43. That is small, and the `failures <= 5` version
+(141 faults, 167k pairs, ~95 min) is the decision-grade confirmation, listed as outstanding. It
+is a caveat about precision, not about direction: every one of the 32 seed/budget cells across
+two trees favours the classical model, and against the strongest tree all four budgets are
+p<0.0001 even at n=43.
+
+### Full-suite arm reveals a second problem: candidate-only vs all-pairs training
+
+One incidental finding worth recording, because it changes how the classical numbers should be
+read. Training XGBoost only on the candidate pairs it is actually asked to rank raises
+`xgboost_static_nocov_lex` from **0.655 to 0.700** at b0.05 (covered candidates, all 464 faults),
+and it is now the default in the variation experiments. The previously reported 0.655 was
+understated by ~0.045: training on all 1187 tests per change spends capacity learning the
+candidate mask. The documented 0.631 for `xgboost_struct` is unaffected (0.6315 reproduced), and
+the corrected feature importances in the section above follow from this same change.
 
 ### Cost
 
@@ -1005,6 +1211,206 @@ verdict**, because it changes the task formulation rather than the model. **P3**
 the most informative per unit of effort if the goal is to decide whether to keep
 pursuing text-only models at all.
 
+## SemIf variations: results
+
+Run in the order the previous session recommended -- which is value per unit cost, not
+P-number, so the subsections below appear as P5, P2, P3, P1. Raw numbers land in
+`artifacts/variations.json`; every experiment is reproducible with
+`python -m rts.variations --only <name>` once its score cache exists.
+
+### P5 -- Is the transformer redundant? Mostly yes
+
+The proposal as written -- "add the SemIf score as one extra column to
+`xgboost_static_nocov_lex` and see whether recall moves" -- has a cost it did not account for.
+SemIf scores exist only for **held-out** changes, so a trained column needs the feature on
+training rows too: 329k extra pairs, ~3 h, which the iteration-cost analysis rules out. Two arms
+answer the same question without that cost.
+
+**Arm 1: fitted-free rank average** (`--only p5`). Nothing is fitted and nothing extra is
+scored: each selector's per-change candidate ranks are normalised to [0, 1] and averaged. If
+SemIf carries signal the tree does not already have, the average should beat *both* parents.
+All 464 held-out faults, covered candidates:
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `xgboost_static_nocov_lex` | **0.545** | **0.700** | **0.776** | **0.869** |
+| `xgboost_struct` | 0.461 | 0.616 | 0.735 | 0.877 |
+| `semif_textonly` | 0.226 | 0.306 | 0.377 | 0.511 |
+| `rankaverage(xgb_static_nocov_lex, semif)` | 0.347 | 0.474 | 0.591 | 0.720 |
+| `rankaverage(xgb_struct, semif)` | 0.349 | 0.496 | 0.608 | 0.724 |
+
+The average is **worse than either parent**, significantly, at every budget: -0.226
+[-0.278, -0.175] p<0.0001 against `xgboost_static_nocov_lex` at b0.05, and -0.121
+[-0.177, -0.062] p<0.0001 against `xgboost_struct`. So as an equal-weight partner SemIf is not
+merely redundant, it is net negative.
+
+**Arm 2: the trained column** (`--only p5_trained`). A leakage-free *temporal* split inside the
+held-out window: train on the first 371 held-out changes (which do have SemIf scores), evaluate on
+the last 159 (140 fault-bearing). The baseline is trained on exactly the same rows, so the delta
+is attributable to the column. `semif` is entered as NaN where unscored rather than as -1e9:
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `static_nocov_lex` | 0.443 | 0.543 | 0.707 | 0.836 |
+| `static_nocov_lex` + SemIf column | 0.450 | 0.593 | 0.764 | 0.807 |
+| `struct_lex` | 0.414 | 0.621 | 0.750 | 0.893 |
+| `struct_lex` + SemIf column | **0.514** | **0.700** | 0.771 | 0.907 |
+
+Paired on the evaluation window (n=140):
+
+| feature set | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `struct_lex` + SemIf | **+0.100** p=0.007 | **+0.079** p=0.010 | +0.021 p=0.55 | +0.014 p=0.60 |
+| `static_nocov_lex` + SemIf | +0.007 p=0.91 | +0.050 p=0.19 | +0.057 p=0.11 | -0.029 p=0.35 |
+
+`semif` ranks 5th of 11 features (importance 0.108) in the cheap model and 5th of 17 (0.059) in
+the full model: mid-tier, neither dominant nor negligible.
+
+**Verdict: close to redundant, but not exactly.** A tree that already has coverage *and* history
+extracts a small, real gain from the SemIf score at the two smallest budgets. A tree with cheap
+static features extracts nothing. Two qualifications keep this from being a win: the gains are
++0.08 to +0.10, against the +0.394 that `xgboost_static_nocov_lex` already scores over SemIf on
+the same 464 faults (0.700 vs 0.306 at b0.05); and under a Bonferroni correction for the eight
+cells tested, p=0.007 and p=0.010 do not survive. The expected outcome ("P5 shows redundancy") is
+confirmed to within a small residual.
+
+### P2 -- Instruction and prompt sweep: a clean null
+
+The one major lever never tested. The runner is demonstrably sensitive to prompt construction --
+~200 tokens of *zero-information* text before the content cost 0.21 recall -- and the diagnosis
+predicted the wording should matter if the model simply had the wrong framing. Five wordings were
+scored on the starved `failures <= 5` population (141 changes, covered candidates, 22,199 pairs
+each, ~13 min per arm, 30 pairs/s):
+
+| variant | what it changes | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|---|
+| `default` | reference wording (all existing caches) | **0.326** | 0.418 | 0.539 | **0.674** |
+| `execution` | the diagnosis made explicit: ask about observable runtime behaviour | 0.298 | 0.418 | 0.546 | 0.660 |
+| `fault` | ask for the prediction directly ("will it fail") | 0.305 | **0.447** | **0.567** | 0.638 |
+| `retrieval` | **negative control**: lean into the native topical-relevance prior | 0.298 | 0.426 | 0.560 | 0.631 |
+| `terse` | shortest possible question | 0.312 | 0.397 | 0.560 | 0.660 |
+| `bm25_lexical` | non-SemIf reference | 0.284 | 0.355 | 0.397 | 0.553 |
+| `xgboost_static_nocov_lex` | non-SemIf reference | 0.298 | 0.468 | 0.539 | 0.674 |
+
+Paired against `default` (n=141): **all 16 comparisons are non-significant**, every p >= 0.15, and
+the largest delta anywhere is +0.028 at b0.05 for `fault` ([-0.028, +0.085] p=0.40). The best
+variant at b0.05 is `fault` at 0.447 versus 0.418, i.e. +0.028, well inside noise.
+
+Reading:
+
+1. **Wording is not the lever.** The single biggest untested proposal moves recall by less than
+   the noise floor. This is a strong null because it is tested at n=141 with a paired design on
+   identical pairs -- each variant differs from `default` only in the question text.
+2. **The sharpest form of the test also fails.** If the problem were merely that the model was
+   never asked the right question, `execution` -- which states the causal/executional criterion
+   explicitly -- should have helped. It did not (b0.05 delta exactly 0.000).
+3. **Leaning into the native prior does not help either.** `retrieval` was a negative control: if
+   the model did *better* when asked a plain topical-relevance question, the prior-mismatch
+   diagnosis would be wrong. It is statistically identical to `default`, so the diagnosis
+   survives, but note this also means the model is *insensitive* to which relation it is asked
+   about -- consistent with it falling back on lexical overlap regardless of instruction.
+4. **The measured position sensitivity does not transfer to instruction content.** Length and
+   position matter a great deal (0.21 recall); ~40 tokens of changed wording do not. The
+   dilution effect is about disrupting the position the reranker reads, not about semantic
+   interference.
+
+5. **The null holds at both starvation thresholds.** The caches are scored on
+   `failures <= 5`, which is a superset of `failures <= 2`, so the sparser 43-change
+   population is evaluated for free. There the four variants again move nothing: the
+   largest b0.05 delta is +0.047 ([-0.070, +0.163] p=0.56), and all are p >= 0.56. The
+   null is not an artifact of the 141-change population's mix.
+
+Expected outcome check: the previous session predicted "P2 to move recall by a few points at
+most". Confirmed, and then some -- it moved recall by nothing.
+
+### P3 -- Code-specialised embedding baseline: below BM25
+
+The question this arm answers is whether SemIf's weakness is the *architecture* -- a pairwise
+natural-language reranker -- rather than text-only similarity in general. If a code-specialised
+encoder matched SemIf, the reranker would be unjustified; if it beat BM25, there would be a
+semantic signal worth pursuing with something stronger. Mean-pooled `codebert-base`,
+L2-normalised, cosine between the change text and the test source, on the same pairs and candidate
+masks as every other selector. No training, no prompt, CPU-only, ~4 min.
+
+| regime | model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|---|
+| 464 held-out, covered | `bm25_lexical` | 0.203 | 0.269 | 0.336 | 0.429 |
+| | `embed_codebert` | 0.157 | 0.235 | 0.295 | 0.427 |
+| starved <=5, covered | `bm25_lexical` | 0.284 | 0.355 | 0.397 | 0.553 |
+| | `embed_codebert` | 0.106 | 0.170 | 0.241 | 0.390 |
+| starved <=5, **full** | `bm25_lexical` | 0.305 | 0.504 | 0.553 | 0.617 |
+| | `embed_codebert` | 0.021 | 0.071 | 0.156 | 0.298 |
+| starved <=5, full | `structural_rule` | 0.574 | 0.759 | 0.908 | 0.979 |
+
+Paired, embedding minus BM25: -0.034 (p=0.22, n=464), -0.184 (p<0.0001, n=141), -0.433
+(p<0.0001, n=141). CodeBERT is **worse than BM25 in every regime**, and badly so once history is
+starved and the candidate set is realistic.
+
+So the weakness is not the reranker architecture: a code-specialised encoder is *further* from
+useful than bag-of-words. Two caveats bound the claim. `codebert-base` is a 110M model from 2019
+trained on NL-PL pairs, not a modern instruction-tuned code embedding, so this is a floor for
+the family rather than a ceiling. And cosine similarity has no notion of the change being
+*causal*, which is exactly the limitation the reranker diagnosis identified -- so this arm
+narrows the search space rather than closing it.
+
+### P1 -- Direct mode, pairwise: worse than the reranker
+
+This was the previous session's best remaining idea -- "the only proposal with a real chance of
+changing the verdict", because it changes the *task formulation* rather than the model. SemIf's
+`--mode direct` states a criterion, lists candidate options, and reads the native next-token
+logits on the option letters: a decision, not a relevance rating. If the diagnosis is right that
+the reranker's prior is the wrong relation, re-asking the question as a decision is exactly the
+intervention that should show it.
+
+**Scope is throughput-bound, not design-bound.** `Qwen/Qwen3.5-4B` is a hybrid gated-delta-net
+model; with `flash-linear-attention` and `causal_conv1d` absent it falls back to reference
+PyTorch and runs at **1.3 pairs/s** against the reranker's 30 -- a 23x penalty that makes the
+full held-out grid (~72k pairs) a ~16 h job. Scored instead on the 43-change starved population
+with covered candidates: 8,329 pairs, 104 min, the same rows and the same candidate mask as the
+documented covered-mask starved arm, so every comparison is paired.
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `semif_reranker` (pairwise relevance, Qwen3-Reranker-4B) | **0.302** | **0.442** | **0.535** | **0.628** |
+| **`semif_direct_pairwise`** (decision, Qwen3.5-4B) | 0.140 | 0.233 | 0.326 | 0.465 |
+| `xgboost_static_nocov_lex` | 0.070 | 0.256 | 0.326 | 0.442 |
+| `bm25_lexical` | 0.209 | 0.233 | 0.302 | 0.419 |
+| `structural_rule` | 0.093 | 0.233 | 0.256 | 0.326 |
+
+Paired bootstrap (n=43):
+
+| comparison | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| direct vs reranker | **-0.163** p=0.002 | **-0.209** p=0.001 | **-0.209** p=0.006 | **-0.163** p=0.024 |
+| direct vs `xgboost_static_nocov_lex` | +0.070 p=0.26 | -0.023 p=0.88 | 0.000 p=1.00 | +0.023 p=0.90 |
+
+**Reading:**
+
+1. **Direct mode is not a rescue. It is a regression.** Significantly *worse* than the reranker
+   at every budget, by 0.16-0.21. The formulation change moves the result in the wrong
+   direction.
+2. **It does not even reach the reranker's position against the classical models.** Against the
+   cheap tree it is statistically indistinguishable at all four budgets, i.e. the task
+   reformulation lands the model at the same floor the reranker sat at, but from below.
+3. **It is not a context-length effect.** The direct prompt is *smaller* than the reranker's
+   (328 vs 345-421 tokens/pair), so the regression cannot be explained by the dilution
+   mechanism that damaged the mirror arm.
+4. **The caveat that matters.** This is direct mode adapted to **two** options (yes/no), which
+   is what makes it produce a global ranking comparable to the reranker on one scale. The
+   repo's native direct mode is designed for 2-16 options in one prompt with a softmax over
+   slots; the 16-option windowed variant was **not** run, because a window is only comparable
+   within itself and needs a tournament or cross-window normalisation, and the complexity
+   ladder predicts a ~12k-token multi-topic window would hurt the model for reasons unrelated
+   to semantics. So "direct mode as the repo designed it" remains formally untested, and this
+   arm tests the formulation change holding the readout pairwise.
+
+Expected-outcome check: the previous session expected P1 to be the one proposal with a real
+chance of changing the verdict. **It is refuted.** Combined with P2's null, P3's negative
+result, and P5's near-redundancy, all four text-side levers fail -- and the diagnosis they were
+each designed to test (the model's learned relation is the wrong one, and that is not fixable by
+wording, by features, by a different text encoder, or by re-framing the question as a decision)
+is now supported by four independent negative results rather than by one.
+
 ## Reproducing
 
 ```
@@ -1020,6 +1426,36 @@ Outputs land in `artifacts/results_{mode}.json` (metrics, ablations, sparse arm,
 paired comparisons). Full pipeline runtime is ~70 s, dominated by the two XGBoost
 fits (~20 s each).
 
+SemIf scoring arms all write resumable JSONL caches under `artifacts/`, so a re-run
+continues rather than restarts. Only one 4B model fits in 17 GB at a time, so arms run
+sequentially:
+
+```
+python -m rts.semif_runner --heldout                                  # text-only (cached)
+python -m rts.semif_runner --heldout --candidates full --starved 2 \
+  --out artifacts/semif_scores_starved2_full.jsonl                    # the correction
+python -m rts.semif_runner --heldout --starved 5 --instruction execution \
+  --out artifacts/semif_scores_instr_execution_starved5.jsonl         # P2, x4 wordings
+python -m rts.embed --device cpu                                      # P3
+python -m rts.direct_runner --starved 2 --batch-size 8 \
+  --out artifacts/semif_direct_starved2_covered.jsonl                 # P1
+./scripts/run_variation_arms.sh p2|p1|p2-orientation|starved5-full    # queues the above
+```
+
+Analysis and reporting:
+
+```
+python -m rts.variations --only full_starved full_starved_seeds p5 p5_trained p2 p3 p1
+```
+
+Everything lands in `artifacts/variations.json` (recall sweeps, paired bootstraps,
+feature importances) and is printed as tables as it runs. `full_starved` also carries the
+history x coverage decomposition and `full_starved_seeds` the four-seed robustness check.
+Measured throughput on this card is **30.1 pairs/s at batch 8** with a mean of 345 padded
+tokens/pair, so cost is `pairs / 30` seconds; the earlier repo-derived 1.86 decisions/s figure
+was 16x too slow and is superseded. Direct mode is 1.3 pairs/s and is the one arm that cannot
+be scaled up on this hardware.
+
 ## Remaining risks
 
 - **Test-selection assumption.** mutmut's selection (coverage plus `max_stack_depth`) assumes tests outside the associated set cannot fail. Spot-check a handful of mutants by running the full suite to confirm the association is not dropping real killers.
@@ -1027,30 +1463,65 @@ fits (~20 s each).
 - **Imposed history.** The temporal order is synthetic and the recency baseline is degenerate by construction. Do not report recency as a result.
 - **Single revision.** All mutants come from one commit, so there is no real code evolution and no cross-revision drift.
 - **Exactly one killing test per mutant** (verified: max = 1 across all 2311 faults). Real RTS has multiple failing tests per change, where recall is far more forgiving and a structural funnel gets partial credit. This is the benchmark's least realistic property and it likely **overstates** how much semantic matching buys, since the task is "find the one needle".
-- **`covered` candidate mask everywhere.** Every SemIf number in this document ranks within ~155 candidates. This presupposes per-test coverage, which is exactly the data a starved deployment may not have.
+- **`covered` candidate mask.** Most SemIf numbers in this document rank within ~155
+  candidates, which presupposes per-test coverage -- exactly the data a starved
+  deployment may not have. This was the source of the one wrong positive result in the
+  study; the full-suite arm above is the repair, and `--candidates full` should be the
+  default for any future comparison of learned against coverage-based methods.
 - **Feature importances are unstable and were once wrong here.** See the correction section; trust ablations over importances.
+- **Batched bf16 scoring is not bitwise reproducible.** The same pairs scored in a different batch
+  configuration differ by up to 0.5 log-odds on the bf16 grid (median 0), worth roughly +-0.02
+  recall on the full-suite starved arm. Re-runs with a different batch size will move by about
+  that much; do not read differences below ~0.03 as findings. See the caveat in **Full-suite
+  starved arm**.
 
 ## Status and handoff
 
 ### Bottom line
 
-**Exactly one regime favours SemIf: sparse failure history, at small budgets.** It
-reaches 0.442 vs 0.256 for the best XGBoost on the sparsest 43 faults
-(`failures <= 2`), significant at b0.01 (p=0.002) and b0.05 (p=0.045), and the effect
-is monotone in starvation. That result is the weakest evidence in the document: n=43,
-a threshold chosen after seeing the data, and p-values that would not survive
-multiple-comparison correction.
+**The previous session's one positive result does not survive. The corrected answer is
+that SemIf does not win in any regime tested, and it never becomes competitive.**
 
-**Everywhere else it loses, and sometimes badly:**
+The claimed win -- SemIf 0.442 against 0.256 for the best classical model on the
+sparsest 43 faults -- was measured inside the `covered` candidate mask. That mask makes
+`covers_function` constant within the pool, which is exactly the feature the tree
+models rely on, so the classical baselines were being scored on a task with their best
+feature removed. Re-scored against the full 1187-test suite on the same 43 faults,
+SemIf reaches 0.674 at b0.05 while a coverage + BM25 tree (four columns, no history) reaches
+**0.953** and a three-line structural rule reaches 0.674. SemIf loses to that tree at every
+budget, all four at p<0.0001.
 
 | regime | SemIf | best classical | verdict |
 |---|---|---|---|
-| full held-out, 464 faults | 0.306 | 0.631 XGBoost | loses 2.1x |
-| starved `failures <= 2`, 43 faults | **0.442** | 0.256 XGBoost | **wins 1.7x** |
+| full held-out, 464 faults, covered | 0.306 | 0.700 XGBoost | loses 2.3x |
+| starved `failures <= 2`, 43 faults, **full suite** | 0.674 | **0.953** XGBoost | **loses 1.4x** |
+| starved `failures <= 2`, 43 faults, covered (superseded) | 0.442 | 0.256 XGBoost | "won" 1.7x -- **artifact** |
 | 6 mutations, cross-file | 0.190 | 0.525 XGBoost | loses |
 | 6 mutations, coherent | 0.160 | 0.555 XGBoost | loses, and BM25 overtakes it |
 
-(all at budget 0.05, covered candidates)
+(all at budget 0.05)
+
+**The five variation experiments all point the same way**, and each was the previous
+session's best remaining idea:
+
+| proposal | outcome |
+|---|---|
+| **P5** SemIf as an XGBoost feature | Near-redundant. Equal-weight blending *hurts* (-0.226, p<0.0001). A trained column on the full feature set adds +0.08 to +0.10 only at the two smallest budgets, and does not survive correction. |
+| **P2** instruction/prompt sweep, 5 wordings | Clean null. All 16 paired comparisons p >= 0.15; largest delta +0.028. Even the causal framing and its negative control move nothing. |
+| **P3** code-specialised embedding baseline | Below BM25 in every regime (starved/full: 0.071 vs 0.504, p<0.0001). The weakness is not the reranker architecture. |
+| **P1** direct mode, pairwise | Significantly **worse** than the reranker at every budget (-0.163 to -0.209, p=0.001-0.024). The task-reformulation lever moves the result backwards, and lands level with the cheap tree. |
+| **P6** prompt-side dilution mitigation | Folded into P2: wordings varying by ~40 tokens change nothing, so the measured dilution is a position effect, not a content effect. |
+
+So the study's question is now answered cleanly rather than equivocally: **no, a
+general-purpose discriminative transformer does not compete with traditional
+discriminative ML for regression test selection on this benchmark, and the reason is
+that the RTS relation is executional and causal while the model's prior is topical
+relevance over text.** Five independent attempts to attack that mismatch -- features,
+wording, negative control on wording, code-specialised embeddings, and task
+reformulation -- all fail to move SemIf above the classical floor. What the study does
+establish positively is the size of the classical floor: a tree on cheap static
+features plus BM25 reaches 0.700, and a three-line coverage-plus-filename rule reaches
+0.674, neither of which needs a GPU or a model download.
 
 ### Completed
 
@@ -1063,27 +1534,71 @@ multiple-comparison correction.
 - Documentation corrected three times after its own claims failed verification
   (the 94.6% importance figure, the mirror-degradation direction, and the funnel-size
   mechanism). Treat earlier-sounding claims in this document with that history in mind.
+- **Full-suite starved arm** (outstanding item 1): 51,041 pairs scored, and the result
+  reverses the starved conclusion. See the correction section above.
+- **P5** both arms (`rts/variations.py --only p5 p5_trained`), **P2** five wordings at two
+  starvation thresholds, **P3** code-embedding baseline, **P1** direct mode pairwise (all
+  8,329 pairs, 43 changes, 104 min), plus a history x coverage decomposition and a four-seed
+  robustness check. All in `artifacts/variations.json`.
+- New machinery: `rts/semif_runner.py` instruction variants and full-candidate/starved
+  arms, `rts/embed.py`, `rts/direct_runner.py`, `rts/variations.py`,
+  `scripts/run_variation_arms.sh`.
+- Measured SemIf throughput on this card: **30.1 pairs/s at batch 8** for the reranker
+  (16x faster than the repo's batch-1 figure the cost estimates were built on),
+  versus **1.25 pairs/s** for direct mode because Qwen3.5-4B's gated-delta-net kernels
+  fall back to reference PyTorch without `flash-linear-attention`/`causal_conv1d`.
 
 ### Outstanding, in priority order
 
-1. **Full-suite run for the starved arm** (~40 min for the 43-change set). Removes the
-   `covered`-mask crutch and makes the one positive result comparable to how RTS is
-   actually deployed. Highest value remaining.
-2. **P5, then P2, then P1** from the SemIf variations section above.
+1. **`failures <= 5` full-suite run** (141 faults, 167,367 pairs, ~95 min). The corrected
+   conclusion rests on n=43. Against the strongest classical model that is already decisive
+   (all four budgets p<0.0001), so the marginal value here is in the two comparisons that are
+   still soft at n=43: SemIf versus the three-line `structural_rule` (p=0.090 at b0.01,
+   p=0.052 at b0.10, p=0.032 at b0.20) and SemIf versus the *cheap* tree. A tie with a
+   three-line rule is a meaningful finding in its own right, and 141 is the population the
+   iteration-cost analysis already identified as the arm-development sweet spot. Highest value
+   remaining.
+2. **The 16-option direct-mode variant, and P1 at larger n.** Both are blocked on throughput,
+   not on design. Qwen3.5-4B runs at 1.3 pairs/s here purely because two optional kernels are
+   missing; installing `flash-linear-attention` (Triton, ROCm-capable) and, if it builds,
+   `causal_conv1d` would make the full 464-change covered run (~16 h today) and the
+   full-candidate starved run feasible. The pairwise variant is done and negative (see P1);
+   what remains untested is the formulation the repo actually designed -- a single prompt with
+   up to 16 options and a softmax over slots -- which needs a tournament or cross-window
+   normalisation to produce a global ranking. Worth doing only after the kernels are installed,
+   since the complexity ladder predicts the large multi-topic window will hurt regardless.
 3. **Test-complexity axis** (bundle tests into coarse groups, emulating long-running
-   integration tests). This breaks coverage and filename matching *simultaneously*,
-   which is qualitatively different from anything tested so far and is the only
-   remaining manipulation likely to favour a text model.
+   integration tests). Still the only remaining manipulation likely to favour a text
+   model, because it breaks coverage and filename matching simultaneously. **Design note
+   before attempting it:** the naive version is not interpretable. To score a coarse
+   group, the reranker must read the group's tests, and ~40 concatenated test sources is
+   a ~12k-token, multi-topic document -- which the complexity ladder and the placement
+   controls both predict will destroy recall for reasons that have nothing to do with
+   semantic signal. A token-budget-matched control (the `bundle_text(token_budget=)`
+   variant already built but never run) is required to separate the two.
 4. **`after_document` re-run on all 464 held-out faults** (~74 min) so the full-set
    fairness comparison is citable rather than inferred from the 141-change subset.
+   Deliberately dropped this session in favour of the items above.
 5. **Second SUT, and a real-commit dataset.** Everything rests on one project, one
-   revision, and mutation-derived labels.
+   revision, and mutation-derived labels. Given that five variations all failed to move
+   the result, this is now the highest-value *scientific* next step, not just a
+   robustness check.
 
 ### Things that would change the verdict
 
-- A prompt or framing change that lifts SemIf above 0.631 on the full held-out set
-  (P1 or P2).
-- A code-specialised model that clearly beats BM25, which would show semantics is
-  exploitable and the reranker prior was simply the wrong one (P3).
-- The test-complexity axis showing structure collapsing where text survives.
+- A prompt or framing change that lifts SemIf above 0.700 on the full held-out set.
+  **Tested and refuted** (P2): five wordings, including the causal framing and its
+  negative control, move recall by less than the noise floor.
+- A code-specialised model that clearly beats BM25. **Tested and refuted** for the
+  cheapest member of that family (P3); a modern instruction-tuned code embedding is
+  still untested, but it would have to beat BM25 by a wide margin to matter.
+- The test-complexity axis showing structure collapsing where text survives. Still open,
+  but see the design note above.
+- SemIf carrying signal the structured features lack. **Tested and largely refuted**
+  (P5): the residual contribution is +0.08 at b0.05 on the richest feature set and does
+  not survive multiple-comparison correction.
+- Direct mode as a genuinely different task formulation. **Refuted in its pairwise form**
+  (P1: significantly worse than the reranker at every budget). The repo's native 16-option
+  windowed form remains untested, and is the only text-side variant still standing -- but it
+  is blocked on throughput and the dilution evidence is against it.
 
