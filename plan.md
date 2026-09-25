@@ -52,4 +52,7 @@ candidate set, since the covered mask is now known to distort the comparison.
 **Superseded by the results.** The "sparse change filter" arm was the study's main hope
 for finding a regime where a semantic model wins. It does not: re-scoring the starved
 population against the full 1187-test suite shows the classical selectors ahead at every
-budget. See **Full-suite starved arm** in `implementation.md`.
+budget, and the larger population moves the two soft cells further against SemIf. See
+section 5.7 of `implementation.md`. The study's next steps (relabelling with the full
+suite, de-lexicalisation, traceability-loss manipulations, real commit history, BugsInPy)
+are listed in section 11 of the same document.
