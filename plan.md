@@ -57,9 +57,14 @@ section 5.7 of `implementation.md`.
 
 # Next steps
 
-> Detailed execution plan, with reconnaissance results and per-step costs: `plan_next_steps.md`.
-> That file holds the design decisions, the validation gates, and the measured de-lexicalisation
-> gate that re-scopes Gap 2. Update it as the work lands.
+> Detailed execution plan: `plan_next_steps.md`. **Read it before this section** — it revises
+> the agenda below. The target regime has been sharpened to *a test suite driving an embedded
+> system across a boundary* (Python tests over serial/socket to firmware), which kills coverage,
+> filename matching, identifier overlap and history at once. The plan is now organised around
+> (a) a CPU-only traceability-loss ladder that tests the hypothesis on existing data for free,
+> and (b) real data — BugsInPy for honest labels, and a boundary-structured corpus for the
+> actual regime. **Proposal 2 below (de-lexicalisation) is retired**: it varied vocabulary while
+> holding structure fixed, and measurement showed the coverage-bearing tree is unaffected by it.
 
 This is the agenda for the next session. The study's question is answered — SemIf does not
 beat the classical selectors in any regime tested, and all four text-side levers failed

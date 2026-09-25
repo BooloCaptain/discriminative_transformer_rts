@@ -681,9 +681,14 @@ arms, `--exclude-scored`), `rts/direct_runner.py`, `rts/embed.py`, `rts/variatio
 ### Next steps, in priority order
 
 > The same agenda, in a form meant to be read on its own, is in `plan.md` under **Next steps**.
-> Keep the two in sync if either changes. Detailed execution plan — design decisions, costs,
-> validation gates, and the reconnaissance results that re-scope Gap 2 — is in
-> `plan_next_steps.md`.
+> Keep the two in sync if either changes.
+>
+> **Superseded in part by `plan_next_steps.md`, which is the detailed execution plan.** The
+> target regime is now specified as a test suite driving an embedded system across a boundary,
+> and that plan retires proposal 2 (de-lexicalisation) — it varied vocabulary while holding
+> structure fixed, and the coverage-bearing tree is measurably unaffected. It replaces it with a
+> CPU-only traceability-loss ladder, and promotes real data (proposals 4-5) to the load-bearing
+> workstream.
 
 The five proposals below come from a review of how this benchmark diverges from the target
 setting (long-running integration tests of embedded systems). The important observation is
