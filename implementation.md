@@ -844,6 +844,23 @@ Four things follow.
 4. **Under corrected labels SemIf is already near parity at L0** (−0.050), which is a much
    weaker defeat than the −0.255 the mutmut labels report.
 
+Paired bootstrap against SemIf at b0.05 (negative delta = SemIf ahead), full labels:
+
+| rung | `bm25_lexical` | `xgboost_struct_lex` | `structural_rule` | `coverage` |
+|---|---|---|---|---|
+| L0 | **−0.170 p<0.0001** | +0.050 p=0.23 | +0.028 p=0.54 | −0.057 p=0.25 |
+| L1 | **−0.170 p<0.0001** | **+0.078 p=0.036** | +0.028 p=0.54 | −0.057 p=0.25 |
+| L2 | **−0.170 p<0.0001** | **−0.227 p<0.0001** | **−0.503 p<0.0001** | **−0.610 p<0.0001** |
+| L3 | **−0.170 p<0.0001** | **−0.277 p<0.0001** | **−0.695 p<0.0001** | **−0.610 p<0.0001** |
+
+Read carefully, this is a **much more favourable picture for SemIf than §5 and §11 convey**.
+Even with every feature available, SemIf is *significantly* better than raw BM25 (+0.170,
+p<0.0001) and is statistically indistinguishable from the coverage-bearing tree (+0.050,
+p=0.23) — the tree's advantage is not significant. Only at L1 does the tree pull significantly
+ahead, and by L2 SemIf is ahead of every classical selector by ≥0.170 at p<0.0001. The earlier
+"loses by 0.255" framing came from the mutmut labels, which under-count killers by a factor of
+~58 and therefore make the coverage funnel look far more decisive than it is.
+
 This is the first regime in the study where SemIf leads, and it is the regime with the fewest
 features — which is the hypothesis. The caveat is structural and stated in §12.5: the ladder
 removes *features*, not the label structure.
@@ -878,6 +895,33 @@ Absolute levels are low because the pools are large (median ~200, up to 1114 tes
 usually has exactly one failing test — median 1, max 4, and only 9 of 71 bugs have more than
 one. **The "several failing tests per change" expectation for real bugs is not supported here.**
 
+**SemIf does not beat BM25 on real bugs.** 22,323 pairs scored at 13.6 pairs/s (27.3 min):
+
+| model | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|
+| `random` | 0.000 | 0.014 | 0.085 | 0.211 |
+| `bm25_lexical` | 0.085 | **0.225** | 0.310 | **0.352** |
+| `semif_reranker` | **0.113** | 0.211 | **0.310** | 0.338 |
+
+Paired, SemIf minus BM25: +0.028 (p=0.52), −0.014 (p=0.85), 0.000 (p=1.00), −0.014 (p=0.92).
+**A tie at every budget.** Both are far above random, so the task is solvable from text; the
+4B reranker simply adds nothing over bag-of-words once the labels are real.
+
+This is the most consequential negative result in §12, because this arm *is* the ladder's L3
+condition — no coverage, no traceability, no history — evaluated on real labels instead of
+synthetic mutants. The ladder reports SemIf ahead of BM25 by +0.170 at L3; on real bugs the same
+comparison is 0.000. Two readings, and they are not mutually exclusive:
+
+* the ladder's L3 advantage is an artefact of the mutant labels, which remain coverage-defined
+  even after relabelling, so the "coverage removed" rung still carries the trace of coverage in
+  its label structure;
+* BugsInPy is a much harder task than marshmallow (BM25 0.225 vs 0.688 at b0.05), with pools an
+  order of magnitude larger and one killer per bug, so a +0.17 effect has far less room to
+  appear.
+
+Either way, **the L3 win does not replicate where the labels are real**, and that is the single
+most important thing this section establishes.
+
 ### 12.4 A real boundary: MicroPython (`scripts/micropython_bridge_probe.py`)
 
 The boundary property is **verified, not assumed**: `tests/run-tests.py` executes the
@@ -911,18 +955,30 @@ MicroPython, which needs the C toolchain.
 
 ### 12.5 What the three arms jointly say
 
-| arm | structure | real labels | SemIf vs best classical |
+| arm | structure | real labels | SemIf vs BM25 |
 |---|---|---|---|
-| ladder L0 | all features | no | −0.050 (full labels) |
-| ladder L3 | no coverage/traceability/history | no | **+0.170** |
-| BugsInPy | no coverage/history/traceability | **yes** | see `artifacts/bugsinpy_results.json` |
+| ladder L0 | all features | no | **+0.170, p<0.0001** (SemIf ahead) |
+| ladder L3 | no coverage/traceability/history | no | **+0.170, p<0.0001** (SemIf ahead) |
+| BugsInPy | no coverage/history/traceability | **yes** | 0.000, p=1.00 — **a tie** |
 | MicroPython | boundary, 1653 tests | co-change proxy | lexical RTS works: 0.648 at b0.05 |
 
-The hypothesis is confirmed where it can be tested cleanly: **coverage is what defeats SemIf,
-and removing it reverses the ordering.** But the boundary itself does not remove the lexical
-bridge, and the arms with real labels do not show the large pools making the task easier for a
-semantic model. Two things are still unmeasured: real failing-test labels on a boundary-broken
-corpus, and whether the L3 win survives when the labels are real rather than coverage-defined.
+The hypothesis is confirmed in one place and refuted in another, and the difference is the
+labels rather than the features:
+
+* **On synthetic mutant labels, coverage is what defeats SemIf and removing it reverses the
+  ordering** (+0.170 at L2/L3, p<0.0001). Filename and path features contribute nothing; it is
+  coverage alone.
+* **On real bug labels the same comparison is a tie** (0.000, p=1.00), on an arm whose feature
+  condition is identical to L3.
+* **The boundary does not destroy the lexical bridge** (MicroPython: 98.4% token overlap,
+  median rank 26/1653), so the premise that the target regime starves lexical methods is not
+  supported.
+
+So the honest state of the semantic hypothesis after this section is: *a text model is not
+needed, and is not better, but it is also not worse.* BM25 reaches 0.225 on real bugs where
+random reaches 0.014, and SemIf matches BM25 exactly. The remaining untested question is whether
+real failing-test labels on a genuinely boundary-broken corpus behave differently from both —
+which needs MicroPython built and its bug commits labelled.
 
 ### 12.6 Limitations specific to this section
 

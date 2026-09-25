@@ -8,6 +8,30 @@ that it varies the wrong thing.
 Study design: `plan.md`. Measured tooling facts: `implementation.md`. This file is the execution
 plan for the next phase.
 
+Status: **executed.** W0 (corrected labels), W1 (traceability ladder), W2a (BugsInPy) and the
+W2c scoping spike are complete. Results are written up in `implementation.md` §12, and four of
+them change the plan's own premises:
+
+* **The ladder confirms the hypothesis, on synthetic labels.** Removing coverage flips SemIf from
+  −0.050 behind the best classical selector to **+0.170** ahead (§12.2), and it is *coverage*
+  alone — the traceability features add nothing once coverage is gone (L2 ≡ L3).
+* **But it does not replicate on real bugs.** On BugsInPy, with an identical feature condition,
+  SemIf and BM25 **tie** at every budget (§12.3). This is the most important result here: the
+  L3 win looks like an artefact of mutant labels that remain coverage-defined.
+* **The boundary does not destroy the lexical bridge.** MicroPython's runner genuinely uses
+  `subprocess.Popen`/`pty.openpty()`, yet on 1653 tests BM25 still reaches 0.648 at b0.05 with
+  the related test at a median rank of 26/1653 (§12.4). The boundary removes coverage, which
+  depends on execution, but not naming, which does not.
+* **Real bugs do not bring several failing tests per change.** BugsInPy's 71 usable bugs have a
+  median of 1 failing test and a maximum of 4 (§12.3), so the property that motivated W2a is not
+  present in it.
+
+The open question has therefore narrowed and changed shape. It is no longer "can SemIf win when
+structure is removed" — on synthetic labels it can, on real labels it ties — but "what is
+different about the mutant labels that manufactures the win". The natural next step is real
+failing-test labels on a boundary-broken corpus (build MicroPython, label its bug commits),
+because that is the only arm that changes both the labels and the structure at once.
+
 ---
 
 ## 0. What changed
@@ -344,8 +368,11 @@ Pre-registered, so a null is informative. Outcomes measured so far are marked.
   lift at all for black and sanic), and **passes strongly on MicroPython** (98.4%). So the task
   is text-solvable in both, which removes the main reason to abandon the direction but also
   undercuts the reason to expect a semantic model to be needed.
-* **W2a changes the picture** if real labels move the ordering. Pending the scoring pass.
-  One expectation is already refuted: BugsInPy bugs have a median of **one** failing test, so
+* **W2a changes the picture** if real labels move the ordering. **They do — against the
+  hypothesis.** On BugsInPy, SemIf and BM25 tie at every budget (0.000 at b0.05, p=1.00), on an
+  arm whose feature condition is identical to the ladder's L3, where the ladder reports SemIf
+  ahead by +0.170. So the L3 advantage does not replicate once the labels are real. One
+  expectation is also refuted: BugsInPy bugs have a median of **one** failing test (max 4), so
   "more killers makes RTS easier" does not apply to it.
 
 ---
