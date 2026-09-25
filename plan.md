@@ -53,6 +53,75 @@ candidate set, since the covered mask is now known to distort the comparison.
 for finding a regime where a semantic model wins. It does not: re-scoring the starved
 population against the full 1187-test suite shows the classical selectors ahead at every
 budget, and the larger population moves the two soft cells further against SemIf. See
-section 5.7 of `implementation.md`. The study's next steps (relabelling with the full
-suite, de-lexicalisation, traceability-loss manipulations, real commit history, BugsInPy)
-are listed in section 11 of the same document.
+section 5.7 of `implementation.md`.
+
+# Next steps
+
+This is the agenda for the next session. The study's question is answered — SemIf does not
+beat the classical selectors in any regime tested, and all four text-side levers failed
+(`implementation.md` §6 and §11) — so what follows is the work that could still change that,
+or show the benchmark is measuring the wrong thing. It rests on two independent gaps between
+this benchmark and the target setting (long-running integration tests of embedded systems).
+
+**Gap 1 — the label set is defined by coverage.** `mutmut` only *runs* the tests covering the
+mutated function, so a fault whose real killer does not cover the changed function is
+recorded as "never ran" and treated as not failing. The recorded invariant ("0 killing tests
+fall outside the coverage set") is therefore true *by construction, not by discovery*. This is
+the benchmark's most consequential limitation: it structurally excludes the integration-test
+failure mode, and it makes the coverage feature that dominates every result circular with
+respect to the labels. Feature manipulations cannot reach this — the labels have to change.
+
+**Gap 2 — the features that win are exactly the ones that do not transfer.** Coverage,
+filename matching and identifier overlap are all artefacts of a co-located, instrumented,
+conventionally-named unit-test suite. Embedded integration suites are usually none of those.
+
+1. **Full-suite relabelling.** Run the full 1190-test suite for every mutant instead of
+   mutmut's median of 5 selected tests, and rebuild the labels from the outcome log.
+   **~5 min wall-clock** at 8 workers (2651 mutants × 0.75 s ≈ 33 min CPU). Yields the count
+   of faults with out-of-coverage killers, an "indirect fault" evaluation subset, and an
+   honest ceiling for the structural funnel. A correctness fix for the current results as
+   much as a new experiment.
+2. **De-lexicalisation ladder.** Three arms: rename the changed symbol and its locals in the
+   *diff* only; then obfuscate both sides consistently; then obfuscate test names too.
+   **~1 h GPU.** This severs the shared-vocabulary bridge BM25 depends on and is **the only
+   manipulation with a stated reason to favour a text model** — every one of the four
+   negative results so far left that bridge intact. Prediction: BM25 collapses; SemIf drops
+   less but still loses to the coverage + BM25 tree. If it cannot beat that tree here, the
+   semantic hypothesis is dead in a way nothing so far establishes.
+3. **Traceability-loss manipulations.** **~1 h CPU, no GPU** — the SemIf caches are keyed on
+   (change, test) *text* pairs, so manipulations that change only features or the candidate
+   pool need no re-scoring. In order of how directly each targets the embedded setting:
+   *coverage coarsening* (recompute `covers_function` at module granularity; dilate it with k
+   random coverers; drop coverage for a random 50% of tests, i.e. partial instrumentation);
+   *time budgets* (heavy-tailed test runtimes, select under a seconds budget rather than a
+   count — what a practitioner actually optimises); *coarse test units* (group by test
+   class/fixture, coherent unlike random grouping, so no single filename matches — needs the
+   built-but-unrun `bundle_text(token_budget=)` control, because a ~12k-token multi-topic
+   window would hurt the reranker for dilution reasons unrelated to semantics).
+4. **Real commit history on marshmallow.** **~10 min.** The suite is 0.75 s, so it can be run
+   at a sampled set of real revisions, replacing the imposed random order with the real
+   commit graph and yielding genuine cumulative failure/coverage history. The cheapest
+   available non-synthetic step, and it directly addresses the least realistic property of
+   the starved arm (synthetic history over-repeats `(file, test)` pairs ~159×). Expectation:
+   the history features look weaker, not stronger.
+5. **BugsInPy — real multi-project data.** 493 real bugs across 17 Python projects with known
+   `failing_tests`: non-synthetic changes and labels, several failing tests per change, and
+   more than one SUT. Needs per-project environments and test commands; no GPU for the
+   classical side. Alternatives for scale or a second language: SWE-bench `FAIL_TO_PASS`
+   (2294 instances, 12 repos, but heavy pretraining-contamination risk and curated test
+   lists), Defects4J (Java), and CI corpora (TravisTorrent, Bears, GitBug-Java) for genuine
+   per-test failure history.
+
+**Framing changes real data forces.** Report a *cost-effectiveness curve* (time saved vs
+faults missed) rather than recall@budget, and account for the mostly-harmless changes that
+dominate real history.
+
+**What cannot be simulated on this SUT.** Hardware coupling, non-determinism and
+cross-compilation. Label noise (flipping a small fraction of outcomes) is a cheap partial
+proxy for flakiness only.
+
+**Lower priority, carried over.** The 16-option windowed direct mode — the formulation SemIf
+was actually designed for, blocked on throughput (1.3 pairs/s without
+`flash-linear-attention`/`causal_conv1d`), and the dilution evidence is against it — and the
+`after_document` re-run on all 464 faults (~74 min) to make the full-set fairness comparison
+citable rather than inferred.
