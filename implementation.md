@@ -690,7 +690,7 @@ python -m rts.variations --only full_starved
 43 held-out changes, 43 faults, **1187 candidates per change** (k = 12 / 60 / 119 / 238 at the
 four budgets), 51,041 pairs, 28.2 min, 30.1 pairs/s. Recall:
 
-![starved arm on the full suite, both population sizes](figures/fig_starved_full_suite.png)
+![starved arm on the full suite, both population sizes](artifacts/figures/fig_starved_full_suite.png)
 
 *`artifacts/figures/fig_starved_full_suite.png` -- recall against budget for both population
 sizes (n=43 and n=141). SemIf is the red star; the coverage + BM25 tree is the blue line.*
@@ -714,7 +714,7 @@ sizes (n=43 and n=141). SemIf is the red star; the coverage + BM25 tree is the b
 history features from `xgboost_struct_lex` to get `xgboost_static_lex` moves b0.05 from 0.837 to
 **0.953**. A 2x2 over {history, coverage} with BM25 always on shows why:
 
-![history x coverage decomposition](figures/fig_history_coverage.png)
+![history x coverage decomposition](artifacts/figures/fig_history_coverage.png)
 
 *`artifacts/figures/fig_history_coverage.png` -- the decomposition at b0.05, with SemIf and the
 three-line structural rule as reference lines.*
@@ -1278,7 +1278,7 @@ P-number, so the subsections below appear as P5, P2, P3, P1. Raw numbers land in
 `python -m rts.variations --only <name>` once its score cache exists, and every figure with
 `python -m rts.figures`.
 
-![every text-side lever fails](figures/fig_variation_levers.png)
+![every text-side lever fails](artifacts/figures/fig_variation_levers.png)
 
 *`artifacts/figures/fig_variation_levers.png` -- all ten paired deltas at b0.05, one per
 intervention, each against the baseline that proposal was designed to beat. Filled markers are
