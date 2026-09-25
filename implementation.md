@@ -777,7 +777,19 @@ comparison citable rather than inferred.
 Section 11's agenda was reorganised around a sharper statement of the target regime — a test
 suite driving an embedded system **across a boundary**, so the changed code does not run in the
 test process. That kills four feature families at once: coverage, filename/path proximity,
-identifier overlap, and history. This section reports what was executed against that framing.
+identifier overlap, and history.
+
+**The hypothesis.** Everything in §5-§11 measures a benchmark where those four families are all
+available, and the classical methods win by exploiting them. The claim being tested here is that
+the shortcuts are what defeats SemIf, and that removing them reverses the ordering. Three arms
+test it, in escalating order of how much they fix:
+
+| arm | what it fixes | what it still gets wrong |
+|---|---|---|
+| 12.2 ladder | the features | the labels are still synthetic and coverage-defined |
+| 12.3 BugsInPy | the labels (real bugs, real failing tests) | no boundary; no coverage/history available at all |
+| 12.4 MicroPython | the structure (a real process boundary) | labels are a co-change proxy, not real failures |
+
 Execution plan: `plan_next_steps.md`. Artifacts: `artifacts/ladder.json`,
 `artifacts/bugsinpy_results.json`, `artifacts/micropython_bridge_probe.json`.
 
@@ -818,31 +830,121 @@ the hand-built selectors. SemIf is a *text* model and its scores are unaffected 
 the curve shows the classical floor falling beneath a flat semantic line. Population: 141
 held-out changes, full candidate set (1189 tests). `starved141` in the tables below.
 
-SemIf's margin over the **best** classical selector (positive = SemIf ahead), at budget 0.05:
+**The prediction under test.** §6 established that the classical methods win by exploiting
+shortcuts that are artefacts of a co-located, instrumented unit-test suite, and the target regime
+is defined by their absence. So if those shortcuts are what defeats SemIf, *removing them should
+reverse the ordering*. That is falsifiable, and the ladder is the test of it. It removes the
+families cumulatively:
 
-| rung | removed | mutmut labels | full labels |
-|---|---|---|---|
-| L0 | nothing | −0.255 | −0.050 |
-| L1 | history | −0.284 | −0.078 |
-| L2 | history + coverage | **+0.099** | **+0.170** |
-| L3 | history + coverage + traceability | **+0.177** | **+0.170** |
+| rung | feature families removed |
+|---|---|
+| L0 | — |
+| L1 | history |
+| L2 | history + coverage |
+| L3 | history + coverage + traceability (filename match, path distance, tests-per-file) |
 
-At every other budget the same ordering holds (full labels, L2: +0.163/+0.170/+0.142/+0.114 at
-b0.01/0.05/0.10/0.20). The mechanism is visible in the levels rather than only the margins: at
-L0 the best classical selector is the coverage tree at 0.908 and at L2/L3 it is raw BM25 at
-0.688, while SemIf holds at 0.858 throughout.
+**Full results, corrected (`full`) labels.** Population `starved141`: 141 held-out changes,
+full candidate set of 1189 tests, so k = 60 tests at b0.05 for every row.
+
+| rung | selector | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|---|
+| L0 | `random` | 0.149 | 0.284 | 0.433 | 0.546 |
+| L0 | `recency` | 0.128 | 0.262 | 0.340 | 0.489 |
+| L0 | `failure_rate` | 0.206 | 0.355 | 0.397 | 0.525 |
+| L0 | `coverage` | 0.645 | 0.801 | 0.851 | 0.908 |
+| L0 | `structural_rule` | 0.702 | 0.886 | 0.950 | 0.993 |
+| L0 | `bm25_lexical` | 0.511 | 0.688 | 0.745 | 0.794 |
+| L0 | `xgboost_struct_lex` | 0.816 | **0.908** | 0.965 | 0.979 |
+| L0 | `xgboost_struct` | 0.738 | 0.851 | 0.879 | 0.929 |
+| L0 | **`semif_reranker`** | 0.674 | 0.858 | 0.886 | 0.922 |
+| L1 | `random` | 0.149 | 0.284 | 0.433 | 0.546 |
+| L1 | `recency` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L1 | `failure_rate` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L1 | `coverage` | 0.645 | 0.801 | 0.851 | 0.908 |
+| L1 | `structural_rule` | 0.702 | 0.886 | 0.950 | 0.993 |
+| L1 | `bm25_lexical` | 0.511 | 0.688 | 0.745 | 0.794 |
+| L1 | `xgboost_struct_lex` | 0.851 | **0.936** | 0.965 | 0.986 |
+| L1 | `xgboost_struct` | 0.745 | 0.851 | 0.908 | 0.965 |
+| L1 | **`semif_reranker`** | 0.674 | 0.858 | 0.886 | 0.922 |
+| L2 | `random` | 0.149 | 0.284 | 0.433 | 0.546 |
+| L2 | `recency` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L2 | `failure_rate` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L2 | `coverage` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L2 | `structural_rule` | 0.128 | 0.355 | 0.518 | 0.660 |
+| L2 | `bm25_lexical` | 0.511 | **0.688** | 0.745 | 0.794 |
+| L2 | `xgboost_struct_lex` | 0.383 | 0.631 | 0.723 | 0.808 |
+| L2 | `xgboost_struct` | 0.184 | 0.312 | 0.447 | 0.596 |
+| L2 | **`semif_reranker`** | 0.674 | 0.858 | 0.886 | 0.922 |
+| L3 | `random` | 0.149 | 0.284 | 0.433 | 0.546 |
+| L3 | `recency` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L3 | `failure_rate` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L3 | `coverage` | 0.106 | 0.248 | 0.340 | 0.461 |
+| L3 | `structural_rule` | 0.021 | 0.163 | 0.255 | 0.369 |
+| L3 | `bm25_lexical` | 0.511 | **0.688** | 0.745 | 0.794 |
+| L3 | `xgboost_struct_lex` | 0.369 | 0.582 | 0.688 | 0.787 |
+| L3 | `xgboost_struct` | 0.234 | 0.333 | 0.411 | 0.503 |
+| L3 | **`semif_reranker`** | 0.674 | 0.858 | 0.886 | 0.922 |
+
+The same ladder under the historical `mutmut` labels, for comparison:
+
+| rung | selector | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|---|
+| L0 | `random` | 0.000 | 0.043 | 0.085 | 0.192 |
+| L0 | `recency` | 0.007 | 0.099 | 0.220 | 0.461 |
+| L0 | `failure_rate` | 0.028 | 0.085 | 0.206 | 0.418 |
+| L0 | `coverage` | 0.461 | 0.652 | 0.731 | 0.816 |
+| L0 | `structural_rule` | 0.575 | 0.759 | 0.908 | 0.979 |
+| L0 | `bm25_lexical` | 0.305 | 0.503 | 0.553 | 0.617 |
+| L0 | `xgboost_struct_lex` | 0.823 | **0.936** | 0.979 | 0.993 |
+| L0 | `xgboost_struct` | 0.745 | 0.901 | 0.965 | 1.000 |
+| L0 | **`semif_reranker`** | 0.425 | 0.681 | 0.745 | 0.837 |
+| L1 | `random` | 0.000 | 0.043 | 0.085 | 0.192 |
+| L1 | `recency` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L1 | `failure_rate` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L1 | `coverage` | 0.461 | 0.652 | 0.731 | 0.816 |
+| L1 | `structural_rule` | 0.575 | 0.759 | 0.908 | 0.979 |
+| L1 | `bm25_lexical` | 0.305 | 0.503 | 0.553 | 0.617 |
+| L1 | `xgboost_struct_lex` | 0.865 | **0.965** | 0.986 | 1.000 |
+| L1 | `xgboost_struct` | 0.787 | 0.929 | 0.986 | 1.000 |
+| L1 | **`semif_reranker`** | 0.425 | 0.681 | 0.745 | 0.837 |
+| L2 | `random` | 0.000 | 0.043 | 0.085 | 0.192 |
+| L2 | `recency` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L2 | `failure_rate` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L2 | `coverage` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L2 | `structural_rule` | 0.085 | 0.241 | 0.362 | 0.532 |
+| L2 | `bm25_lexical` | 0.305 | **0.503** | 0.553 | 0.617 |
+| L2 | `xgboost_struct_lex` | 0.319 | 0.582 | 0.688 | 0.858 |
+| L2 | `xgboost_struct` | 0.057 | 0.213 | 0.433 | 0.745 |
+| L2 | **`semif_reranker`** | 0.425 | 0.681 | 0.745 | 0.837 |
+| L3 | `random` | 0.000 | 0.043 | 0.085 | 0.192 |
+| L3 | `recency` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L3 | `failure_rate` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L3 | `coverage` | 0.000 | 0.064 | 0.142 | 0.277 |
+| L3 | `structural_rule` | 0.021 | 0.092 | 0.149 | 0.241 |
+| L3 | `bm25_lexical` | 0.305 | **0.503** | 0.553 | 0.617 |
+| L3 | `xgboost_struct_lex` | 0.298 | 0.496 | 0.645 | 0.766 |
+| L3 | `xgboost_struct` | 0.007 | 0.064 | 0.099 | 0.475 |
+| L3 | **`semif_reranker`** | 0.425 | 0.681 | 0.745 | 0.837 |
 
 Four things follow.
 
 1. **Removing coverage is the single step that flips the result.** History removal does nothing
-   (consistent with §5.7); the crossing happens exactly at L2.
+   (consistent with §5.7); the crossing happens exactly at L2, where `xgboost_struct_lex` falls
+   0.908 → 0.631 and `coverage` collapses 0.801 → 0.248 (to its own degenerate value).
 2. **Traceability features add nothing once coverage is gone.** L2 and L3 are identical to four
    decimal places under full labels, so filename matching and path proximity are not what the
    classical floor is made of — coverage is.
-3. **The floor really is a floor.** At L3 the no-text tree collapses to 0.064 at b0.05, level
-   with the degenerate `coverage` and `recency` baselines, because nothing informative is left.
-4. **Under corrected labels SemIf is already near parity at L0** (−0.050), which is a much
-   weaker defeat than the −0.255 the mutmut labels report.
+3. **The floor really is a floor.** At L3 the no-text tree (`xgboost_struct`) falls to 0.333 at
+   b0.05 and `structural_rule` to 0.163 — *below* `random`'s 0.284, because with coverage and
+   filename matching gone it degenerates to "shortest test first", which is actively worse than
+   guessing.
+4. **SemIf does not move at all across rungs** (0.858 at b0.05 throughout), which is the whole
+   point of the curve: it is a text model, its input is unchanged, and the classical side falls
+   away beneath it.
+
+Note also that under corrected labels `random` reaches 0.284 at b0.05, far above the 0.043 it
+scores under `mutmut` labels. That is the killer-count correction of §12.1 showing up directly:
+with a median of 8 killers per fault instead of 1, guessing catches much more.
 
 Paired bootstrap against SemIf at b0.05 (negative delta = SemIf ahead), full labels:
 
@@ -955,21 +1057,23 @@ MicroPython, which needs the C toolchain.
 
 ### 12.5 What the three arms jointly say
 
-| arm | structure | real labels | SemIf vs BM25 |
-|---|---|---|---|
-| ladder L0 | all features | no | **+0.170, p<0.0001** (SemIf ahead) |
-| ladder L3 | no coverage/traceability/history | no | **+0.170, p<0.0001** (SemIf ahead) |
-| BugsInPy | no coverage/history/traceability | **yes** | 0.000, p=1.00 — **a tie** |
-| MicroPython | boundary, 1653 tests | co-change proxy | lexical RTS works: 0.648 at b0.05 |
+Recall at b0.05, with the best classical selector named:
+
+| arm | structure | labels | SemIf | BM25 | best classical |
+|---|---|---|---|---|---|
+| ladder L0 | all features | synthetic | 0.858 | 0.688 | **0.908** `xgboost_struct_lex` |
+| ladder L3 | no coverage/traceability/history | synthetic | **0.858** | 0.688 | 0.688 `bm25_lexical` |
+| BugsInPy | no coverage/history/traceability | **real** | 0.211 | **0.225** | 0.225 `bm25_lexical` |
+| MicroPython | boundary, 1653 tests | co-change proxy | — | **0.648** | 0.648 `bm25_lexical` |
 
 The hypothesis is confirmed in one place and refuted in another, and the difference is the
 labels rather than the features:
 
 * **On synthetic mutant labels, coverage is what defeats SemIf and removing it reverses the
-  ordering** (+0.170 at L2/L3, p<0.0001). Filename and path features contribute nothing; it is
-  coverage alone.
-* **On real bug labels the same comparison is a tie** (0.000, p=1.00), on an arm whose feature
-  condition is identical to L3.
+  ordering** (0.908 → 0.688 for the best classical method, while SemIf holds at 0.858). Filename
+  and path features contribute nothing; it is coverage alone.
+* **On real bug labels the ordering does not reverse** — SemIf 0.211 against BM25's 0.225, on an
+  arm whose feature condition is identical to L3, where the ladder reports SemIf 0.170 ahead.
 * **The boundary does not destroy the lexical bridge** (MicroPython: 98.4% token overlap,
   median rank 26/1653), so the premise that the target regime starves lexical methods is not
   supported.
