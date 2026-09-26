@@ -362,12 +362,19 @@ the only way to diff the arms at all, the refreshed artifact is committed alongs
 with the three new arms and the four new top-level keys (`labels`, `population`,
 `dataset_declaration`, `warnings`) called out rather than absorbed silently.
 
-`ladder.json` — see §13.
+`ladder.json` — **exact**. Zero value differences across both label sources, all four rungs, both
+populations, every selector and every SemIf margin. The only differences are three additive keys per
+label source: `dataset_declaration`, `warnings`, and `populations_unmeasured`, the last of which is
+empty here because the SemIf cache the `starved141` population depends on is present. The ladder is
+the arm this design was most likely to disturb, since it zeroes feature *families* by column name and
+those names are now owned by the contract rather than by `rts.features`.
 
 `bugsinpy_results.json` — **exact**, with two additive keys: `dataset_declaration` and
 `per_project_recall_at_0.05`. Adding the second is only possible because the eight projects became
 eight datasets; the pooled SemIf-vs-BM25 verdict (0.211 vs 0.225 at b0.05, p=0.854) is unchanged, and
-the breakdown shows the pooled tie holds per project rather than being carried by one.
+the breakdown shows the pooled tie holds per project rather than being carried by one. Re-deriving
+the T0 bridge audit through the new datasets also reproduces it exactly (87.3% share a token, 2.66 vs
+2.03 mean shared tokens).
 
 Verification found two defects in the refactor itself, both invisible without diffing:
 

@@ -1133,7 +1133,10 @@ about two datasets rather than about two implementations.
   is now available — see `artifacts/bugsinpy_results.json`.
 
 **Reproduction.** `artifacts/results_full.json` and `artifacts/ladder.json` were recorded before the
-change and diffed after. Every arm present in both is identical, including bootstrap intervals, and
+change and diffed after. `ladder.json` is **exact**: zero value differences across both label
+sources, all four rungs, both populations, every selector and every SemIf margin, with only three
+additive keys per section (`dataset_declaration`, `warnings`, `populations_unmeasured`). Every arm
+present in both versions of `results_full.json` is identical, including bootstrap intervals, and
 `bugsinpy_results.json` reproduces exactly with two additive keys. `results_full.json` in the
 repository was **stale independently of this change**: it had been written before
 `models.default_selectors` gained `xgboost_static_nocov`, `xgboost_static_nocov_lex` and

@@ -8,6 +8,34 @@
       "starved141": 141,
       "heldout530": 464
     },
+    "populations_unmeasured": {},
+    "dataset_declaration": {
+      "name": "marshmallow",
+      "ordering": "imposed",
+      "test_unit": "function",
+      "capabilities": [
+        "coverage",
+        "durations"
+      ],
+      "semantics": {
+        "change": "one mutant; the diff is reconstructed by diffing generated source",
+        "ordering": "imposed: mutant population has no intrinsic temporal order; canonical order is a permutation at seed 20260924",
+        "killing_tests": "tests that failed; under the mutmut label source these are the tests mutmut selected, so the label is defined by coverage",
+        "ran_tests": "tests mutmut actually executed; the complement of killing_tests inside this set passed, and everything outside it never ran",
+        "test_unit": "one test function; pytest parametrization is collapsed to the base id",
+        "survivors": "retained as negative training signal, excluded from the recall denominator",
+        "coverage": "mutmut's function-level test association",
+        "durations": "wall-clock from the mutmut stats file; hardware-dependent, so available but not comparable with a duration measured elsewhere"
+      }
+    },
+    "warnings": [
+      {
+        "code": "feature.history_on_imposed_order",
+        "requirement": "ordering.observed",
+        "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+        "scope": "structured_features"
+      }
+    ],
     "rungs": {
       "L0_all": {
         "removed": [],
@@ -1429,6 +1457,35 @@
       "starved141": 141,
       "heldout530": 466
     },
+    "populations_unmeasured": {},
+    "dataset_declaration": {
+      "name": "marshmallow_full",
+      "ordering": "imposed",
+      "test_unit": "function",
+      "capabilities": [
+        "coverage",
+        "durations"
+      ],
+      "semantics": {
+        "change": "one mutant; the diff is reconstructed by diffing generated source",
+        "ordering": "imposed: mutant population has no intrinsic temporal order; canonical order is a permutation at seed 20260924",
+        "killing_tests": "tests that failed when the full suite was executed against the mutant; not defined by coverage",
+        "ran_tests": "tests mutmut actually executed; the complement of killing_tests inside this set passed, and everything outside it never ran",
+        "test_unit": "one test function; pytest parametrization is collapsed to the base id",
+        "survivors": "retained as negative training signal, excluded from the recall denominator",
+        "coverage": "mutmut's function-level test association",
+        "durations": "wall-clock from the mutmut stats file; hardware-dependent, so available but not comparable with a duration measured elsewhere",
+        "pool": "canonical pool of the full-suite run; wall-clock parametrization ids are collapsed so the pool is stable across collections"
+      }
+    },
+    "warnings": [
+      {
+        "code": "feature.history_on_imposed_order",
+        "requirement": "ordering.observed",
+        "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+        "scope": "structured_features"
+      }
+    ],
     "rungs": {
       "L0_all": {
         "removed": [],
