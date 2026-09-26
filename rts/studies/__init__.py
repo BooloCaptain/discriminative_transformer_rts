@@ -24,10 +24,10 @@ model object.
 **Two arms here are verification vehicles.** ``study_arm()``/``sparse_arm()`` reproduce
 ``artifacts/results_{full,covered}.json`` and ``ladder_arm()`` reproduces
 ``artifacts/ladder.json``, both through ``scripts/verify_experiment_layer.py``. The drivers that
-render those artifacts -- ``rts/pipeline.py`` and ``rts/ladder.py`` -- are thin: they run an arm
-declared here and write it in the shape the recorded numbers are written against. The remaining
-drivers (``variations``, ``bundles``, ``bugsinpy``) still hold their own sweeps and are the next
-migration (``docs/experiment.md`` §13).
+render those artifacts -- ``rts/pipeline.py``, ``rts/ladder.py`` and ``rts/bugsinpy.py`` -- are
+thin: they run an arm declared here and write it in the shape the recorded numbers are written
+against. ``rts/bundles.py`` is the last driver that still holds its own sweep and is therefore
+the next migration (``docs/experiment.md`` §13).
 
 Usage::
 

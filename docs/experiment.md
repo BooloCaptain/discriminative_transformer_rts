@@ -402,7 +402,7 @@ whole rendered artifacts rather than against the arms that already work:
 | module | responsibility |
 |---|---|
 | `rts/experiment.py` | `Axis`, `Element`, `Knobs`, `Environment`, `Binding`, `Cell`, `Comparison`, `Experiment`, `run`, `RunReport` |
-| `rts/studies.py` | the study's axes as builders, the named arms, and `semif_margins` as a *reading* of a report |
+| `rts/studies/` | the study's choices as values: `axes`, `arms`, `ladder`, `variations`, `readings`, `bugsinpy` |
 | `scripts/verify_experiment_layer.py` | the reproduction check of §11 |
 | `tests/test_experiment.py` | 20 tests, all over the stub dataset |
 
@@ -431,10 +431,12 @@ removing a parameter from `ladder.build_populations` that its body never read.
    injection seam. The alias-map version (§10) only ever inserted a layer between a selector and
    the cache it was constructed with.
 6. **Derived datasets needed no machinery at all.** `make` is arbitrary Python, so a bundle rung
-   is an element whose builder constructs its base; `_bundle_dataset` in `studies.py` is the
-   whole implementation. The one discipline is that a builder reading the run's seed does so
+   is an element whose builder constructs its base; `_bundle_dataset` in `rts/studies/axes.py` is
+   the whole implementation. The one discipline is that a builder reading the run's seed does so
    through the binding — `order_seed=b.knobs.seed` — rather than closing over `config.SEED`,
-   because otherwise a knob override would silently not reach the dataset.
+   because otherwise a knob override would silently not reach the dataset. The BugsInPy arm later
+   confirmed the shape: a project selection is a parameter of the dataset *element*, so a corpus
+   of three projects is a different experiment rather than a filter on the results.
 7. **Elements are materialised once per run and shared across cells**, which is what makes the
    12-cell study arm ~110 s rather than twelve dataset builds. Sound because these are values.
 
