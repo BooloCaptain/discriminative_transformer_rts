@@ -568,6 +568,36 @@ def test_a_report_records_the_population_size_before_and_after_the_fault_filter(
     assert report.population_size("fault_bearing") == (1, 1)
 
 
+def test_a_population_size_names_the_dataset_it_belongs_to():
+    """A population name is not unique across datasets, so the size is keyed by the pair.
+
+    Reporting the first dataset's counts for the second is indistinguishable from a correct
+    answer, which is why an unnamed lookup over two datasets refuses rather than guesses.
+    """
+    report = run(
+        stub_experiment(
+            datasets=Axis(
+                ROLE_DATASET,
+                (constant("one", StubDataset()), constant("two", StubDataset())),
+            )
+        ),
+        save=False,
+        verbose=False,
+    )
+    assert set(report.population_sizes) == {
+        "one|fault_bearing",
+        "two|fault_bearing",
+    }
+    assert report.population_size("fault_bearing", "one") == (1, 1)
+    assert report.population_size("fault_bearing", "two") == (1, 1)
+    with pytest.raises(KeyError, match="several datasets"):
+        report.population_size("fault_bearing")
+    with pytest.raises(KeyError, match="no population"):
+        report.population_size("fault_bearing", "absent")
+    # The record stays JSON-serialisable: the key is a string pair, not a tuple.
+    json.dumps(report.to_dict())
+
+
 def test_a_dataset_without_coverage_records_no_recurrence():
     """The statistic is undefined without coverage, which is a fact rather than a failure."""
     ds = StubDataset(coverage=False)

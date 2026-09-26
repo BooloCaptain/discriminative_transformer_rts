@@ -145,9 +145,25 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
     ``seeds`` switches to the refit subset: the two strongest trees at each seed, plus the SemIf
     cache they are paired against. The seed is part of the element's identity because it is part
     of what the element computes.
+
+    The two elements that appear twice -- ``static_nocov_lex`` once standalone and once as a
+    rank-average parent, and the SemIf cache likewise -- are built by a factory so that every
+    element has its *own* instance. It matters most for the tree, which records state
+    (``importances_``, the extra-column cache): one instance shared by two elements would let
+    one cell's state describe another's, and would fit the same model twice under one name.
+    ``tests/test_studies.py`` asserts the invariant for every arm.
     """
+
+    def static_nocov_lex() -> models.XGBoostSelector:
+        return models.XGBoostSelector(
+            exclude_history=True, exclude_coverage=True, include_lexical=True,
+            candidates_mode="full",
+        )
+
+    def semif_scores() -> models.CachedScores:
+        return models.CachedScores("semif_textonly_full", starved_cache(max_failures))
+
     if seeds:
-        semif = models.CachedScores("semif_textonly_full", starved_cache(max_failures))
         elements: list[Element] = [
             _model_element(
                 models.XGBoostSelector(
@@ -169,14 +185,10 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
             )
             for seed in seeds
         )
-        elements.append(_model_element(semif))
+        elements.append(_model_element(semif_scores()))
         return Axis(ROLE_MODEL, tuple(elements), note="the seed sweep's refit subset")
 
-    static_nocov_lex = models.XGBoostSelector(
-        exclude_history=True, exclude_coverage=True, include_lexical=True, candidates_mode="full"
-    )
     struct = models.XGBoostSelector(candidates_mode="full")
-    semif = models.CachedScores("semif_textonly_full", starved_cache(max_failures))
     return Axis(
         ROLE_MODEL,
         (
@@ -186,7 +198,7 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
             _model_element(models.CoverageSelector()),
             _model_element(models.StructuralRuleSelector()),
             _model_element(models.LexicalSelector()),
-            _model_element(static_nocov_lex),
+            _model_element(static_nocov_lex()),
             _model_element(
                 models.XGBoostSelector(
                     exclude_history=True, include_lexical=True, candidates_mode="full"
@@ -199,9 +211,13 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
             ),
             _model_element(struct),
             _model_element(models.XGBoostSelector(include_lexical=True, candidates_mode="full")),
-            _model_element(semif),
+            _model_element(semif_scores()),
             _model_element(
-                _rank_average("rankaverage_xgb_semif", (static_nocov_lex, semif), "full")
+                _rank_average(
+                    "rankaverage_xgb_semif",
+                    (static_nocov_lex(), semif_scores()),
+                    "full",
+                )
             ),
         ),
         note="the starved arm's selectors; the two caches are the same model under one wording",
@@ -254,12 +270,25 @@ def embed_model_axis(candidates: str) -> Axis:
 
 
 def redundancy_model_axis() -> Axis:
-    """P5's parents plus the two rank averages that test whether SemIf is redundant."""
-    static_nocov_lex = models.XGBoostSelector(
-        exclude_history=True, exclude_coverage=True, include_lexical=True, candidates_mode="covered"
-    )
-    struct = models.XGBoostSelector(candidates_mode="covered")
-    semif = models.CachedScores("semif_textonly", Path(config.SEMIF_SCORES_FILE))
+    """P5's parents plus the two rank averages that test whether SemIf is redundant.
+
+    A parent that is also tabulated standalone gets a fresh instance per element, so two
+    elements never share one -- see :func:`starved_model_axis`, and it is the stateful trees
+    that make it matter.
+    """
+
+    def static_nocov_lex() -> models.XGBoostSelector:
+        return models.XGBoostSelector(
+            exclude_history=True, exclude_coverage=True, include_lexical=True,
+            candidates_mode="covered",
+        )
+
+    def struct() -> models.XGBoostSelector:
+        return models.XGBoostSelector(candidates_mode="covered")
+
+    def semif() -> models.CachedScores:
+        return models.CachedScores("semif_textonly", Path(config.SEMIF_SCORES_FILE))
+
     return Axis(
         ROLE_MODEL,
         (
@@ -269,14 +298,18 @@ def redundancy_model_axis() -> Axis:
             _model_element(models.CoverageSelector()),
             _model_element(models.StructuralRuleSelector()),
             _model_element(models.LexicalSelector()),
-            _model_element(static_nocov_lex),
-            _model_element(struct),
-            _model_element(semif),
+            _model_element(static_nocov_lex()),
+            _model_element(struct()),
+            _model_element(semif()),
             _model_element(
-                _rank_average("rankaverage_xgb_semif", (static_nocov_lex, semif), "covered")
+                _rank_average(
+                    "rankaverage_xgb_semif", (static_nocov_lex(), semif()), "covered"
+                )
             ),
             _model_element(
-                _rank_average("rankaverage_xgb_struct_semif", (struct, semif), "covered")
+                _rank_average(
+                    "rankaverage_xgb_struct_semif", (struct(), semif()), "covered"
+                )
             ),
         ),
         note="the redundancy test: two trees, the text model, and both rank averages",

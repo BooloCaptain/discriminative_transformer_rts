@@ -556,6 +556,18 @@ class ProducedScores(Selector):
     unmeasured *before* it could produce it, which is the trap this class exists to avoid; the
     element that wraps it declares ``tier="gpu"`` instead, so a run that is not spending the
     GPU tier reports the cell as unmeasured rather than silently reading a half-built cache.
+
+    A cache is identified by its **path**, so "it exists" is not the same claim as "it is the
+    one this cell needs": the file may have been produced for other rows, another candidate
+    pool or another prompt wording, or torn mid-write. ``verifier`` is the element's chance to
+    refuse such a file -- it is handed the context and the path and raises if the cache cannot
+    serve it. Without one the file is trusted, which is the documented contract rather than a
+    guarantee, and it is why the SemIf production element supplies
+    :func:`rts.semif_runner.missing_pairs`.
+
+    A verifier *raises* rather than producing an unmeasured cell, and that is deliberate: the
+    element declared that it can produce this cache, so a file at the path that cannot serve
+    the context is a broken invocation with one remedy, not a hole in the grid.
     """
 
     def __init__(
@@ -564,11 +576,13 @@ class ProducedScores(Selector):
         cache: Path | str,
         scorer: ScoreProducer,
         loader: ScoreLoader | None = None,
+        verifier: Callable[[Context, Path], None] | None = None,
     ):
         self.name = name
         self.path = Path(cache)
         self._produce = scorer
         self._loader = loader or semif.load_scores
+        self._verify = verifier
         #: What the last production did -- pairs scored, throughput, whether it resumed.
         #: Recorded on the cell so a produced number carries its cost, the same way a
         #: measured cell carries its seconds.
@@ -580,6 +594,8 @@ class ProducedScores(Selector):
 
     def scores(self, ctx: Context) -> np.ndarray:
         if self.path.exists():
+            if self._verify is not None:
+                self._verify(ctx, self.path)
             self.last_stats = {"read_from": str(self.path), "produced": False}
         else:
             _, self.last_stats = self._produce(ctx, self.path)

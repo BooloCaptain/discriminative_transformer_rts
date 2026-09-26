@@ -17,7 +17,15 @@ import json
 import pytest
 
 from rts import config, models, populations, studies
-from rts.experiment import ROLE_DATASET, ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, ROLE_SPLIT
+from rts.experiment import (
+    ROLE_DATASET,
+    ROLE_FEATURES,
+    ROLE_MODEL,
+    ROLE_POPULATION,
+    ROLE_SPLIT,
+    Binding,
+    Environment,
+)
 
 
 def _recorded(name: str) -> dict:
@@ -137,6 +145,43 @@ def test_a_starved_threshold_is_a_population_named_for_its_threshold():
     # The caches are named for the threshold too, so the two line up.
     assert studies.starved_cache(5).name == "semif_scores_starved5_full.jsonl"
     assert studies.starved_cache(2).name == "semif_scores_starved2_full.jsonl"
+
+
+def test_no_two_model_elements_share_a_selector_instance():
+    """One element per variant means one *instance* per variant.
+
+    A selector records state -- ``XGBoostSelector`` keeps ``importances_`` from its last call
+    and caches extra score columns -- so an instance used as both a standalone element and a
+    rank-average parent would let one cell's state describe another's, and would fit the same
+    model twice for identical scores. The arms build the reused ones through factories; this
+    is the invariant that keeps a future edit from quietly sharing one again.
+    """
+    arms = (
+        studies.study_arm(),
+        studies.ladder_arm(),
+        studies.starved_arm(2),
+        studies.starved_arm(5),
+        studies.starved_seeds_arm(2, model_seed=1),
+        studies.instruction_arm(),
+        studies.embed_arm("covered"),
+        studies.embed_arm("full"),
+        studies.redundancy_arm(),
+        studies.bugsinpy_arm(0.05),
+    )
+    for arm in arms:
+        # Every built value is kept alive, so ``is`` is a sound comparison; comparing ``id``
+        # would let a collected instance's address be reused and report a false share.
+        seen: list[tuple[str, object]] = []
+        for element in arm.axis_for(ROLE_MODEL).elements:
+            # Building a model element returns its selector and touches no data.
+            value = element.build(Binding(env=Environment()))
+            for member in (value, *getattr(value, "selectors", ())):
+                for owner, other in seen:
+                    assert member is not other, (
+                        f"{arm.name}: {element.name!r} shares the selector instance already "
+                        f"owned by {owner!r}"
+                    )
+                seen.append((element.name, member))
 
 
 def test_the_variation_arms_declare_the_recorded_selector_keys():

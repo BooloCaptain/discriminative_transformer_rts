@@ -489,6 +489,50 @@ def load_done_keys(path: Path) -> set[tuple[int, int]]:
     return done
 
 
+def _missing_pairs(pair_set: PairSet, path: Path) -> set[tuple[int, int]]:
+    """The pairs of ``pair_set`` that ``path`` does not hold. One implementation."""
+    return set(pair_set.index) - load_done_keys(Path(path))
+
+
+def missing_pairs(
+    ds: contract.Dataset,
+    rows: np.ndarray,
+    candidates: np.ndarray,
+    path: Path,
+    *,
+    shuffle: bool = False,
+    seed: int = config.SEED,
+    feature_mode: str | None = None,
+    placement: str = "instruct",
+    instruction: str | None = None,
+) -> set[tuple[int, int]]:
+    """The pairs a cache is missing for this context; empty means it can be read as its own.
+
+    A cache is identified by its *path*, so the file at a path may have been produced for
+    different rows, a different candidate pool or a different prompt wording -- and reading
+    it anyway yields a matrix that looks like a measurement and is not. Completeness against
+    the pair set the context actually needs is the check the record format supports, and it
+    catches both that case and a torn write.
+
+    The parameterised entry point onto :func:`_missing_pairs`, which :func:`score_context`
+    calls with the pair set it already built, so the two cannot disagree about what
+    "complete" means. The check reads the ``(change_row, test_col)`` indices, which
+    :func:`score_to_cache` writes beside the stable identifiers -- so it is a check on caches
+    this module wrote, and a cache carrying only identifiers would read as empty here.
+    """
+    pair_set = build_pair_set(
+        ds,
+        rows,
+        candidates,
+        shuffle=shuffle,
+        seed=seed,
+        feature_mode=feature_mode,
+        placement=placement,
+        instruction=instruction,
+    )
+    return _missing_pairs(pair_set, path)
+
+
 def score_to_cache(
     model,
     tokenizer,
@@ -608,7 +652,7 @@ def score_context(
     )
 
     expected = set(pair_set.index)
-    missing = expected - load_done_keys(out_path)
+    missing = _missing_pairs(pair_set, out_path)
     if missing:
         raise RuntimeError(
             f"{out_path} is missing {len(missing)} of {len(expected)} pair(s) after scoring; "

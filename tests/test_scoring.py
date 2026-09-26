@@ -14,7 +14,8 @@ import json
 import numpy as np
 import pytest
 
-from rts import features, models, semif, semif_runner, splits
+from rts import accessors, features, models, semif, semif_runner, splits, studies
+from rts.experiment import Binding, Environment
 from tests.stub_dataset import StubDataset
 
 
@@ -69,6 +70,102 @@ def test_produced_scores_produce_and_cache_when_the_cache_is_absent(tmp_path):
     assert path.exists()
     assert np.all(got == 7.0)
     assert selector.last_stats == {"pairs": 12, "produced": True}
+
+
+# --- an existing cache is a candidate, not proof ---------------------------------
+#
+# A cache is identified by its *path*, so "the file exists" is not the same claim as "it is
+# the one this context needs": it may have been produced for other rows, another candidate
+# pool or another prompt wording. The element supplies the test, because only it knows what
+# its cache is supposed to cover.
+
+
+def test_a_produced_cache_can_be_refused_by_a_verifier(tmp_path):
+    """The verifier runs *before* the file is read, and raising is how it refuses one."""
+    path = tmp_path / "matrix.npy"
+    np.save(path, np.zeros((4, 3), dtype=np.float32))
+    seen: list = []
+
+    def refuse(ctx, cache):
+        seen.append(cache)
+        raise RuntimeError(f"{cache.name} is not this cell's cache")
+
+    selector = models.ProducedScores(
+        "m", path, lambda ctx, out: (None, {}), loader=models.load_matrix, verifier=refuse
+    )
+    with pytest.raises(RuntimeError, match="not this cell's cache"):
+        selector.scores(stub_context(StubDataset()))
+    assert seen == [path]
+
+
+def test_a_produced_cache_without_a_verifier_is_read_as_before(tmp_path):
+    """No verifier means the file is trusted, which is the class's documented contract."""
+    path = tmp_path / "matrix.npy"
+    np.save(path, np.zeros((4, 3), dtype=np.float32))
+    selector = models.ProducedScores(
+        "m", path, lambda ctx, out: (None, {}), loader=models.load_matrix
+    )
+    assert np.array_equal(
+        selector.scores(stub_context(StubDataset())), np.zeros((4, 3), dtype=np.float32)
+    )
+
+
+def test_the_semif_production_element_refuses_a_cache_it_cannot_use(tmp_path):
+    """The wiring, not only the hook: the study's produce element supplies a real check.
+
+    A cache holding one unrelated pair is not the cache this context needs, and reading it
+    would report a matrix that looks like a measurement.
+    """
+    cache = tmp_path / "semif.jsonl"
+    cache.write_text(
+        json.dumps(
+            {
+                "change_row": 999,
+                "test_col": 999,
+                "change_id": "other",
+                "test_nodeid": "other",
+                "score": 1.0,
+            }
+        )
+        + "\n"
+    )
+    element = studies.semif_scoring_model_axis(cache, candidates_mode="covered").elements[0]
+    selector = element.build(Binding(env=Environment()))
+
+    with pytest.raises(RuntimeError, match="missing"):
+        selector.scores(stub_context(StubDataset()))
+
+
+def test_the_semif_production_element_accepts_a_complete_cache(tmp_path):
+    """A cache covering every pair this context needs is read, so resuming still works."""
+    ds = StubDataset()
+    ctx = stub_context(ds)
+    candidates = accessors.candidates(ds, "covered")
+    pair_set = semif_runner.build_pair_set(ds, ctx.split.test_idx, candidates)
+    assert pair_set.index, "the fixture must have pairs for this check to mean anything"
+
+    cache = tmp_path / "complete.jsonl"
+    with cache.open("w") as handle:
+        for row, col in pair_set.index:
+            handle.write(
+                json.dumps(
+                    {
+                        "change_row": row,
+                        "test_col": col,
+                        "change_id": ds.change_id(ds.changes[row]),
+                        "test_nodeid": ds.test_ids[col],
+                        "score": 1.0,
+                    }
+                )
+                + "\n"
+            )
+
+    element = studies.semif_scoring_model_axis(cache, candidates_mode="covered").elements[0]
+    selector = element.build(Binding(env=Environment()))
+    scores = selector.scores(ctx)
+
+    assert scores.shape == (ds.n_changes, ds.n_tests)
+    assert selector.last_stats["produced"] is False
 
 
 # --- the context-driven scoring core ---------------------------------------

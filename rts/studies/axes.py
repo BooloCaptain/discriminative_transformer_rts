@@ -180,12 +180,41 @@ def semif_scoring_model_axis(
             shuffle=shuffle,
         )
 
+    def verify(ctx, path):
+        """Refuse a cache that does not cover the pairs this cell needs.
+
+        The cache is identified by its path, so an existing file may have been produced for
+        other rows, another candidate pool or another wording -- and it would be read as this
+        cell's. The pair set is the same one ``score_context`` builds, so a complete cache for
+        this context passes and any other raises instead of yielding a number.
+        """
+        from .. import accessors, semif_runner
+
+        missing = semif_runner.missing_pairs(
+            ctx.ds,
+            ctx.split.test_idx,
+            accessors.candidates(ctx.ds, candidates_mode),
+            path,
+            instruction=instruction,
+            feature_mode=feature_mode,
+            placement=placement,
+            shuffle=shuffle,
+        )
+        if missing:
+            raise RuntimeError(
+                f"{Path(path).name} is missing {len(missing)} pair(s) this cell needs; it "
+                "was produced for a different context (rows, candidate pool or prompt) or "
+                "is torn -- delete it and re-run with the GPU tier"
+            )
+
     return Axis(
         ROLE_MODEL,
         (
             Element(
                 name,
-                lambda _binding: models.ProducedScores(name, cache, produce),
+                lambda _binding: models.ProducedScores(
+                    name, cache, produce, verifier=verify
+                ),
                 tier="gpu",
                 note=(
                     "SemIf scores for the held-out changes over the "

@@ -647,7 +647,12 @@ class RunReport:
     #: ``None`` for a dataset that declares no coverage, because the statistic is not
     #: defined without it.
     dataset_stats: dict[str, dict] = field(default_factory=dict)
-    #: Population name -> ``{"changes": rows in the window, "faults": rows averaged over}``.
+    #: ``"{dataset element}|{population}"`` -> ``{"changes": rows in the window,
+    #: "faults": rows averaged over}``. Keyed by the *pair* rather than by the population
+    #: name alone: a run over two datasets can have a population of the same name and
+    #: different sizes in each, and reporting the first dataset's counts for the second is
+    #: the same error as :meth:`describe` guessing which dataset was meant. A single-dataset
+    #: run is unaffected, because then there is exactly one key per population name.
     population_sizes: dict[str, dict] = field(default_factory=dict)
     seconds: float = 0.0
 
@@ -693,14 +698,43 @@ class RunReport:
         """How often ``(file, test)`` pairs recur, or ``None`` if coverage is not declared."""
         return self._stats(dataset, split)["recurrence"]
 
-    def population_size(self, population: str) -> tuple[int, int]:
+    def population_size(
+        self, population: str, dataset: str | None = None
+    ) -> tuple[int, int]:
         """``(rows in the evaluation window, rows the metric averaged over)``.
 
         The second is the fault-bearing subset, so it is what every recall in the report was
         averaged over. Both come from the cells rather than from re-deriving the population,
         so a renderer cannot report a size the run did not use.
+
+        ``dataset`` names the dataset element, and is only needed when the run had more than
+        one -- the same rule :meth:`describe` follows. A report that recorded this population
+        for several datasets refuses to guess, because returning the first one's counts is
+        indistinguishable from a correct answer.
         """
-        entry = self.population_sizes[population]
+        if dataset is None:
+            keys = sorted(
+                key for key in self.population_sizes if key.endswith(f"|{population}")
+            )
+            if not keys:
+                raise KeyError(
+                    f"this report records no sizes for population {population!r}; it has "
+                    f"{sorted(self.population_sizes)}"
+                )
+            if len(keys) > 1:
+                raise KeyError(
+                    f"this report records population {population!r} for several datasets "
+                    f"{[key.split('|', 1)[0] for key in keys]}; name which one"
+                )
+            entry = self.population_sizes[keys[0]]
+        else:
+            key = f"{dataset}|{population}"
+            if key not in self.population_sizes:
+                raise KeyError(
+                    f"this report records no population {population!r} for dataset "
+                    f"{dataset!r}; it has {sorted(self.population_sizes)}"
+                )
+            entry = self.population_sizes[key]
         return entry["changes"], entry["faults"]
 
     @property
@@ -1152,10 +1186,12 @@ def run(
 
         report.cells.append(result)
         hits[cell.key] = cell_hits
-        # Every cell of one population reports the same two counts, so first-seen wins and the
-        # map stays a description of the population rather than of a cell.
+        # Every cell of one (dataset, population) reports the same two counts, so first-seen
+        # wins and the map stays a description of the population rather than of a cell. The
+        # key carries the dataset element as well, because the same population name under two
+        # datasets is two populations -- see ``population_sizes``.
         report.population_sizes.setdefault(
-            result.population,
+            f"{cell.name(ROLE_DATASET)}|{result.population}",
             {"changes": result.n_population_rows, "faults": result.n_rows},
         )
         if verbose:
