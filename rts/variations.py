@@ -1,40 +1,34 @@
-"""Driver for the SemIf variation experiments (P1-P5) and the full-suite starved arm.
+"""Render the variation experiments into ``artifacts/variations.json``.
 
-Each experiment is independent and writes its section into
-``artifacts/variations.json`` so results survive an interrupted session. Run with
-``--only`` to execute one, or with no arguments to run every experiment whose
-inputs are present.
+Six of the seven sections are declared in :mod:`rts.studies` and rendered here from the reports
+the layer produces: the full-candidate starved arm at both starvation thresholds, the XGBoost
+seed refit, the instruction-wording sweep, the code-embedding baseline, and the redundancy test.
+Each section is its own experiment rather than one grid, because they differ in the knobs a knob
+is allowed to differ in -- ``candidates`` (the starved arms use the full pool, the instruction and
+redundancy arms the covered set) and ``budgets`` -- while sharing the dataset, the split, the
+feature block and therefore one score cache.
 
-What each experiment is for
----------------------------
-``full_starved``  Outstanding handoff item 1. Re-evaluates the one positive result
-                  (starved failure history) with ``full`` candidates, so the
-                  ``coverage`` baseline is no longer degenerate. This is the test
-                  of whether the starved win survives contact with how RTS is
-                  actually deployed. It also carries a history x coverage
-                  decomposition, which is what identifies coverage as the entire
-                  effect.
-``full_starved_seeds``
-                  Is the correction a lucky tree fit? Refits the two strongest trees
-                  under four seeds on the same arm.
-``p5``            Is the transformer redundant? Adds SemIf to the strongest cheap
-                  structured model. Two forms: a trained XGBoost column is the
-                  proposal as written, and a fitted-free rank average is the
-                  leakage-safe version that needs no scoring of the training
-                  window (SemIf scores exist only for held-out changes -- see the
-                  note in ``p5_redundancy``).
-``p5_trained``    The proposal as written, using a temporal split *inside* the
-                  held-out window so training rows have SemIf scores.
-``p2``            Instruction and prompt sweep, the one major lever never tested.
-                  Evaluated at two starvation thresholds for free.
-``p3``            Code-specialised embedding baseline: is there a semantic signal
-                  that a 4B natural-language reranker is simply the wrong model for?
-``p1``            Direct mode, pairwise: changes the task formulation rather than
-                  the model. Throughput-bound, so scoped to the starved population.
+Two sections are **not** migrated, and both keep their original implementation below:
+
+* ``p5_trained`` needs an evaluation window *inside* the held-out tail and a NaN convention for
+  unscored pairs. Both are expressible -- a ``Split`` value can carry any train/test pair, and
+  the NaN rule belongs in the extra-column design -- but each is a change to what an existing
+  concept means, so they are a deliberate next step rather than a migration detail.
+* ``p1_direct`` cannot be reproduced at all: its cache (``semif_direct_starved2_covered.jsonl``)
+  is absent from the artifacts, and the original raises ``FileNotFoundError`` without it. The
+  code is kept because it is the record of what was run and would work again if the cache were
+  regenerated; the layer would report the same case as an *unmeasured* cell rather than a crash.
+
+Usage::
+
+    python -m rts.variations                  # every section whose inputs are present
+    python -m rts.variations --only p2
+    python -m rts.variations --no-save
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -42,20 +36,357 @@ import numpy as np
 
 from . import (
     accessors, config, contract, datasets, evaluate, features, models,
-    populations, semif, splits,
+    populations, semif, splits, studies,
 )
+from .experiment import ROLE_MODEL, ROLE_POPULATION, run
 
-BUDGETS = (0.01, 0.05, 0.1, 0.2)
-PROBE = 0.05
-N_BOOTSTRAP = 2000
+BUDGETS = studies.VARIATION_BUDGETS
+PROBE = studies.VARIATION_PROBE
+N_BOOTSTRAP = studies.VARIATION_RESAMPLES
 
-# The variation experiments reproduce the documented arm, so they explicitly ask for
-# the features the harness leaves off for an imposed dataset (§2.4) and record the
-# accompanying warning in each result.
+# The variation experiments reproduce the documented arm, so they explicitly ask for the features
+# the harness leaves off for an imposed dataset (§2.4).
 STRUCTURED_HISTORY = True
 
 
-# --- shared helpers --------------------------------------------------------
+# --- rendering a report into the recorded shape ----------------------------
+
+
+def _group(report, population: str, references) -> dict:
+    """One ``eval_group``-shaped block: the recall table plus the paired comparisons.
+
+    The key format ``{model}|{budget}|vs|{reference}`` is the artifact's, not the layer's: the
+    layer records one comparison per (reference, probe budget) as records with a group, and this
+    is where they become the flat map a reader and ``figures.py`` expect.
+    """
+    results: dict[str, list[dict]] = {}
+    for cell in report.cells:
+        if cell.population == population:
+            results[cell.cell.name(ROLE_MODEL)] = cell.results
+
+    refs = list(references)
+    comparisons: dict[str, dict] = {"references": refs}
+    for record in report.comparisons:
+        if not record.get("measured") or record["reference"] not in refs:
+            continue
+        if record["group"].get(ROLE_POPULATION) != population:
+            continue
+        budget = record["probe_budget"]
+        comparisons[f"{record['cell']}|{budget}|vs|{record['reference']}"] = {
+            "delta": record["delta"],
+            "lo": record["lo"],
+            "hi": record["hi"],
+            "p_value": record["p_value"],
+            "n": record["n"],
+            "budget": budget,
+            "reference": record["reference"],
+        }
+    return {"results": results, "comparisons": comparisons}
+
+
+def _rows_outside_faults(
+    ds, split, spec: populations.Population
+) -> tuple[int, int]:
+    """The legacy ``changes`` / ``faults`` pair for a population.
+
+    ``changes`` counts the population's changes in the evaluation window *before* the fault
+    filter, which is not the number the metrics were averaged over -- ``faults`` is. Both are
+    recorded, and conflating them would misstate how much data an arm rests on.
+    """
+    rows = spec.rows(ds, split.test_idx)
+    faults = sum(1 for i in rows if ds.killing_tests(ds.changes[int(i)]))
+    return int(len(rows)), int(faults)
+
+
+def _table(group: dict, title: str, name_width: int = 34) -> str:
+    results = group["results"]
+    lines = [f"\n{title}"]
+    lines.append(f"  {'model':<{name_width}}" + "".join(f"{b:>9.2f}" for b in BUDGETS))
+    for name, res in results.items():
+        cells = "".join(f"{r['recall']:>9.3f}" for r in res)
+        lines.append(f"  {name:<{name_width}}{cells}")
+    for key, stat in group.get("comparisons", {}).items():
+        if key == "references":
+            continue
+        name, budget, _, ref = key.split("|")
+        lines.append(
+            f"    {name:<{name_width - 2}} b{float(budget):<5.2f} vs {ref:<26} "
+            f"{stat['delta']:+.3f} [{stat['lo']:+.3f}, {stat['hi']:+.3f}] "
+            f"p={stat['p_value']:.4f} n={stat['n']}"
+        )
+    return "\n".join(lines)
+
+
+# --- experiment 1: the full-candidate starved arm ---------------------------
+
+
+def full_starved(max_failures: int = 2) -> dict:
+    """Re-evaluate the starved arm over the full 1187-test candidate set.
+
+    ``max_failures=2`` is the 43-fault arm that produced the original positive result;
+    ``max_failures=5`` is the 141-fault decision-grade confirmation. The second is a superset of
+    the first, which is why one cache scored for it covers both.
+    """
+    ds = studies.dataset("mutmut")
+    split = splits.make_split(ds)
+    report = run(studies.starved_arm(max_failures), save=False, verbose=False)
+
+    population = populations.starved(max_failures)
+    report = run(studies.starved_arm(max_failures), save=False, verbose=False)
+
+    references = (
+        "xgboost_static_nocov_lex",
+        "structural_rule",
+        "xgboost_struct_lex",
+        "xgboost_static_lex",
+    )
+    changes, faults = _rows_outside_faults(ds, split, population)
+    group = _group(report, population.name, references)
+    print(_table(
+        group,
+        f"Full-candidate starved arm (failures<={max_failures}, {changes} held-out changes, "
+        "budget = fraction of 1187 tests)",
+    ))
+    return {
+        "experiment": "full_starved",
+        "max_failures": max_failures,
+        "changes": changes,
+        "faults": faults,
+        "candidates": "full",
+        **group,
+    }
+
+
+# --- experiment 1'': is the correction a lucky fit? -------------------------
+
+
+def full_starved_seeds(seeds: tuple[int, ...] = studies.SEED_SWEEP) -> dict:
+    """Refit the starved arm's two strongest trees under several *model* seeds.
+
+    The correction rests on only 43 held-out faults, so a single fit could in principle be
+    favourable by chance. Only the model seed varies: the run seed fixes the imposed change order
+    and the temporal split, and the caches are keyed to that order, so varying it would invalidate
+    the paired comparison rather than test it. SemIf is deterministic -- greedy forward passes, no
+    sampling -- so there is no SemIf-side seed to vary.
+    """
+    tree_names = ("xgboost_struct_lex", "xgboost_static_lex")
+    shared: dict = {}
+    out: dict[str, dict] = {}
+    spec = populations.starved(2)
+    population = spec.name
+    for seed in seeds:
+        experiment = studies.starved_seeds_arm(2, model_seed=seed)
+        # A model seed changes what the model computes, so the score cache is keyed by it and
+        # each refit trains afresh; only the SemIf matrix is shared.
+        report = run(experiment, scores=shared, save=False, verbose=False)
+        by_name = {c.cell.name(ROLE_MODEL): c for c in report.cells if c.population == population}
+        semif = by_name["semif_textonly_full"]
+        records = {
+            (r["cell"], r["reference"], r["probe_budget"]): r
+            for r in report.comparisons
+            if r.get("measured") and r["group"].get(ROLE_POPULATION) == population
+        }
+        for tree_name in tree_names:
+            tree = by_name[tree_name]
+            entry: dict[str, dict] = {}
+            for budget in BUDGETS:
+                # The arm declares the *trees* as references, so the SemIf cell is the one
+                # paired and the record's delta is already `semif - tree`.
+                record = records[("semif_textonly_full", tree_name, budget)]
+                tree_row = next(r for r in tree.results if r["budget"] == budget)
+                semif_row = next(r for r in semif.results if r["budget"] == budget)
+                entry[f"b{budget}"] = {
+                    "delta": record["delta"],
+                    "lo": record["lo"],
+                    "hi": record["hi"],
+                    "p_value": record["p_value"],
+                    "n": record["n"],
+                    "budget": budget,
+                    "tree_recall": tree_row["recall"],
+                    "semif_recall": semif_row["recall"],
+                }
+            # The recorded convention ("SemIf minus the tree") therefore falls out of the
+            # declaration rather than being applied by the renderer.
+            out[f"{tree_name}|seed{seed}"] = entry
+            cells = "  ".join(f"b{b}={entry[f'b{b}']['delta']:+.3f}" for b in BUDGETS)
+            print(f"  {tree_name} seed {seed}: SemIf minus tree  {cells}", flush=True)
+
+    ds = studies.dataset("mutmut")
+    changes, _ = _rows_outside_faults(ds, splits.make_split(ds), spec)
+    return {
+        "experiment": "full_starved_seeds",
+        "seeds": list(seeds),
+        "changes": changes,
+        "note": (            "delta is SemIf minus the tree; negative means the tree wins. Two trees are "
+            "tested because the coverage+BM25 model without history is the strongest "
+            "classical selector on this arm."
+        ),
+        "results": out,
+    }
+
+
+# --- experiment 2: the instruction sweep -----------------------------------
+
+
+def p2_instruction(max_failures: int = 5, *, secondary: int = 2) -> dict:
+    """Instruction sweep, evaluated at two starvation thresholds.
+
+    The instructions are scored on the ``failures <= 5`` population, which is a superset of
+    ``failures <= 2``, so the sparser subset is evaluated for free. Reporting both guards against
+    the null being an artifact of the population: a wording that helped only in the densest part
+    of the starved range would show up as a difference between the two thresholds.
+    """
+    ds = studies.dataset("mutmut")
+    split = splits.make_split(ds)
+    report = run(studies.instruction_arm(max_failures, secondary=secondary), save=False, verbose=False)
+
+    groups: dict[str, dict] = {}
+    for threshold in (max_failures, secondary):
+        spec = populations.starved(threshold)
+        changes, faults = _rows_outside_faults(ds, split, spec)
+        group = _group(report, spec.name, ("semif_default",))
+        group["changes"] = changes
+        group["faults"] = faults
+        groups[spec.name] = group
+        print(_table(
+            group,
+            f"P2 instruction sweep (starved failures<={threshold}, {changes} held-out "
+            "changes, covered candidates)",
+        ))
+
+    primary_name = populations.starved(max_failures).name
+    secondary_name = populations.starved(secondary).name
+    primary = groups[primary_name]
+    # A variant is reported when its cache was present, which the layer reports as a *measured*
+    # cell rather than as the driver's FileNotFoundError-and-skip.
+    variants = [
+        element.name.removeprefix("semif_")
+        for element in studies.instruction_model_axis(max_failures).elements
+        if element.name.startswith("semif_") and element.name in primary["results"]
+    ]
+    return {
+        "experiment": "p2_instruction",
+        "max_failures": max_failures,
+        "variants": variants,
+        **primary,
+        "secondary_threshold": groups[secondary_name],
+    }
+
+
+# --- experiment 3: the code-embedding baseline -----------------------------
+
+
+def p3_embed(device: str = "cpu", force: bool = False) -> dict:
+    """The code-encoder baseline, over the covered set and over the full pool.
+
+    Two arms, because ``candidates`` is a knob and the full-pool comparison is the one where a
+    semantic ranker could pay off -- the covered mask is the crutch that lets structure win
+    cheaply. The matrix itself is produced by ``rts.embed``; if it is absent the layer reports the
+    cells that read it as unmeasured, so this only needs to build it when asked.
+    """
+    from . import embed
+
+    ds = studies.dataset("mutmut")
+    split = splits.make_split(ds)
+    cache = studies.embed_cache()
+    if force or not cache.exists():
+        np.save(cache, embed.build_scores(ds, device=device))
+        print(f"[p3] wrote {cache}")
+
+    shared: dict = {}
+    covered = run(studies.embed_arm("covered"), scores=shared, save=False, verbose=False)
+    full = run(studies.embed_arm("full"), scores=shared, save=False, verbose=False)
+
+    group_covered = _group(covered, "fault_bearing", ("bm25_lexical",))
+    group_starved_covered = _group(
+        covered, populations.starved(5).name, ("bm25_lexical",)
+    )
+    group_starved_full = _group(full, populations.starved(5).name, ("bm25_lexical",))
+    print(_table(group_covered, "P3 embedding baseline (covered candidates, 464 held-out faults)"))
+    print(_table(group_starved_covered, "P3 embedding baseline (starved failures<=5, covered)"))
+    print(_table(group_starved_full, "P3 embedding baseline (starved failures<=5, full 1187)"))
+
+    return {
+        "experiment": "p3_embed",
+        "model": config.EMBED_MODEL,
+        "revision": config.EMBED_MODEL_REVISION,
+        "covered": group_covered,
+        "starved_covered": group_starved_covered,
+        "starved_full": group_starved_full,
+    }
+
+
+# --- experiment 5: is the transformer redundant? ---------------------------
+
+
+def p5_redundancy() -> dict:
+    """Does SemIf carry information the cheap structured model does not already have?
+
+    Two routes were considered. Adding the SemIf score as an XGBoost *column* needs scores for
+    the training window, and the cache covers only held-out changes (329k extra pairs, ~3.3 h),
+    so that route is the separate ``p5_trained`` section. This one fits nothing: it averages the
+    two selectors' per-change rank positions, so if SemIf adds independent signal the average
+    beats both parents and if it is redundant the average sits between them.
+
+    Only caches covering *every* held-out change may enter: ``semif_scores_ctl_after.jsonl`` was
+    scored on the starved subset, so including it here would score 323 of 464 changes as unscored
+    and make it look far worse than it is.
+    """
+    ds = studies.dataset("mutmut")
+    report = run(studies.redundancy_arm(), save=False, verbose=False)
+
+    compared = ("xgboost_static_nocov_lex", "semif_textonly")
+    group = _group(report, "fault_bearing", compared)
+    changes = int(len(splits.make_split(ds).test_idx))
+    print(_table(group, "P5 redundancy (covered candidates, all 464 held-out faults)"))
+
+    # Parents-versus-child is the actual test, so report those pairs explicitly rather than
+    # leaving a reader to find them among the eighty comparisons. The third reference is
+    # declared for exactly these pairs and is not part of the group's comparison map.
+    pairs = (
+        ("rankaverage_xgb_semif", ("xgboost_static_nocov_lex", "semif_textonly")),
+        ("rankaverage_xgb_struct_semif", ("xgboost_struct", "semif_textonly")),
+    )
+    records = {
+        (r["cell"], r["reference"], r["probe_budget"]): r
+        for r in report.comparisons
+        if r.get("measured") and r["group"].get(ROLE_POPULATION) == "fault_bearing"
+    }
+    parent_tests: dict[str, dict] = {}
+    for child, others in pairs:
+        for other in others:
+            for budget in BUDGETS:
+                record = records[(child, other, budget)]
+                parent_tests[f"{child}|{budget}|vs|{other}"] = {
+                    "delta": record["delta"],
+                    "lo": record["lo"],
+                    "hi": record["hi"],
+                    "p_value": record["p_value"],
+                    "n": record["n"],
+                }
+    print("\n  rank-average vs each parent (the redundancy test):")
+    for key, stat in parent_tests.items():
+        print(f"    {key:<58} {stat['delta']:+.3f} "
+              f"[{stat['lo']:+.3f}, {stat['hi']:+.3f}] p={stat['p_value']:.4f}")
+
+    return {
+        "experiment": "p5_redundancy",
+        "candidates": "covered",
+        "changes": changes,
+        "note": (
+            "rank averages are fitted-free and leakage-safe; the trained-column "
+            "variant needs SemIf scores over the training window"
+        ),
+        "parent_tests": parent_tests,
+        **group,
+    }
+
+
+# ===========================================================================
+# NOT MIGRATED. The two sections below keep their original implementation, for
+# the reasons in the module docstring. They are the only users of the helpers
+# that follow.
+# ===========================================================================
 
 
 def build_context(ds: contract.Dataset) -> models.Context:
@@ -63,29 +394,6 @@ def build_context(ds: contract.Dataset) -> models.Context:
     split = splits.make_split(ds)
     bm25 = features.text.build_bm25_scores(ds)
     return models.Context(ds=ds, features=matrix, split=split, bm25=bm25)
-
-
-def rank_normalize(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
-    """Per-change descending rank, normalised to [0, 1]; 0 is best.
-
-    Non-candidates get ``inf`` so they can never win. Used by the fitted-free
-    combination below: because each change's candidates are ranked independently,
-    two selectors on different scales can be averaged without fitting a weight on
-    the evaluation data.
-    """
-    masked = np.where(candidates, scores, -np.inf)
-    order = np.argsort(-masked, axis=1, kind="stable")
-    ranks = np.empty_like(order)
-    rows = np.arange(scores.shape[0])[:, None]
-    ranks[rows, order] = np.arange(scores.shape[1])[None, :]
-    denom = max(scores.shape[1] - 1, 1)
-    return np.where(candidates, ranks / denom, np.inf)
-
-
-def rank_average(*score_matrices: np.ndarray, candidates: np.ndarray) -> np.ndarray:
-    """Mean normalised rank; higher is better. No parameters are fitted."""
-    norms = [rank_normalize(s, candidates) for s in score_matrices]
-    return -np.mean(norms, axis=0)
 
 
 def eval_group(
@@ -98,11 +406,10 @@ def eval_group(
     n_bootstrap: int = N_BOOTSTRAP,
     seed: int = config.SEED,
 ) -> dict:
-    """Recall sweep plus paired bootstrap against each reference.
+    """Recall sweep plus paired bootstrap against each reference. Retained for the two sections
 
-    ``reference`` may be a list: with more than one strong baseline it is not enough
-    to beat the model you happened to pick as the reference, so every comparison
-    that the write-up needs is computed here.
+    that are not migrated; everything else gets this shape from the layer, which is the point of
+    the migration.
     """
     results: dict[str, list[dict]] = {}
     hits: dict[str, dict[float, dict[int, bool]]] = {}
@@ -132,27 +439,6 @@ def eval_group(
     return {"results": results, "comparisons": comparisons}
 
 
-def _table(group: dict, title: str, name_width: int = 34) -> str:
-    results = group["results"]
-    lines = [f"\n{title}"]
-    header = f"  {'model':<{name_width}}" + "".join(f"{b:>9.2f}" for b in BUDGETS)
-    lines.append(header)
-    for name, res in results.items():
-        cells = "".join(f"{r['recall']:>9.3f}" for r in res)
-        lines.append(f"  {name:<{name_width}}{cells}")
-    if group.get("comparisons"):
-        for key, stat in group["comparisons"].items():
-            if key == "references":
-                continue
-            name, budget, _, ref = key.split("|")
-            lines.append(
-                f"    {name:<{name_width - 2}} b{float(budget):<5.2f} vs {ref:<26} "
-                f"{stat['delta']:+.3f} [{stat['lo']:+.3f}, {stat['hi']:+.3f}] "
-                f"p={stat['p_value']:.4f} n={stat['n']}"
-            )
-    return "\n".join(lines)
-
-
 def _selectors(ds: contract.Dataset, ctx: models.Context, candidates_mode: str) -> dict[str, np.ndarray]:
     """The classical reference arms, all trained on the same candidate pairs."""
     return {
@@ -169,192 +455,6 @@ def _selectors(ds: contract.Dataset, ctx: models.Context, candidates_mode: str) 
     }
 
 
-# --- experiment 1: full-suite starved arm ----------------------------------
-
-
-def merge_caches(paths: list[Path], out_path: Path) -> Path:
-    """Concatenate score caches, de-duplicating by (change_row, test_col).
-
-    Used to assemble a superset arm incrementally: `failures <= 2` is a subset of
-    `failures <= 5`, so the 141-change arm is built from the 43-change cache plus a
-    98-change delta rather than re-scoring 51k pairs that already exist.
-    """
-    merged: dict[tuple[int, int], dict] = {}
-    for path in paths:
-        with Path(path).open() as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if "change_row" in record and "test_col" in record:
-                    merged[(int(record["change_row"]), int(record["test_col"]))] = record
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as fh:
-        for record in merged.values():
-            fh.write(json.dumps(record) + "\n")
-    print(f"[merge] {out_path.name}: {len(merged):,} unique pairs from {len(paths)} caches")
-    return out_path
-
-
-def full_starved(max_failures: int = 2) -> dict:
-    """Re-evaluate the starved arm with the full 1187-test candidate set.
-
-    ``max_failures=2`` is the 43-fault arm that produced the original positive
-    result; ``max_failures=5`` is the 141-fault decision-grade confirmation. The
-    second is assembled from the first plus a scored delta (see ``merge_caches``).
-    """
-    if max_failures == 2:
-        cache = config.ARTIFACTS / "semif_scores_starved2_full.jsonl"
-    else:
-        cache = config.ARTIFACTS / f"semif_scores_starved{max_failures}_full.jsonl"
-        if not cache.exists():
-            merge_caches(
-                [
-                    config.ARTIFACTS / "semif_scores_starved2_full.jsonl",
-                    config.ARTIFACTS / f"semif_scores_starved{max_failures}_extra_full.jsonl",
-                ],
-                cache,
-            )
-    if not cache.exists():
-        raise FileNotFoundError(f"missing {cache}; run the starved full-suite scoring arm first")
-
-    ds = datasets.marshmallow()
-    split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "full")
-    mask = populations.starved_mask(ds, max_failures=max_failures)
-    rows = split.test_idx[mask[split.test_idx]]
-    ctx = build_context(ds)
-
-    scores = _selectors(ds, ctx, "full")
-    # The full candidate set is the only regime where `covers_function` separates
-    # candidates from non-candidates, so the strongest tree has to be in the
-    # comparison. Reporting only the cheap static model would understate the
-    # classical side on exactly the arm being used to qualify the starved result.
-    #
-    # A history x coverage decomposition with lexical always on, so the mechanism
-    # ("coverage stops being a constant") is measured rather than asserted:
-    #   struct_lex       history + coverage + BM25
-    #   static_lex       coverage + BM25
-    #   struct_nocov_lex history + BM25
-    #   static_nocov_lex BM25 only
-    scores["xgboost_static_lex"] = models.XGBoostSelector(
-        exclude_history=True, include_lexical=True, candidates_mode="full"
-    ).scores(ctx)
-    scores["xgboost_struct_nocov_lex"] = models.XGBoostSelector(
-        exclude_coverage=True, include_lexical=True, candidates_mode="full"
-    ).scores(ctx)
-    scores["xgboost_struct"] = models.XGBoostSelector(candidates_mode="full").scores(ctx)
-    scores["xgboost_struct_lex"] = models.XGBoostSelector(
-        include_lexical=True, candidates_mode="full"
-    ).scores(ctx)
-    scores["semif_textonly_full"] = semif.load_scores(cache, ds)
-    # A fitted-free combination, on the same footing as P5's rank average.
-    scores["rankaverage_xgb_semif"] = rank_average(
-        scores["xgboost_static_nocov_lex"], scores["semif_textonly_full"],
-        candidates=candidates,
-    )
-
-    group = eval_group(ds, rows, candidates, scores,
-                       reference=["xgboost_static_nocov_lex", "structural_rule",
-                                  "xgboost_struct_lex", "xgboost_static_lex"])
-    print(_table(group, f"Full-candidate starved arm (failures<={max_failures}, "
-                        f"{len(rows)} held-out changes, budget = fraction of 1187 tests)"))
-    return {
-        "experiment": "full_starved",
-        "max_failures": max_failures,
-        "changes": int(len(rows)),
-        "faults": int(sum(1 for i in rows if ds.killing_tests(ds.changes[i]))),
-        "candidates": "full",
-        **group,
-    }
-
-# --- experiment 5: is the transformer redundant? ---------------------------
-
-
-def p5_redundancy() -> dict:
-    """Does SemIf carry information the cheap structured model does not already have?
-
-    Two arms, because the proposal as written has a hidden cost. Adding the SemIf
-    score as an XGBoost *column* requires SemIf scores for the training window, and
-    the cache only covers held-out changes (329k extra pairs, ~3.3 h, which the
-    iteration-cost analysis rules out). Options:
-
-    * ``trained`` -- restrict training to a SemIf-scored prefix of the training
-      window and train the baseline on the same reduced rows, so the delta between
-      with and without the column is attributable to the column. Weaker overall
-      models, valid comparison.
-    * ``rank_average`` -- fit nothing. Average the two selectors' per-change rank
-      positions. If SemIf adds independent signal the average beats both parents;
-      if it is redundant the average sits between them. Needs no training data and
-      no extra scoring.
-
-    The rank average is reported here; ``trained`` is run by ``--p5-trained`` when
-    the reduced-window SemIf scores exist.
-    """
-    ds = datasets.marshmallow()
-    split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "covered")
-    rows = split.test_idx
-    ctx = build_context(ds)
-
-    base = _selectors(ds, ctx, "covered")
-    base["xgboost_struct"] = models.XGBoostSelector(candidates_mode="covered").scores(ctx)
-    # Only caches that cover *every* held-out change may enter this comparison.
-    # `semif_scores_ctl_after.jsonl` was scored on the starved subset only, so
-    # including it here would score 323 of 464 changes as unscored and make it look
-    # far worse than it is; it is evaluated separately on its own subset.
-    base["semif_textonly"] = semif.load_scores(config.SEMIF_SCORES_FILE, ds)
-
-    combos = {
-        "rankaverage_xgb_semif": rank_average(
-            base["xgboost_static_nocov_lex"], base["semif_textonly"], candidates=candidates
-        ),
-        "rankaverage_xgb_struct_semif": rank_average(
-            base["xgboost_struct"], base["semif_textonly"], candidates=candidates
-        ),
-    }
-    scores = dict(base)
-    scores.update(combos)
-    group = eval_group(
-        ds, rows, candidates, scores,
-        reference=["xgboost_static_nocov_lex", "semif_textonly"],
-    )
-    print(_table(group, "P5 redundancy (covered candidates, all 464 held-out faults)"))
-
-    # Parents-vs-child deltas are the actual test, so report them explicitly.
-    child_tests = {}
-    for child, parent in [
-        ("rankaverage_xgb_semif", "xgboost_static_nocov_lex"),
-        ("rankaverage_xgb_struct_semif", "xgboost_struct"),
-    ]:
-        for other in (parent, "semif_textonly"):
-            for b in BUDGETS:
-                key = f"{child}|{b}|vs|{other}"
-                a = evaluate.per_change_hits(scores[child], ds, rows, b, candidates)
-                c = evaluate.per_change_hits(scores[other], ds, rows, b, candidates)
-                child_tests[key] = evaluate.paired_bootstrap(a, c, N_BOOTSTRAP, config.SEED)
-    print("\n  rank-average vs each parent (the redundancy test):")
-    for key, stat in child_tests.items():
-        print(f"    {key:<58} {stat['delta']:+.3f} "
-              f"[{stat['lo']:+.3f}, {stat['hi']:+.3f}] p={stat['p_value']:.4f}")
-
-    return {
-        "experiment": "p5_redundancy",
-        "candidates": "covered",
-        "changes": int(len(rows)),
-        "note": (
-            "rank averages are fitted-free and leakage-safe; the trained-column "
-            "variant needs SemIf scores over the training window"
-        ),
-        "parent_tests": child_tests,
-        **group,
-    }
-
-
 def _fit_predict(
     ctx: models.Context,
     train_rows: np.ndarray,
@@ -365,9 +465,9 @@ def _fit_predict(
 ):
     """Fit XGBoost on candidate pairs of ``train_rows``; predict the full grid.
 
-    ``extra`` is an optional per-(change, test) score matrix. Unscored pairs are
-    ``-1e9`` in the SemIf caches; they become NaN so XGBoost treats them as missing
-    rather than as an extreme low value.
+    ``extra`` is an optional per-(change, test) score matrix. Unscored pairs are ``-1e9`` in the
+    SemIf caches; they become NaN so XGBoost treats them as missing rather than as an extreme low
+    value. That convention is one of the two reasons this section is not yet migrated.
     """
     import xgboost as xgb
 
@@ -402,16 +502,16 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
 
     Why the split is inside the held-out window
     -------------------------------------------
-    SemIf scores exist only for held-out changes (scoring the training window would
-    cost 329k extra pairs, ~3.3 h). Rather than fit a blend weight on the evaluation
-    rows, this uses a *temporal* split inside the held-out window: train on the
-    first 70% of held-out changes, evaluate on the last 30%. The split respects the
-    imposed change order and no evaluation row is ever trained on, so the "with
-     column" vs "without column" delta is attributable to the column alone.
+    SemIf scores exist only for held-out changes (scoring the training window would cost 329k
+    extra pairs, ~3.3 h). Rather than fit a blend weight on the evaluation rows, this uses a
+    *temporal* split inside the held-out window: train on the first 70% of held-out changes,
+    evaluate on the last 30%. The split respects the imposed change order and no evaluation row is
+    ever trained on, so the "with column" versus "without column" delta is attributable to the
+    column alone.
 
-    Two feature families are tested because redundancy depends on what the tree
-    already has: ``static_nocov_lex`` is the cheapest strong model (no coverage, no
-    history, plus BM25), and ``struct_lex`` is the full feature set.
+    Two feature families are tested because redundancy depends on what the tree already has:
+    ``static_nocov_lex`` is the cheapest strong model (no coverage, no history, plus BM25), and
+    ``struct_lex`` is the full feature set.
     """
     ds = datasets.marshmallow()
     held_split = splits.make_split(ds)
@@ -441,15 +541,13 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
             if extra is not None:
                 names.append("semif")
             importances[key] = dict(
-                sorted(
-                    zip(names, model.feature_importances_.tolist()), key=lambda kv: -kv[1]
-                )
+                sorted(zip(names, model.feature_importances_.tolist()), key=lambda kv: -kv[1])
             )
 
     group = eval_group(ds, eval_rows, candidates, scores, reference="static_nocov_lex")
     print(_table(
         group,
-        f"P5 trained column (held-out-internal temporal split: "
+        "P5 trained column (held-out-internal temporal split: "
         f"{len(train_rows)} train / {len(eval_rows)} eval changes)",
     ))
 
@@ -480,219 +578,17 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
     }
 
 
-def full_starved_seeds(seeds: tuple[int, ...] = (1, 2, 3, 4)) -> dict:
-    """Is the full-suite starved correction a lucky XGBoost fit?
-
-    The correction rests on only 43 held-out faults, so a single fit could in
-    principle be favourable by chance. Refit the strongest tree under several seeds and
-    report the paired delta against SemIf at each budget. Only the *model* seed varies:
-    the dataset seed fixes the imposed change order and the temporal split, and the
-    SemIf cache rows are keyed to that order, so varying it would invalidate the paired
-    comparison rather than test it.
-
-    SemIf itself is deterministic (greedy forward passes, no sampling), so there is no
-    SemIf-side seed to vary.
-    """
-    cache = config.ARTIFACTS / "semif_scores_starved2_full.jsonl"
-    ds = datasets.marshmallow()
-    split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "full")
-    mask = populations.starved_mask(ds, max_failures=2)
-    rows = split.test_idx[mask[split.test_idx]]
-    ctx = build_context(ds)
-    semif_scores = semif.load_scores(cache, ds)
-    semif_hits = {
-        b: evaluate.per_change_hits(semif_scores, ds, rows, b, candidates) for b in BUDGETS
-    }
-
-    out: dict[str, dict] = {}
-    for seed in seeds:
-        for model_name, kwargs in (
-            ("xgboost_struct_lex", {"include_lexical": True}),
-            ("xgboost_static_lex", {"include_lexical": True, "exclude_history": True}),
-        ):
-            tree = models.XGBoostSelector(
-                candidates_mode="full", seed=seed, **kwargs
-            ).scores(ctx)
-            entry: dict[str, dict] = {}
-            for b in BUDGETS:
-                hits = evaluate.per_change_hits(tree, ds, rows, b, candidates)
-                stat = evaluate.paired_bootstrap(semif_hits[b], hits, N_BOOTSTRAP, config.SEED)
-                stat["budget"] = b
-                stat["tree_recall"] = float(np.mean(list(hits.values())))
-                stat["semif_recall"] = float(np.mean(list(semif_hits[b].values())))
-                entry[f"b{b}"] = stat
-            out[f"{model_name}|seed{seed}"] = entry
-            cells = "  ".join(f"b{b}={entry[f'b{b}']['delta']:+.3f}" for b in BUDGETS)
-            print(f"  {model_name} seed {seed}: SemIf minus tree  {cells}", flush=True)
-
-    return {
-        "experiment": "full_starved_seeds",
-        "seeds": list(seeds),
-        "changes": int(len(rows)),
-        "note": (
-            "delta is SemIf minus the tree; negative means the tree wins. Two trees are "
-            "tested because the coverage+BM25 model without history is the strongest "
-            "classical selector on this arm."
-        ),
-        "results": out,
-    }
-
-
-# --- experiment 2: instruction sweep --------------------------------------
-
-
-def p2_instruction(max_failures: int = 5) -> dict:
-    """Instruction sweep, evaluated at two starvation thresholds.
-
-    The instruction caches are scored on the ``failures <= 5`` population, which is a
-    superset of ``failures <= 2``, so the sparser (43-change) subset can be evaluated
-    for free. Reporting both guards against the null being an artifact of the
-    population: a wording that helped only in the densest part of the starved range
-    would show up as a difference between the two thresholds.
-    """
-    ds = datasets.marshmallow()
-    split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "covered")
-    ctx = build_context(ds)
-
-    base_scores = {
-        "bm25_lexical": ctx.bm25,
-        "xgboost_static_nocov_lex": models.XGBoostSelector(
-            exclude_history=True, exclude_coverage=True, include_lexical=True,
-            candidates_mode="covered",
-        ).scores(ctx),
-    }
-    found = []
-    scores = dict(base_scores)
-    for name in ("default", *sorted(k for k in _instruction_names() if k != "default")):
-        path = _instruction_cache(name, max_failures)
-        if path.exists():
-            scores[f"semif_{name}"] = semif.load_scores(path, ds)
-            found.append(name)
-    if not found:
-        raise FileNotFoundError("no instruction caches present")
-    reference = "semif_default" if "semif_default" in scores else f"semif_{found[0]}"
-
-    groups: dict[str, dict] = {}
-    for threshold in (max_failures, 2):
-        mask = populations.starved_mask(ds, max_failures=threshold)
-        rows = split.test_idx[mask[split.test_idx]]
-        key = f"starved{threshold}"
-        groups[key] = eval_group(ds, rows, candidates, scores, reference=reference)
-        groups[key]["changes"] = int(len(rows))
-        groups[key]["faults"] = int(sum(1 for i in rows if ds.killing_tests(ds.changes[i])))
-        print(_table(
-            groups[key],
-            f"P2 instruction sweep (starved failures<={threshold}, {len(rows)} held-out "
-            f"changes, covered candidates)",
-        ))
-    return {
-        "experiment": "p2_instruction",
-        "max_failures": max_failures,
-        "variants": found,
-        **groups[f"starved{max_failures}"],
-        "secondary_threshold": groups["starved2"],
-    }
-
-
-def _instruction_names() -> list[str]:
-    from .semif_runner import INSTRUCTION_VARIANTS
-
-    return list(INSTRUCTION_VARIANTS)
-
-
-def _instruction_cache(name: str, max_failures: int) -> Path:
-    if name == "default":
-        # The existing text-only cache already covers every held-out change with
-        # the default wording; the starved rows are a subset of it.
-        return Path(config.SEMIF_SCORES_FILE)
-    return config.ARTIFACTS / f"semif_scores_instr_{name}_starved{max_failures}.jsonl"
-
-
-# --- experiment 3: code-embedding baseline --------------------------------
-
-
-def p3_embed(device: str = "cpu", force: bool = False) -> dict:
-    from . import embed
-
-    ds = datasets.marshmallow()
-    split = splits.make_split(ds)
-    candidates_covered = accessors.candidates(ds, "covered")
-    candidates_full = accessors.candidates(ds, "full")
-    cache = config.ARTIFACTS / "embed_scores.npy"
-
-    if cache.exists() and not force:
-        scores_matrix = np.load(cache)
-        print(f"[p3] loaded {cache}")
-    else:
-        scores_matrix = embed.build_scores(ds, device=device)
-        np.save(cache, scores_matrix)
-        print(f"[p3] saved {cache}")
-
-    ctx = build_context(ds)
-    covered = {
-        "bm25_lexical": ctx.bm25,
-        "semif_textonly": semif.load_scores(config.SEMIF_SCORES_FILE, ds),
-        "embed_codebert": scores_matrix,
-        "xgboost_static_nocov_lex": models.XGBoostSelector(
-            exclude_history=True, exclude_coverage=True, include_lexical=True,
-            candidates_mode="covered",
-        ).scores(ctx),
-    }
-    group_covered = eval_group(
-        ds, split.test_idx, candidates_covered, covered, reference="bm25_lexical"
-    )
-    print(_table(group_covered, "P3 embedding baseline (covered candidates, 464 held-out faults)"))
-
-    starved = populations.starved_mask(ds, max_failures=5)
-    rows = split.test_idx[starved[split.test_idx]]
-    group_starved = eval_group(
-        ds, rows, candidates_covered, covered, reference="bm25_lexical"
-    )
-    print(_table(group_starved, f"P3 embedding baseline (starved failures<=5, {len(rows)} changes)"))
-
-    # The full-suite arm is where a semantic ranker could actually pay off, because
-    # the covered mask is the crutch that lets structure win cheaply.
-    group_full = eval_group(
-        ds, rows, candidates_full,
-        {
-            "bm25_lexical": ctx.bm25,
-            "embed_codebert": scores_matrix,
-            "structural_rule": models.StructuralRuleSelector().scores(ctx),
-            "coverage": models.CoverageSelector().scores(ctx),
-        },
-        reference="bm25_lexical",
-    )
-    print(_table(group_full, f"P3 embedding baseline (starved failures<=5, full 1187 candidates)"))
-
-    return {
-        "experiment": "p3_embed",
-        "model": config.EMBED_MODEL,
-        "revision": config.EMBED_MODEL_REVISION,
-        "covered": group_covered,
-        "starved_covered": group_starved,
-        "starved_full": group_full,
-    }
-
-
-# --- experiment 1': direct mode pairwise ----------------------------------
-
-
 def p1_direct(max_failures: int | None = 2) -> dict:
-    """P1: does direct mode change the verdict?
+    """P1: does direct mode change the verdict? -- NOT REPRODUCIBLE HERE.
 
-    Defaults to the starved `failures <= 2` population because direct mode is *slow*:
-    Qwen3.5-4B is a hybrid gated-delta-net model whose custom kernels fall back to
-    reference PyTorch (`causal_conv1d` / `flash-linear-attention` absent here), giving
-    ~1.3 pairs/s against 30 pairs/s for the reranker -- a 23x penalty that makes the
-    full held-out grid a ~16 h job. The 43-change starved population is 8,329 pairs
-    (104 min measured) and is the same population as the documented covered-candidate
-    starved arm, so the comparison is paired and directly interpretable.
+    Defaults to the starved ``failures <= 2`` population because direct mode is *slow*: Qwen3.5-4B
+    is a hybrid gated-delta-net model whose custom kernels fall back to reference PyTorch
+    (``causal_conv1d`` / ``flash-linear-attention`` absent here), giving ~1.3 pairs/s against 30
+    pairs/s for the reranker -- a 23x penalty that makes the full held-out grid a ~16 h job.
 
-    The cache is resumable, so a partial run is still usable: rows whose candidates
-    are not all scored are dropped, because ``load_scores`` fills missing pairs with
-    -1e9 and a partially scored change would rank as if nothing matched.
+    The cache it reads (``semif_direct_starved2_covered.jsonl``) is **absent** from the
+    artifacts, so this raises. It is kept as the record of what was run, and because it would work
+    again if the cache were regenerated.
     """
     ds = datasets.marshmallow()
     split = splits.make_split(ds)
@@ -743,52 +639,52 @@ def p1_direct(max_failures: int | None = 2) -> dict:
 
 # --- driver ---------------------------------------------------------------
 
+SECTIONS = {
+    "full_starved": lambda: full_starved(2),
+    "full_starved5": lambda: full_starved(5),
+    "full_starved_seeds": full_starved_seeds,
+    "p2": p2_instruction,
+    "p3": p3_embed,
+    "p5": p5_redundancy,
+    "p5_trained": p5_trained,
+    "p1": p1_direct,
+}
 
-def main(only: list[str] | None = None) -> dict:
-    report_path = config.ARTIFACTS / "variations.json"
+
+def main(only: list[str] | None = None, save: bool = True) -> dict:
+    out_path = config.ARTIFACTS / "variations.json"
     report: dict = {}
-    if report_path.exists():
-        report = json.loads(report_path.read_text())
+    if out_path.exists():
+        report = json.loads(out_path.read_text())
 
-    todo = only or ["full_starved", "full_starved5", "full_starved_seeds", "p5", "p5_trained",
-                    "p2", "p3", "p1"]
-    for name in todo:
-        print("\n" + "=" * 78, flush=True)
+    names = [n for n in SECTIONS if only is None or n in only]
+    # Skip a section whose inputs are absent rather than crashing the whole run: an unmeasured
+    # cell is a finding, but a section that cannot run at all should not cost the others.
+    if only is None:
+        usable = []
+        for name in names:
+            if name in ("p1", "p5_trained"):
+                print(f"EXPERIMENT SKIPPED (not migrated): {name}", flush=True)
+                continue
+            usable.append(name)
+        names = usable
+
+    for name in names:
         print(f"EXPERIMENT: {name}", flush=True)
-        print("=" * 78, flush=True)
         try:
-            if name == "full_starved":
-                report["full_starved"] = full_starved()
-            elif name == "full_starved5":
-                report["full_starved5"] = full_starved(max_failures=5)
-            elif name == "full_starved_seeds":
-                report["full_starved_seeds"] = full_starved_seeds()
-            elif name == "p5":
-                report["p5"] = p5_redundancy()
-            elif name == "p5_trained":
-                report["p5_trained"] = p5_trained()
-            elif name == "p2":
-                report["p2"] = p2_instruction()
-            elif name == "p3":
-                report["p3"] = p3_embed()
-            elif name == "p1":
-                report["p1"] = p1_direct()
-            else:
-                raise ValueError(f"unknown experiment: {name}")
+            report[name] = SECTIONS[name]()
         except FileNotFoundError as exc:
-            print(f"[skip] {name}: {exc}", flush=True)
-            report.setdefault("skipped", {})[name] = str(exc)
-        report_path.write_text(json.dumps(report, indent=2))
-        print(f"[report] wrote {report_path}", flush=True)
+            print(f"  skipped: {exc}", flush=True)
+            continue
+        if save:
+            out_path.write_text(json.dumps(report, indent=2))
+            print(f"[report] wrote {out_path}", flush=True)
     return report
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", nargs="*", default=None,
-                        choices=["full_starved", "full_starved5", "full_starved_seeds", "p5",
-                                 "p5_trained", "p2", "p3", "p1"])
+    parser.add_argument("--only", nargs="*", default=None, choices=sorted(SECTIONS))
+    parser.add_argument("--no-save", action="store_true")
     args = parser.parse_args()
-    main(args.only)
+    main(only=args.only, save=not args.no_save)

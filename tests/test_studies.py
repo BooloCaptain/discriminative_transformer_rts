@@ -129,6 +129,37 @@ def test_the_ladder_does_not_sweep_populations_the_recorded_artifact_lacks():
 # --- a parameterised population --------------------------------------------
 
 
+def test_a_starved_threshold_is_a_population_named_for_its_threshold():
+    population = populations.starved(5)
+    assert population.name == "starved5"
+    assert "5" in population.note
+    assert populations.starved(2).name != population.name
+    # The caches are named for the threshold too, so the two line up.
+    assert studies.starved_cache(5).name == "semif_scores_starved5_full.jsonl"
+    assert studies.starved_cache(2).name == "semif_scores_starved2_full.jsonl"
+
+
+def test_the_variation_arms_declare_the_recorded_selector_keys():
+    """A renamed element would silently stop reproducing a section, so pin the key sets."""
+    recorded = _recorded("variations.json")
+    for section, names in (
+        ("full_starved", studies.starved_arm(2).models.names()),
+        ("full_starved5", studies.starved_arm(5).models.names()),
+        ("p2", studies.instruction_arm().models.names()),
+        ("p5", studies.redundancy_arm().models.names()),
+    ):
+        assert list(names) == list(recorded[section]["results"]), section
+
+
+def test_the_variation_arms_pair_at_every_budget_of_their_grid():
+    """A lever that helps only at a low budget is a different finding, so each grid point is
+    paired -- and a comparison is defined by one probe budget."""
+    arm = studies.starved_arm(2)
+    references = {c.reference for c in arm.comparisons}
+    assert references == set(_recorded("variations.json")["full_starved"]["comparisons"]["references"])
+    assert {c.probe_budget for c in arm.comparisons} == set(studies.VARIATION_BUDGETS)
+
+
 def test_a_sparse_threshold_is_a_population_named_for_its_threshold():
     population = populations.low_pair_recurrence(80)
     assert population.name == "sparse80"

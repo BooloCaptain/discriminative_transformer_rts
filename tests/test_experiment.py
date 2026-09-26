@@ -413,6 +413,38 @@ def test_a_caller_can_share_score_matrices_between_runs():
     assert [r["budget"] for r in second.cells[0].results] == [0.25]
 
 
+def test_a_model_seed_is_not_served_by_another_seed_s_score_cache():
+    """The score key must carry the model seed.
+
+    Without it, four refits of one element reuse the first fit and report four identical
+    deltas -- a plausible number from a comparison that never happened, which is the failure
+    mode ``refactor.md`` §14 records for a name-based ablation.
+    """
+    experiment = stub_experiment(
+        models=Axis(ROLE_MODEL, (constant("random", models.RandomSelector()),))
+    )
+    shared: dict = {}
+
+    def run_with(model_seed: int):
+        return run(
+            experiment,
+            knobs=Knobs(
+                budgets=(PROBE,), n_bootstrap=5, seed=config.SEED, model_seed=model_seed
+            ),
+            scores=shared,
+            save=False,
+            verbose=False,
+        )
+
+    first = run_with(1)
+    second = run_with(2)
+    assert len(shared) == 2, "a different model seed must not reuse another seed's scores"
+    a, b = (shared[key] for key in shared)
+    assert not np.array_equal(a, b)
+    # And the data underneath is untouched: the split is seeded by the run, not the model.
+    assert first.cells[0].split == second.cells[0].split
+
+
 def test_the_environment_is_a_value_a_caller_can_inject_through():
     report = run(
         stub_experiment(),
@@ -425,6 +457,43 @@ def test_the_environment_is_a_value_a_caller_can_inject_through():
 
 
 # --- the model half of the declaration -------------------------------------
+
+
+def test_a_cached_score_selector_declares_its_cache_and_needs_the_right_loader(tmp_path):
+    """A cache is not always a scored-pair log, and reading it with the wrong loader is an error."""
+    path = tmp_path / "scores.npy"
+    matrix = np.arange(12, dtype=np.float32).reshape(4, 3)
+    np.save(path, matrix)
+
+    ds = StubDataset()
+    ctx = models.Context(
+        ds=ds,
+        features=features.structured(ds, history=True),
+        split=splits.make_split(ds, train_fraction=0.5),
+        bm25=np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32),
+    )
+
+    binary = models.CachedScores("embed", path, loader=models.load_matrix)
+    assert binary.requirements() == (f"artifact:{path}",)
+    assert np.array_equal(binary.scores(ctx), matrix)
+
+    # The default loader reads scored pairs, so a numpy file is a decode error rather than a
+    # silently wrong matrix -- which is how the embedding arm first failed.
+    with pytest.raises(UnicodeDecodeError):
+        models.CachedScores("embed", path).scores(ctx)
+
+
+def test_a_rank_average_is_fitted_free_and_declares_its_parents_caches():
+    from rts import config as cfg
+
+    parent = models.CachedScores("semif_textonly", cfg.SEMIF_SCORES_FILE)
+    combined = models.RankAverageSelector(
+        "rankaverage_xgb_semif", (models.LexicalSelector(), parent), candidates_mode="covered"
+    )
+    assert combined.requirements() == (f"artifact:{cfg.SEMIF_SCORES_FILE}",)
+    assert combined.candidates_mode == "covered"
+    with pytest.raises(ValueError, match="two or more parents"):
+        models.RankAverageSelector("solo", (models.LexicalSelector(),))
 
 
 def test_artifact_backed_selectors_declare_what_they_read():

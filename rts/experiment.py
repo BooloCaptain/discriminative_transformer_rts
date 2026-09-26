@@ -127,10 +127,17 @@ class Knobs:
     #: precision needs: the recorded ladder used 1000 for its table intervals and 2000 for its
     #: paired p-values. ``None`` means "the same as ``n_bootstrap``".
     n_bootstrap_paired: int | None = None
+    #: Seed for the *model's* randomness, when that should differ from the run's. ``seed`` fixes
+    #: the imposed change order and the temporal split, and a score cache is keyed to that order
+    #: -- so a study that wants to re-fit one model under several seeds must vary this one and
+    #: hold ``seed``, or it would move the data underneath the cache and invalidate the paired
+    #: comparison instead of testing it. ``None`` means "the same as ``seed``".
+    model_seed: int | None = None
 
     def to_dict(self) -> dict:
         return {
             "seed": self.seed,
+            "model_seed": self.model_seed,
             "budgets": list(self.budgets),
             "n_bootstrap": self.n_bootstrap,
             "n_bootstrap_paired": self.paired_resamples,
@@ -140,6 +147,11 @@ class Knobs:
     @property
     def paired_resamples(self) -> int:
         return self.n_bootstrap if self.n_bootstrap_paired is None else self.n_bootstrap_paired
+
+    @property
+    def effective_model_seed(self) -> int:
+        """What a model's randomness is seeded with: its own seed, else the run's."""
+        return self.seed if self.model_seed is None else self.model_seed
 
 
 @dataclass(frozen=True)
@@ -748,7 +760,11 @@ def _measure(
         )
 
     ctx = models.Context(
-        ds=ds, features=matrix, split=split, bm25=bm25, seed=env.knobs.seed
+        ds=ds,
+        features=matrix,
+        split=split,
+        bm25=bm25,
+        seed=env.knobs.effective_model_seed,
     )
     if score_key in scores_cache:
         # A score matrix is a function of the *context*, and the context is (dataset, features,
@@ -1028,6 +1044,10 @@ def run(
                 split.seed,
                 use_history,
                 env.knobs.candidates,
+                # The *model's* seed is part of the context, because it changes what the model
+                # computes. Without it, re-fitting one model under several seeds would silently
+                # reuse the first fit -- which is precisely the comparison a seed sweep is for.
+                env.knobs.effective_model_seed,
             ),
         )
         if is_unmeasured(result):

@@ -373,6 +373,28 @@ one of its two populations, and the split between the table intervals' resample 
 paired test's. And it is exact in the strongest sense available: regenerating
 `artifacts/ladder.json` with the migrated renderer produces a **byte-identical file**.
 
+**The variation sections are exact too, and two of them caught real defects.** Each of the six
+migrated sections is rendered and compared leaf by leaf:
+
+    full_starved        1821 recorded leaves   0 mismatches
+    full_starved5       1821 recorded leaves   0 mismatches
+    full_starved_seeds   263 recorded leaves   0 mismatches
+    p2                   853 recorded leaves   0 mismatches
+    p3                   690 recorded leaves   0 mismatches
+    p5                  1042 recorded leaves   0 mismatches
+
+    together            6490 comparisons        0 mismatches
+
+Neither defect would have been visible anywhere else, which is the argument for verifying against
+whole rendered artifacts rather than against the arms that already work:
+
+* **the score key did not carry the model seed**, so the four refits in `full_starved_seeds` would
+  have reused the first fit and reported four identical deltas (§12);
+* **the embedding baseline's cache is a `.npy` matrix, not a scored-pair log**, and reading it with
+  the default loader raises rather than returning a wrong matrix -- lucky, and only because the two
+  cache formats are distinguishable. A silent version of this is easy to imagine, and the loader
+  is now an explicit part of the element.
+
 ## 12. What was implemented
 
 **Modules.**
@@ -450,6 +472,37 @@ And two things it removed from a driver:
   driver computed inline. They live with the other reporting functions now, because they are facts
   about the data rather than about a sweep.
 
+**Third pass: the variation study.** Six of `variations.py`'s seven sections are declared in
+`rts/studies` and rendered from reports. Four capabilities were needed, and each turned out to be
+the general form of something that already existed:
+
+* **`models.CachedScores`** -- a score matrix read from a file, with the cache declared as a
+  *requirement*. The instruction wordings, the direct-mode cache and the embedding matrix are all
+  this; `SemIfSelector` is now a two-line subclass of it. It also means an absent cache is an
+  unmeasured cell with the path rather than the `FileNotFoundError`-and-skip the driver did. The
+  *loader* is part of the element, because a cache is not always a scored-pair log: the embedding
+  baseline is a whole matrix saved with `numpy.save`.
+* **`models.RankAverageSelector`** -- the fitted-free combination of two selectors' normalised rank
+  positions. The starved arm and the redundancy test both need it, and it is what makes the
+  redundancy question answerable without fitting anything on the rows being evaluated.
+* **`populations.starved(max_failures)`** -- the starved proxy as a declared population for one
+  threshold, named for it. Two thresholds are two populations, and the caches are named the same
+  way, so the two line up.
+* **`Knobs.model_seed`** -- see below; the one place the five-role design was asked for something
+  it did not have.
+
+**A defect the seed sweep exposed, which is the kind that produces plausible numbers.** The score
+cache was keyed on the model's *element name* but not on its seed, so four refits of one element
+would have silently reused the first fit and reported four identical deltas. That is exactly the
+shape of the ablation bug `refactor.md` §14 records -- a name that matched nothing, a plausible
+number, no error -- and it would not have been visible in the arms already verified, because none
+of them varies a model seed. `Knobs.effective_model_seed` is now part of the key.
+
+**`full_starved_seeds` is a multi-seed run, not an axis.** The question is whether the correction
+rests on one lucky fit, so the same two trees are refit under four *model* seeds. Only the model
+seed varies -- `Knobs.seed` fixes the imposed order and the split, and the caches are keyed to that
+order -- which is why the two seeds are separate knobs rather than one.
+
 The layer also stopped conflating two vocabularies: a cell records `warnings` (the *derivation's*
 caveats -- a family withheld, history on an imposed order) separately from `audit` (what the
 dataset and split say about trusting a number at all). The ladder artifact needs them apart, and
@@ -471,15 +524,29 @@ code and artifact in step:
 
 ## 13. What remains
 
-* **`variations`, `bundles`, `bugsinpy` and `analysis` are not migrated.** They are the remaining
-  drivers. `variations` and `bundles` are the interesting pair, because their factors are exactly
-  the cases §2 maps onto roles: an instruction variant is a model reading a different cache, and a
-  bundle rung is a dataset derived from a base -- `studies._bundle_dataset` already shows the
-  latter as a three-line element. `bugsinpy` needs a dataset element for the pooled corpus and its
-  own renderer; `analysis` is mostly descriptive statistics over a report.
-* **`figures.py` is untouched and needs nothing.** It reads `artifacts/variations.json`, which
-  `variations` still writes. When that driver migrates, the figures follow whatever payload it
-  produces.
+* **`variations` is six-sevenths migrated.** The starved arms, the seed refit, the instruction
+  sweep, the embedding baseline and the redundancy test are declared in `rts/studies` and rendered
+  by `rts/variations.py`. Two sections are not:
+  * **`p5_trained`** needs an evaluation window *inside* the held-out tail -- a `Split` whose train
+    and test are both drawn from the tail -- plus a NaN convention for unscored pairs in
+    `XGBoostSelector`'s extra columns. Both are small; both change what an existing concept means,
+    so they are a deliberate step rather than a migration detail.
+  * **`p1_direct` cannot be reproduced at all.** Its cache
+    (`semif_direct_starved2_covered.jsonl`) is absent from the artifacts, so the section is
+    recorded but not reproducible, and only the layer's *behaviour* differs today: it would report
+    an unmeasured cell with the path instead of raising. The code is kept as the record of what
+    ran.
+* **`bundles` and `bugsinpy` are not migrated.** `bundles` needs a bundle-rung dataset axis and a
+  bundle feature block; `studies._bundle_dataset` already shows the derived-dataset pattern as a
+  three-line element, so the dataset side is cheap and the block side is the work. `bugsinpy`
+  needs a dataset element for the pooled corpus and its own renderer (the bridge audit and the
+  per-project breakdown). `analysis` writes no artifact at all -- it is descriptive statistics
+  over recorded results -- so it belongs with `reporting` rather than in the layer.
+* **`studies.py` is now ~1150 lines** and is three catalogues in one module (the headline arms, the
+  ladder's declarations, the variation arms). Splitting it into a package is mechanical and would
+  make the variation arms findable; it is pending rather than unclear.
+* **`figures.py` is untouched and needs nothing.** It reads `artifacts/variations.json`, whose
+  shape the renderer reproduces, so the figures follow the payload without change.
 * **A `RunReport` cannot be handed to a consumer directly.** The pipeline renderer rebuilds the
   dataset to call `reporting.describe` and `reporting.recurrence`, because the report records the
 dataset's *declaration* and per-cell counts but not the dataset itself. That is a deliberate

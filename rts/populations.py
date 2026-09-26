@@ -251,6 +251,25 @@ def sparse_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
     return _low_pair_recurrence(accessors.material(ds), max_pair_count)
 
 
+def starved(max_failures: int) -> Population:
+    """The data-starved proxy as a declared population, for one threshold.
+
+    Counts include the change itself, so ``max_failures=1`` means the killing pair has no prior
+    failure history. The name carries the threshold, because two thresholds are two different
+    populations and a sweep must not conflate them -- and the recorded caches are named for the
+    threshold too (``semif_scores_starved5_full.jsonl``), so the two line up.
+    """
+    return Population(
+        name=f"starved{max_failures}",
+        note=(
+            f"changes whose killing (file, test) pair has at most {max_failures} failures, "
+            "counting the change itself"
+        ),
+        needs=("pair_failures", "pair_runs", "paths", "killing"),
+        predicate=lambda material: _no_prior_failure(material, max_failures),
+    )
+
+
 def low_pair_recurrence(max_pair_count: int) -> Population:
     """The sparse proxy as a declared population, for one threshold.
 
@@ -282,5 +301,6 @@ __all__ = [
     "population",
     "resolve",
     "sparse_mask",
+    "starved",
     "starved_mask",
 ]

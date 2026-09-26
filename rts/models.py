@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -363,15 +364,119 @@ class SemIfSelector(Selector):
     name = "semif_reranker"
 
     def __init__(self, scores_file=None):
-        self.scores_file = scores_file or config.SEMIF_SCORES_FILE
+        super().__init__("semif_reranker", scores_file or config.SEMIF_SCORES_FILE)
+
+    @property
+    def scores_file(self) -> Path:
+        """The cache this reads. An alias for :attr:`CachedScores.path`."""
+        return self.path
+
+
+def normalised_rank(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
+    """Per-change descending rank, normalised to ``[0, 1]``; 0 is best.
+
+    Non-candidates get ``inf`` so they can never win. This is what lets two selectors on
+    different scales be averaged without fitting a weight: each change's candidates are ranked
+    independently, so the result is invariant to either input's units -- which is what makes the
+    combination below leakage-safe.
+    """
+    masked = np.where(candidates, scores, -np.inf)
+    order = np.argsort(-masked, axis=1, kind="stable")
+    ranks = np.empty_like(order)
+    rows = np.arange(scores.shape[0])[:, None]
+    ranks[rows, order] = np.arange(scores.shape[1])[None, :]
+    denom = max(scores.shape[1] - 1, 1)
+    return np.where(candidates, ranks / denom, np.inf)
+
+
+#: A score loader: ``(cache path, dataset) -> [n_changes, n_tests]``. The dataset is a
+#: parameter because a cache may need canonicalising against the pool it is read into.
+ScoreLoader = Callable[[Path, Dataset], np.ndarray]
+
+
+def load_matrix(path: Path, _ds: Dataset) -> np.ndarray:
+    """The trivial loader: a cache that is already a ``[n_changes, n_tests]`` matrix."""
+    return np.load(path)
+
+
+class CachedScores(Selector):
+    """Scores read from a precomputed ``[n_changes, n_tests]`` artifact.
+
+    This is the general form of every cached model in the study: the reranker caches, the five
+    instruction-wording caches, the direct-mode cache and the embedding baseline all differ only
+    in which file they read and how it is parsed. Declaring the cache as a *requirement* is what
+    matters: an absent one makes the cell unmeasured with the path rather than raising from
+    inside ``scores``, which is the difference between a hole in the report and a dead run when
+    a study has a dozen caches of which any may be missing.
+    """
+
+    def __init__(self, name: str, path: Path | str, loader: ScoreLoader | None = None):
+        self.name = name
+        self.path = Path(path)
+        self._loader = loader or semif.load_scores
 
     def requirements(self) -> tuple[str, ...]:
-        """The precomputed score cache. Scoring is expensive and needs the checkpoint, so
-        the cache is a precondition of the element rather than something a cell produces."""
-        return (f"artifact:{self.scores_file}",)
+        """The precomputed cache. Producing it is a precondition, not something a cell does."""
+        return (f"artifact:{self.path}",)
 
     def scores(self, ctx: Context) -> np.ndarray:
-        return semif.load_scores(self.scores_file, ctx.ds)
+        return self._loader(self.path, ctx.ds)
+
+
+class SemIfSelector(CachedScores):
+    """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
+
+    Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is computed
+    once by ``rts.semif`` and cached. See implementation.md for the pinned configuration.
+    """
+
+    def __init__(self, scores_file=None):
+        super().__init__("semif_reranker", scores_file or config.SEMIF_SCORES_FILE)
+
+    @property
+    def scores_file(self) -> Path:
+        """The cache this reads, i.e. :attr:`CachedScores.path` under its older name."""
+        return self.path
+
+
+class RankAverageSelector(Selector):
+    """The fitted-free combination of several selectors: mean normalised rank position.
+
+    Nothing is fitted, so it cannot leak across the train/evaluation boundary the way a blend
+    weight fitted on the rows being evaluated would. The reason to include it is the
+    *redundancy* test: if the second model adds independent signal then the average beats both
+    parents, and if it is redundant the average sits between them. That is a stronger statement
+    than a correlation, and it needs no extra data.
+
+    Ranks are taken over each change's own candidate set (see :func:`normalised_rank`), which is
+    why a candidate mode is required: the average is only defined relative to a pool.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        selectors: Sequence[Selector],
+        candidates_mode: str = "full",
+    ):
+        if len(selectors) < 2:
+            raise ValueError(f"{name!r} averages rank positions, so it needs two or more parents")
+        self.name = name
+        self.selectors = tuple(selectors)
+        self.candidates_mode = candidates_mode
+
+    def requirements(self) -> tuple[str, ...]:
+        """Whatever the parents read, in first-seen order and without repeats."""
+        seen: list[str] = []
+        for selector in self.selectors:
+            for requirement in selector.requirements():
+                if requirement not in seen:
+                    seen.append(requirement)
+        return tuple(seen)
+
+    def scores(self, ctx: Context) -> np.ndarray:
+        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
+        norms = [normalised_rank(s.scores(ctx), candidates) for s in self.selectors]
+        return -np.mean(norms, axis=0)
 
 
 def default_selectors(include_semif: bool = True) -> list[Selector]:
