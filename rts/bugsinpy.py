@@ -40,10 +40,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import accessors, config, datasets as dataset_module, evaluate, features
+from . import accessors, composition, config, contract, datasets as dataset_module, evaluate, features
 from .studies import bugsinpy as declarations
 
-BUGSINPY_DIR = config.ARTIFACTS / "bugsinpy"
 SEMIF_CACHE = declarations.SEMIF_CACHE
 BUDGETS = declarations.BUGSINPY_BUDGETS
 PROBE = 0.05
@@ -53,14 +52,8 @@ PROBE = 0.05
 
 
 def load_datasets(projects: list[str] | None = None) -> list[dataset_module.BugsInPyDataset]:
-    """One dataset per project, in sorted project order."""
-    all_projects = dataset_module.available_bugsinpy_projects()
-    if projects:
-        missing = sorted(set(projects) - set(all_projects))
-        if missing:
-            raise FileNotFoundError(f"no built dataset for project(s): {missing}")
-        all_projects = [p for p in all_projects if p in set(projects)]
-    return [dataset_module.bugsinpy(p) for p in all_projects]
+    """One dataset per selected project, in sorted project order."""
+    return [dataset_module.bugsinpy(name) for name in declarations.project_names(projects)]
 
 
 def bug_key(ds: dataset_module.BugsInPyDataset, bug) -> str:
@@ -68,9 +61,13 @@ def bug_key(ds: dataset_module.BugsInPyDataset, bug) -> str:
     return f"{ds.name}/{ds.change_id(bug)}"
 
 
-def pooled_dataset(project_datasets: list[dataset_module.BugsInPyDataset]) -> dataset_module.Dataset:
-    """The eight projects as one evaluation population, namespacing test ids."""
-    return dataset_module.bugsinpy_pooled()
+def pooled_dataset(project_datasets: list[dataset_module.BugsInPyDataset]) -> contract.Dataset:
+    """The given projects as one evaluation population, namespacing test ids.
+
+    Built from the datasets the caller passed rather than from every project on disk: otherwise
+    the renderer would describe a different corpus from the one the arm measured.
+    """
+    return composition.pool(project_datasets, name="bugsinpy")
 
 
 # --- gate T0: the textual-bridge audit -------------------------------------
@@ -241,10 +238,19 @@ def render(
     pools = accessors.candidates(pooled, "own")
     candidate_counts = pools.sum(axis=1)
 
+    # The declared grid, restricted to what this run actually produced -- so a smoke run over one
+    # project at one budget renders that budget instead of keying off a report that is absent.
+    budgets = tuple(budget for budget in declarations.BUGSINPY_BUDGETS if budget in reports)
+    if PROBE not in reports:
+        raise ValueError(
+            f"the per-project breakdown is defined at the probe budget {PROBE}; "
+            f"this run covers {sorted(reports)}"
+        )
+
     results: dict[str, dict] = {}
     for model in declarations.MODEL_ORDER:
         results[model] = {}
-        for budget in declarations.BUGSINPY_BUDGETS:
+        for budget in budgets:
             cell = _cell(reports[budget], model)
             row = next(r for r in cell.results if r["budget"] == budget)
             results[model][f"{budget:.2f}"] = {
@@ -258,7 +264,7 @@ def render(
             }
 
     comparisons: dict[str, dict] = {}
-    for budget in declarations.BUGSINPY_BUDGETS:
+    for budget in budgets:
         at_reference: dict[str, dict] = {}
         for record in reports[budget].comparisons:
             if not record.get("measured"):
@@ -328,7 +334,9 @@ def run(
         f"[bugsinpy] pooled: {pooled.n_changes} rows x {pooled.n_tests} tests; "
         f"capabilities={sorted(pooled.capabilities())} ordering={pooled.ordering().value}"
     )
-    reports = declarations.run_arm(budgets=budgets, save=False, verbose=verbose)
+    reports = declarations.run_arm(
+        budgets=budgets, projects=projects, save=False, verbose=verbose
+    )
     payload = render(reports, project_datasets, pooled)
 
     print("\n=== recall (budget = fraction of each bug's own pool) ===")

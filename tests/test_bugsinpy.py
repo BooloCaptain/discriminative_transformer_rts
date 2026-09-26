@@ -149,6 +149,29 @@ def test_the_arm_holds_nothing_out(corpus):
     assert len(split.test_idx) == pooled.n_changes
 
 
+def test_a_project_selection_is_a_different_corpus():
+    """A corpus of one project is a different experiment, not a filter on the results.
+
+    The selection has to reach the *dataset element*, or a subset run would audit one project
+    while measuring all eight -- and that is silent, because every number produced would still
+    be a number.
+    """
+    from rts.experiment import ROLE_DATASET
+
+    arm = studies.bugsinpy_arm(0.05, projects=["black"])
+    assert set(arm.populations.names()) == {"fault_bearing", "black"}
+    built = studies.bugsinpy.pooled_dataset(["black"])
+    assert built.n_changes == 19
+    assert built.n_tests == 145
+    assert studies.bugsinpy.project_names(["black"]) == ("black",)
+    assert arm.axes()[ROLE_DATASET].names() == ("bugsinpy_pooled",)
+
+
+def test_an_unknown_project_is_an_error_not_an_empty_corpus():
+    with pytest.raises(FileNotFoundError, match="no built dataset"):
+        studies.bugsinpy.project_names(["not_a_project"])
+
+
 def test_the_cache_loader_resolves_columns_through_each_bugs_pool(corpus):
     """The cache stores a *position* in a bug's pool, so the pool's order is load-bearing."""
     _, pooled, _ = corpus

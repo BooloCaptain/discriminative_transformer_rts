@@ -30,7 +30,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import config, datasets, models, populations
+from typing import Sequence
+
+from .. import composition, config, datasets, models, populations
 from ..contract import Dataset
 from ..experiment import (
     ROLE_DATASET,
@@ -100,18 +102,18 @@ def load_scores(path: Path, ds: Dataset) -> np.ndarray:
 # --- the axes ---------------------------------------------------------------
 
 
-def dataset_axis() -> Axis:
+def dataset_axis(projects: Sequence[str] | None = None) -> Axis:
     return Axis(
         ROLE_DATASET,
         (
             Element(
                 "bugsinpy_pooled",
-                lambda _binding: datasets.bugsinpy_pooled(),
+                lambda _binding, projects=projects: pooled_dataset(projects),
                 tier="cpu",
-                note="eight projects as one evaluation population, test ids namespaced",
+                note="the selected projects as one evaluation population, test ids namespaced",
             ),
         ),
-        note="the real-label corpus: one dataset, pooled, eight populations",
+        note="the real-label corpus: one dataset, pooled, one population per project",
     )
 
 
@@ -149,9 +151,28 @@ def model_axis() -> Axis:
     )
 
 
-def project_names() -> tuple[str, ...]:
-    """The projects with a built dataset on disk, in sorted order."""
-    return tuple(datasets.available_bugsinpy_projects())
+def project_names(projects: Sequence[str] | None = None) -> tuple[str, ...]:
+    """The projects a run covers, in sorted order: all built ones, or the named subset.
+
+    Declared here rather than in the driver because the *arm* has to know: a corpus of three
+    projects is a different experiment from a corpus of eight, so the selection is part of the
+    dataset element rather than a filter applied to its results.
+    """
+    available = tuple(datasets.available_bugsinpy_projects())
+    if projects is None:
+        return available
+    missing = sorted(set(projects) - set(available))
+    if missing:
+        raise FileNotFoundError(f"no built dataset for project(s): {missing}")
+    wanted = set(projects)
+    return tuple(name for name in available if name in wanted)
+
+
+def pooled_dataset(projects: Sequence[str] | None = None) -> Dataset:
+    """The selected projects as one evaluation population, namespacing test ids."""
+    return composition.pool(
+        [datasets.bugsinpy(name) for name in project_names(projects)], name="bugsinpy"
+    )
 
 
 def project_populations(ds: Dataset) -> dict[str, populations.Population]:
@@ -174,14 +195,13 @@ def project_populations(ds: Dataset) -> dict[str, populations.Population]:
     return out
 
 
-def population_axis(names: tuple[str, ...] | None = None) -> Axis:
+def population_axis(projects: Sequence[str] | None = None) -> Axis:
     """The pooled population and one population per project.
 
     The per-project breakdown is the reason this arm needs a population axis at all: it is the
     check that "SemIf ties BM25 on the pooled corpus" is either a claim that holds everywhere or
     one carried by a single project.
     """
-    projects = project_names() if names is None else names
     elements: list[Element] = [
         constant(
             "fault_bearing",
@@ -196,7 +216,7 @@ def population_axis(names: tuple[str, ...] | None = None) -> Axis:
             tier="cpu",
             note=f"the {name} project's bugs",
         )
-        for name in projects
+        for name in project_names(projects)
     )
     return Axis(ROLE_POPULATION, tuple(elements), note="the corpus, and each project in it")
 
@@ -204,14 +224,19 @@ def population_axis(names: tuple[str, ...] | None = None) -> Axis:
 # --- the arm ----------------------------------------------------------------
 
 
-def arm(budget: float = 0.05, *, name: str | None = None) -> Experiment:
+def arm(
+    budget: float = 0.05,
+    *,
+    projects: Sequence[str] | None = None,
+    name: str | None = None,
+) -> Experiment:
     """The arm at one budget, because a budget is a knob and the intervals are per-budget."""
     return Experiment(
         name=name or f"bugsinpy.b{budget:.2f}",
-        datasets=dataset_axis(),
+        datasets=dataset_axis(projects),
         features=structured_feature_axis(),
         models=model_axis(),
-        populations=population_axis(),
+        populations=population_axis(projects),
         # A zero-train split: this arm has no training stage, so the window is every bug.
         splits=split_axis(train_fraction=0.0),
         knobs=Knobs(
@@ -237,6 +262,7 @@ def arm(budget: float = 0.05, *, name: str | None = None) -> Experiment:
 def run_arm(
     budgets: tuple[float, ...] = BUGSINPY_BUDGETS,
     *,
+    projects: Sequence[str] | None = None,
     out_dir: Path | str | None = None,
     save: bool = True,
     verbose: bool = True,
@@ -251,7 +277,7 @@ def run_arm(
     reports: dict[float, RunReport] = {}
     for budget in budgets:
         reports[budget] = run(
-            arm(budget),
+            arm(budget, projects=projects),
             out_dir=out_dir,
             scores=scores,
             save=save,
