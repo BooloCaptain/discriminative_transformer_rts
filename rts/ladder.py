@@ -108,9 +108,14 @@ def _cached_change_ids() -> set[str] | None:
 
 
 def build_populations(
-    ds: contract.Dataset, split: splits.Split
+    ds: contract.Dataset,
 ) -> dict[str, "populations.Population | Unmeasured"]:
-    """The ladder's two averaging populations, declared rather than hard-coded."""
+    """The ladder's two averaging populations, declared rather than hard-coded.
+
+    They are a function of the dataset alone -- ``starved141`` is defined by which changes the
+    SemIf cache covers, ``heldout530`` by the labels -- so nothing about the split belongs
+    here, and the experiment layer can declare both as population elements.
+    """
     out: dict[str, populations.Population | Unmeasured] = {}
 
     cached = _cached_change_ids()
@@ -167,7 +172,7 @@ def _selectors(include_semif: bool) -> list[models.Selector]:
 def run_label_source(label_source: str, verbose: bool = True) -> dict:
     ds = datasets.marshmallow(labels=label_source)
     split = splits.make_split(ds)
-    declared = build_populations(ds, split)
+    declared = build_populations(ds)
     candidates = accessors.candidates(ds, "full")
 
     if verbose:

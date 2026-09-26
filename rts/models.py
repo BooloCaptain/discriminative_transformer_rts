@@ -69,6 +69,22 @@ class Selector:
     def scores(self, ctx: Context) -> np.ndarray:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def requirements(self) -> tuple[str, ...]:
+        """Material beyond the dataset contract that this selector reads.
+
+        The selector half of the declaration the dataset contract already has: the entity
+        that reads the material says what it needs, so the need cannot drift from the code.
+        The experiment layer resolves these at the cell boundary, and an unresolved
+        requirement makes the cell *unmeasured* rather than raising from inside ``scores``.
+
+        Two spellings are understood: ``"artifact:<path>"`` for a file the selector reads
+        (a score cache), and a :class:`rts.contract.Requirement` value (``"coverage"``,
+        ``"durations"``, ...) for material that comes from the dataset. An unrecognised
+        spelling raises where it is resolved, for the same reason
+        :meth:`rts.contract.Dataset.has_capability` does.
+        """
+        return ()
+
     # --- helpers ---
     @staticmethod
     def _prefer_small_coverage(covered: np.ndarray, n_covering: np.ndarray) -> np.ndarray:
@@ -215,6 +231,10 @@ class XGBoostSelector(Selector):
         self.importances_: dict[str, float] = {}
         self._extra_cache: dict[str, np.ndarray] = {}
 
+    def requirements(self) -> tuple[str, ...]:
+        """One score-cache artifact per extra column, since each is read from a file."""
+        return tuple(f"artifact:{path}" for path in self.extra_score_files.values())
+
     def _dropped(self) -> set[str]:
         dropped: set[str] = set(self.exclude)
         if self.exclude_history:
@@ -312,6 +332,11 @@ class SemIfSelector(Selector):
 
     def __init__(self, scores_file=None):
         self.scores_file = scores_file or config.SEMIF_SCORES_FILE
+
+    def requirements(self) -> tuple[str, ...]:
+        """The precomputed score cache. Scoring is expensive and needs the checkpoint, so
+        the cache is a precondition of the element rather than something a cell produces."""
+        return (f"artifact:{self.scores_file}",)
 
     def scores(self, ctx: Context) -> np.ndarray:
         return semif.load_scores(self.scores_file, ctx.ds)
