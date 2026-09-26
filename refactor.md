@@ -1,0 +1,297 @@
+# Refactoring the RTS harness: the dataset interface
+
+Design doc, not implemented. Scope is **datasets only**; the model/selector half is
+deliberately deferred (§9). Companions: `plan.md`, `implementation.md`, `plan_next_steps.md`.
+
+The goal is modularity and testability — every dataset behind one contract, so that a new SUT
+or a new change source is one class to write, and so that datasets can be compared and combined
+without special cases.
+
+## 1. A dataset
+
+A **dataset** supplies changes, a test pool, and the outcome relation between them, together
+with the material needed to rank tests for a change. It is the unit of evaluation, and a plain
+value: constructing one has no side effects, and two may coexist in a process.
+
+**Granularity is maximal.** One dataset is the smallest independently meaningful unit of
+evaluation — one source, one test pool, one sequence of changes. For a single SUT that is the
+SUT; for a multi-project corpus it is one project, because a project's suite is what tests are
+run against and pooled evaluation is a decision an experiment makes rather than a property of
+the data. All datasets obey the same contract, so they compose by construction: pooling,
+partitioning and pairing are all just iteration.
+
+## 2. The contract
+
+The harness declares the interface; each dataset implements it. The interface is cut in two,
+and that is the load-bearing decision.
+
+**Primitives** are dataset-specific, because their *extraction* is. `diff_text` is the
+archetype: a mutation is reconstructed by diffing generated source, a real change is a git
+patch, and a derived change is a concatenation of others. Nothing generic can obtain it.
+
+**Derived features** are harness functions over the primitives. Every dataset inherits them, so
+an identical statistic means an identical quantity across datasets.
+
+### 2.1 Primitives
+
+    name
+    changes()               -> list[Change]
+    files(change)           -> tuple[str, ...]
+    diff_text(change)       -> str
+    killing_tests(change)   -> frozenset[TestId]
+    ran_tests(change)       -> frozenset[TestId]
+    test_pool()             -> list[TestId]
+    test_source(test)       -> str
+
+plus the optional primitives of 2.3.
+
+`files` is plural because a change may touch several files, and a singular accessor would have
+to lie about it. `killing_tests` is the label; `ran_tests` is what was executed. They are not
+the same thing, and the distinction is what separates "passed" from "never ran".
+
+### 2.2 Derived features
+
+Supplied by the harness, not implemented per dataset:
+
+    changed_lines, removed_lines, change_size      <- parsed from diff_text
+    change_query_text                              <- added + removed lines
+    test_n_lines, test_n_tokens                    <- from test_source
+    n_tests_in_test_file                           <- from test_pool
+    path_distance, filename_stem_match             <- from files x test files
+    failure_rate_cum, runs_cum, last_failure_age   <- from labels and ran, over the sequence
+
+This places an obligation on `diff_text`: it must be a unified diff, because the harness
+recovers added and removed lines from it. A source with a native patch returns it unchanged; a
+source that synthesizes its changes constructs the diff. Both satisfy one contract, which is why
+`change_size` is a single function rather than one per dataset — and that is precisely what
+makes a cross-dataset comparison meaningful.
+
+A derived feature may be overridden only for a genuine semantic difference, and the override
+should be recorded. Silent divergence is how the same statistic quietly stops meaning the same
+thing.
+
+### 2.3 Capabilities
+
+Two things are neither derivable nor universally available:
+
+    capabilities()          -> frozenset[str]           # subset of {"coverage", "durations"}
+    coverage(change)        -> frozenset[TestId]        # only if "coverage"
+    durations()             -> dict[TestId, float]      # only if "durations"
+
+A dataset declares what it has, and the harness requests only that. Absence becomes an explicit,
+visible fact rather than an all-zero column that a model will happily split on. Coverage is the
+feature that must not be faked: where the test process cannot observe the changed code, the
+dataset has no coverage and must say so.
+
+A capability reports **availability, not comparability**. Test durations are hardware-dependent,
+so a dataset that has them is still not comparable on them with one measured elsewhere — the
+duration is a property of the machine as much as of the test. Where a feature is meaningful only
+relative to other datasets, presence is necessary and not sufficient.
+
+### 2.4 Ordering
+
+History features are derivable from any dataset, but they are only *interpretable* when the
+change sequence is real. A dataset therefore declares:
+
+    ordering()              -> "observed" | "imposed"
+
+`observed` means the source carries a real sequence. `imposed` means it does not. There is no
+separate "none": a sequence is always needed to materialise cumulative features, and absence of
+a temporal one is precisely what `imposed` states.
+
+**The canonical order is always deterministic**, temporal or not, so any run reproduces without a
+seed. When ordering is `observed`, the canonical order *is* the temporal order — the dataset may
+not keep one order for storage and another for history. When it is `imposed`, the harness may
+additionally apply a **seeded permutation** before computing history features; that seed is
+evaluation configuration, not a property of the data (§5).
+
+**History features are off by default for an `imposed` dataset.** Not out of timidity: a
+cumulative feature over an arbitrary order does not merely fail to be interpretable, it
+manufactures a leak. Where a (file, test) pair recurs, an arbitrary order lets a change's
+"prior failures" include failures that are prior to it in no causal sense, which partly encodes
+the label. A real order bounds the feature to genuinely earlier events. So enabling history on
+an `imposed` dataset is an explicit experiment, and it is reported as a spread over several
+seeds rather than as one number — the seed's variance is a measurement, not a nuisance.
+
+Ordering is **declared, never inferred** — including by a derived dataset, which states its own
+rather than inheriting one automatically. A transformation that maps each derived sample to
+exactly one point in its base's sequence may declare `observed`; one that does not, or that draws
+its parts from anywhere in the base, is `imposed`. The harness cannot verify either claim, so the
+declaration carries the responsibility.
+
+**Order is part of a dataset's identity.** For an `imposed` dataset a permutation is free — every
+order is equally valid, and a seed is only a reproducibility knob. For an `observed` dataset it is
+not: replacing its order discards the property that made it `observed`, so the result is a
+*different dataset* declaring `imposed`, not a variant of the original. An experiment wanting a
+non-temporal view of a temporal source therefore defines a new dataset rather than reordering one
+in place.
+
+### 2.5 Declared semantics
+
+Two datasets can satisfy the same contract while meaning different things by it. The harness
+therefore gets, for every attribute it reasons about, a machine-readable value **and** a
+human-readable note:
+
+    test_unit()             -> TestUnit        # "module" | "class" | "function" | "case"
+    semantics()             -> dict[str, str]  # free-form notes, keyed by attribute
+
+`test_unit` says what one `TestId` denotes. It is the harness-checkable half, used for
+compatibility checks, and it necessarily flattens: a parametrization may be collapsed, a "test"
+may be a whole scenario script. `semantics()` carries those qualifications, and the enum exists so
+that the note is never the only record.
+
+The pattern is general, not special to `TestId`. An enum is **preferred wherever the harness has a
+question to ask** — something it compares, checks, or gates a behaviour on — and the matching note
+is **always** present. Where there is no such question, the note alone suffices: an enum nothing
+reads adds a decision without adding a capability. Adding an attribute therefore means deciding
+whether the harness asks anything about it, and writing the note either way.
+
+## 3. Assembling a dataset
+
+A concrete dataset is three pieces of internal machinery behind the contract:
+
+- a **source** — the raw material for one SUT or revision, holding no module-level state;
+- a **sample generator** — turns source records into samples: changes with their killing and
+  ran tests, plus coverage where available. It may wrap, filter or *transform*;
+- the **dataset** — implements the primitives over those samples, and declares its capabilities,
+  ordering and semantics.
+
+**One pair of generators per data format; one dataset per evaluation unit.** The eight BugsInPy
+projects are eight datasets, because their suites, pools and meanings are separate — but they
+share a single source class and a single sample generator, since the projects ship the same
+schema and the generator differs only by which project it is pointed at.
+
+Transformation is not a special case. Bundling several changes into one sample is a sample
+generator over another dataset, expressed as a dataset that wraps a dataset rather than as a
+parallel code path. The same shape covers holding out a file, taking one change per function,
+and any other reshaping an experiment needs.
+
+## 4. Composition and comparison
+
+Because datasets are values behind one contract:
+
+- **Compare.** Every statistic computed from the contract — derived features, declared
+  capabilities, outcome spread — is comparable across datasets, since the derived features are
+  the same functions. Comparing datasets means iterating them and tabulating.
+- **Pool.** Several datasets can be combined into one evaluation population. Test ids need
+  namespacing, because two projects may both contain `tests/test_utils.py::test_x`;
+  `dataset::nodeid` resolves it, provided a dataset name contains no `::`. What namespacing does
+  *not* fix is meaning: pooling datasets whose `test_unit` (§2.5) differs is defensible only when
+  the difference is immaterial, and is warned about rather than refused. The split needs no
+  reconciling here, because it belongs to evaluation (§5).
+- **Derive.** A dataset may be a function of others — a bundle, a filtered subset, a relabelled
+  variant — so experimental manipulations are datasets too.
+
+## 5. The evaluation contract
+
+Evaluation owns the split and the averaging population, and needs from a dataset only a
+quadruple:
+
+    (scores, labels, candidates, rows) -> recall / hits
+
+A dataset provides `labels`, `candidates` and its `rows`; a selector provides `scores`.
+Evaluation therefore never depends on the dataset type, which is what lets a wrapped dataset, a
+pooled dataset, or a bundle carrying its own label matrix be evaluated by exactly the same code.
+
+Three sets are deliberately distinct, because conflating them loses information:
+
+- **candidates** — per (change, test) pair: which pairs are rankable.
+- **rows** — per change: which changes are in the evaluation window.
+- **population** — a named subset of `rows` that a metric is averaged over.
+
+Recall over all changes and recall over fault-bearing changes are different quantities, so the
+population is part of the result rather than an implicit choice buried inside it. Fault-bearing
+changes are the default, and are the population every number has silently used so far; study-
+specific populations — no prior failure history, low pair recurrence — are passed in as named
+predicates and recorded beside the metric.
+
+A population is to `rows` what a derived feature is to pairs: a harness function over the
+contract, defined once and applicable to any dataset. That constrains what a predicate may read.
+"Has no prior failure history" is expressible from `killing_tests` and the order; "low pair
+recurrence" needs `coverage`. A population therefore declares its requirements, exactly as a
+derived feature does, and where a dataset cannot meet them the population is **unavailable** —
+never silently empty (§6). This is the sense in which population restriction is independent of
+the dataset: the dataset supplies the contract, and everything else is computed from it.
+
+The split is a fraction, a shuffle flag and a seed, applied to the dataset's canonical order.
+`shuffle=False` takes a contiguous prefix — a well-defined operation on any dataset, so it only
+warns when the ordering is `imposed`. `shuffle=True` permutes first, and is permitted on any
+dataset at the user's risk, because it discards the temporal reading that history features rest
+on.
+
+One rule ties the split to the ordering: **the effective ordering of a run is the dataset's
+ordering, unless the split shuffles, in which case it is `imposed`.** Shuffling an `observed`
+dataset therefore switches history features off by the §2.4 default, with no second switch to
+forget.
+
+That rule and the pooling rule in §4 are both **advisory**: the harness warns and records rather
+than refusing. The purpose of a declaration is to make a mismatch visible in the result, not to
+prevent an experiment that knows what it is doing.
+
+## 6. Unmeasured values and warnings
+
+Three rules apply to everything, not only to populations.
+
+**Unmeasured is a state, not a value, and it propagates.** A quantity that cannot be defined —
+rather than merely being zero or absent — stays *unmeasured*, and carries the reason it could not
+be defined, naming the requirement that was not met. The reason follows the §2.5 pattern: a
+checkable requirement id, plus a note. Anything computed from it is itself unmeasured, so a
+meaningless number never reaches a table, a figure, or a comparison.
+
+The failure mode to avoid is specific. An average over an empty set and an average over a
+population that cannot exist are indistinguishable once both are `0.0`, and reporting the second
+as the first is not a rounding error but a false statement about the data. Whether a quantity is
+measured is therefore part of every quantity, rather than something recovered by inspecting it
+afterwards.
+
+**Information is lost only at a boundary, deliberately and once.** Unmeasured survives through
+computation as long as it can, and conversion to whatever a consumer needs happens at the edge
+where that consumer is served. The representation is therefore *not* one global choice between a
+sentinel and absence — it is chosen per boundary, because the right answer depends on the
+consumer.
+
+- An artifact records it as `null` beside its reason, or omits the entry and lists it in an
+  unmeasured registry; either way the reason survives.
+- A table or figure shows it as unavailable on the side where it is unavailable, rather than
+  dropping the row. A comparison is never silently halved: that a question was asked and could not
+  be answered is itself a finding, and removing it destroys the finding.
+- A model input, which usually cannot represent the state at all, is the last boundary and the only
+  place a lossy coercion is legitimate. There it becomes something the model can ingest — and since
+  zero is itself meaningful, the coercion is recorded, in practice as a companion indicator rather
+  than a silent substitution.
+
+**Warnings are structured and propagated**, whether or not anything currently acts on them. A
+declaration that is only printed is invisible to the layers that should be able to act on it — the
+figures layer, for instance, is exactly where a comparison the warnings call incomparable should
+be declined. Recording a warning is not conditional on a consumer existing; anticipating one is
+the reason to record it at all.
+
+## 7. Testability
+
+The contract makes a dataset cheap to fake: a fixture-backed dataset returning ten changes over
+three tests is complete and valid, and two of them can exist at once. This requires that no
+dataset state live at module level — no pinned paths, no mutable label source, no cache keyed by
+a bare node id. Test-time datasets then need neither a real checkout nor a real test run.
+
+## 8. Keeping the existing numbers intact
+
+The documented numbers are the deliverable, so the refactor is verified against them rather than
+trusted.
+
+- Record the current `results_full.json` and `ladder.json` before starting; re-run and diff
+  after each slice.
+- Reproduce existing outputs exactly under existing defaults, so "unchanged" is checkable rather
+  than asserted.
+- Remove study-wide global state last, and deliberately. It is the highest-risk change: every
+  selector, feature and evaluation must agree on it, which is why it was global to begin with.
+
+## 9. Out of scope
+
+The model half — selectors, their context object, feature-family ablation, model inputs — is
+deferred. It is closer to a real interface already, and it can land independently.
+
+## 10. Remaining open question
+
+What is the *scope* of propagation — does an unmeasured input invalidate only the quantities that
+read it, or the whole run? An undefined population plainly should not invalidate an unrelated
+metric on the same dataset, but where that boundary sits is a choice.
