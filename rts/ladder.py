@@ -3,44 +3,51 @@
 Motivation
 ----------
 The deployment of interest is a test suite driving an embedded system across a boundary:
-Python tests send commands over serial/socket to firmware, so the changed code does not run in
-the test process. Four feature families that carry this benchmark die at once --
+Python tests send commands over serial/socket to firmware, so the changed code does not
+run in the test process. Four feature families that carry this benchmark die at once --
 
 * **coverage** cannot cross the boundary,
 * **filename / path proximity** assumes co-located, conventionally named unit tests,
-* **history** assumes a ``(file, test)`` pair recurs, which it does not at thousands of tests,
+* **history** assumes a ``(file, test)`` pair recurs, which it does not at thousands of
+  tests,
 * **text overlap** is reduced to protocol and feature vocabulary.
 
-This module removes those families one at a time and re-measures *every* selector, including
-SemIf, at each rung. The deliverable is a **degradation curve**: the question is not what any
-single number is, but whether the ordering changes as traceability is removed -- and in
-particular whether SemIf crosses the classical baselines.
+This module removes those families one at a time and re-measures *every* selector,
+including SemIf, at each rung. The deliverable is a **degradation curve**: the question is
+not what any single number is, but whether the ordering changes as traceability is
+removed -- and in particular whether SemIf crosses the classical baselines.
 
 Mechanism
 ---------
-Feature availability is modelled by *zeroing* the unavailable columns of ``X`` and zeroing
-``bm25``, rather than by dropping columns from the tree. A zeroed column is a feature that
-carries no information, which is exactly the target condition, and it keeps one code path for
-both the learned and the hand-built selectors. ``structural_rule`` therefore degrades to
-"shortest test first" once coverage and filename matching are gone, and ``coverage`` degrades to
-a constant -- which is the honest behaviour of a method whose input no longer exists.
+A rung is expressed as **the block with a family withheld**:
+``features.structured(..., block=STRUCTURED.without_families(*removed))``. The columns
+stay, because a rung must keep a stable column list for selectors that index by name, and
+they come out zeroed and *reported* as unmeasured.
+
+That is strictly better than the first pass, which copied the matrix and zeroed columns by
+comparing names against a list in this file. A name-based ablation is a silent-drift
+hazard: rename a column and the rung quietly stops removing anything, with no error and a
+plausible number. Withholding a family now goes through the same unmeasured path a
+genuinely absent capability takes, and the rung's own warnings say what was withheld.
 
 SemIf is a *text* model and is unaffected by the rung, because its scores are keyed on the
-(change, test) text pair. That is the point: the ladder shows the classical side falling away
-underneath a flat semantic line. Text is only removed at the last rung, where the tree is also
-evaluated without BM25 to give the true floor.
+(change, test) text pair. That is the point: the ladder shows the classical side falling
+away underneath a flat semantic line.
 
 Populations
 -----------
-``starved141``  141 held-out changes with a complete full-pool SemIf cache (see
-                ``scripts/complete_semif_full_cache.py``). Paired comparisons happen here.
-                NOTE: this is the population the *old* starved filter selected. Under corrected
-                full-suite labels the starved filter collapses (11 held-out faults at
-                ``failures <= 5``), because it was keyed on an under-counted failure history, so
-                this population is no longer interpretable as "starved" -- it is simply a
-                held-out subset, and is named for provenance only.
-``heldout530``  every held-out change. Classical selectors only, since SemIf has no full-pool
-                cache there.
+``heldout530``  every held-out fault-bearing change. Classical selectors only, since SemIf
+                has no full-pool cache there.
+``starved141``  held-out changes with a *complete* full-pool SemIf cache, so paired
+                comparisons have something to pair against. Its availability depends on an
+                artifact rather than on the dataset, so a missing cache makes it
+                **unmeasured** rather than smaller -- reporting fewer pairs as if they were
+                the population would be a different claim.
+
+                NOTE: the name is provenance only. Under corrected full-suite labels the
+                starved filter collapses (11 held-out faults at ``failures <= 5``), because
+                it was keyed on an under-counted failure history, so this is no longer
+                interpretable as "starved" -- it is simply a held-out subset.
 
 Usage
 -----
@@ -53,12 +60,22 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets, evaluate, features, models
-from .dataset import REQ_LABELS, Population, Unmeasured, is_unmeasured
+from . import (
+    accessors,
+    config,
+    contract,
+    datasets,
+    evaluate,
+    features,
+    models,
+    populations,
+    reporting,
+    splits,
+)
+from .contract import Policy, Unmeasured, Warning
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 PROBE = 0.05
@@ -66,37 +83,15 @@ N_BOOTSTRAP = 2000
 
 SEMIF_LADDER_CACHE = config.ARTIFACTS / "semif_scores_ladder141_full.jsonl"
 SEMIF_NAME = "semif_reranker"
-# The rungs and the SemIf cache reproduce the documented numbers by explicitly asking
-# for the features the harness would otherwise leave off (history on an imposed order)
-# and by opening the cache the paired comparison rests on.
 STRUCTURED_HISTORY = True
 
-# Feature families removed cumulatively. The rung name states what is *unavailable*.
-FAMILIES: dict[str, tuple[str, ...]] = {
-    "history": models.HISTORY_FEATURES,
-    "coverage": models.COVERAGE_FEATURES,
-    "traceability": models.TRACEABILITY_FEATURES,
-}
-
+#: Feature families removed cumulatively. The rung name states what is *unavailable*.
 RUNGS: list[tuple[str, tuple[str, ...]]] = [
     ("L0_all", ()),
     ("L1_nohistory", ("history",)),
     ("L2_nocoverage", ("history", "coverage")),
     ("L3_notrace", ("history", "coverage", "traceability")),
 ]
-
-
-def _mask_context(
-    X: np.ndarray, names: list[str], bm25: np.ndarray, removed: tuple[str, ...]
-) -> tuple[np.ndarray, np.ndarray]:
-    """Zero the columns of the removed families, and bm25 when text is removed."""
-    drop = {n for fam in removed for n in FAMILIES[fam]}
-    X_masked = X.copy()
-    for i, name in enumerate(names):
-        if name in drop:
-            X_masked[:, :, i] = 0.0
-    bm25_masked = bm25 if "text" not in removed else np.zeros_like(bm25)
-    return X_masked, bm25_masked
 
 
 def _cached_change_ids() -> set[str] | None:
@@ -112,63 +107,48 @@ def _cached_change_ids() -> set[str] | None:
     return ids
 
 
-def build_populations(ds: dataset.Dataset) -> dict[str, "Population | Unmeasured"]:
-    """The ladder's two averaging populations, declared rather than hard-coded.
-
-    A population declares its requirements; where a dataset -- or, here, an external
-    artifact -- cannot meet them, the population is *unavailable*, never silently
-    empty. ``starved141`` needs the SemIf cache to exist at all, so a missing cache
-    makes it unmeasured rather than making it smaller.
-
-    NOTE: ``starved141`` is a provenance name. Under corrected full-suite labels the
-    starved filter collapses (11 held-out faults at ``failures <= 5``), because it was
-    keyed on an under-counted failure history, so this population is no longer
-    interpretable as "starved" -- it is simply a held-out subset.
-    """
-    populations: dict[str, Population | Unmeasured] = {}
+def build_populations(
+    ds: contract.Dataset, split: splits.Split
+) -> dict[str, "populations.Population | Unmeasured"]:
+    """The ladder's two averaging populations, declared rather than hard-coded."""
+    out: dict[str, populations.Population | Unmeasured] = {}
 
     cached = _cached_change_ids()
     if cached is None:
-        populations["starved141"] = Unmeasured(
+        out["starved141"] = Unmeasured(
             requirement="artifact:semif_ladder_cache",
             note=(
-                f"{SEMIF_LADDER_CACHE.name} is missing, so the starved141 population "
-                "cannot exist; the paired comparison has no SemIf scores to pair against"
+                f"{SEMIF_LADDER_CACHE.name} is missing, so the starved141 population cannot "
+                "exist; the paired comparison has no SemIf scores to pair against"
             ),
         )
     else:
-        populations["starved141"] = Population(
+        ids = [ds.change_id(c) for c in ds.changes]
+        mask = np.array([cid in cached for cid in ids], dtype=bool)
+        out["starved141"] = populations.Population(
             name="starved141",
             note=(
                 "held-out changes with a complete full-pool SemIf cache; paired "
                 "comparisons happen here"
             ),
-            requires=frozenset({REQ_LABELS}),
-            predicate=lambda d: np.array(
-                [d.change_id(c) in cached for c in d.changes], dtype=bool
-            ),
+            needs=("labels",),
+            predicate=lambda _material, mask=mask: mask,
         )
 
-    populations["heldout530"] = Population(
+    out["heldout530"] = populations.Population(
         name="heldout530",
-        note="every held-out change; classical selectors only, since SemIf has no full-pool cache there",
-        requires=frozenset({REQ_LABELS}),
-        predicate=lambda d: d.fault_mask
-        & np.isin(np.arange(d.n_changes), d.test_idx),
+        note="every held-out fault-bearing change",
+        needs=("labels",),
+        predicate=lambda material: material["faults"],
     )
-    return populations
-
-
-def _population_rows(
-    ds: dataset.Dataset, populations: dict[str, "Population | Unmeasured"]
-) -> dict[str, np.ndarray | Unmeasured]:
-    out: dict[str, np.ndarray | Unmeasured] = {}
-    for name, spec in populations.items():
-        if isinstance(spec, Unmeasured):
-            out[name] = spec
-            continue
-        out[name] = spec.rows(ds, ds.test_idx)
     return out
+
+
+def _rung_block(removed: tuple[str, ...]) -> features.FeatureBlock:
+    """The structured block with the rung's families withheld."""
+    if not removed:
+        return features.STRUCTURED
+    return features.STRUCTURED.without_families(*removed)
 
 
 def _selectors(include_semif: bool) -> list[models.Selector]:
@@ -186,46 +166,50 @@ def _selectors(include_semif: bool) -> list[models.Selector]:
 
 def run_label_source(label_source: str, verbose: bool = True) -> dict:
     ds = datasets.marshmallow(labels=label_source)
-    X, names = features.structured_features(ds, history=STRUCTURED_HISTORY)
-    bm25 = features.build_bm25_scores(ds)
-    populations = _population_rows(ds, build_populations(ds))
-    candidates = dataset.candidate_mask(ds, "full")
+    split = splits.make_split(ds)
+    declared = build_populations(ds, split)
+    candidates = accessors.candidates(ds, "full")
 
     if verbose:
         print("=" * 78)
         print(f"TRACEABILITY LADDER -- labels={label_source}")
         print("=" * 78)
-        print(f"  changes {ds.n_changes}  tests {ds.n_tests}  held-out faults {len(ds.test_fault_idx)}")
-        for name, rows in populations.items():
-            size = "unmeasured" if is_unmeasured(rows) else len(rows)
-            print(f"  {name} {size}")
+        print(
+            f"  changes {ds.n_changes}  tests {ds.n_tests}  "
+            f"held-out faults {len(accessors.test_fault_idx(ds, split.test_idx))}"
+        )
+        for name, spec in declared.items():
+            if isinstance(spec, Unmeasured):
+                print(f"  {name}: unmeasured -- {spec.note}")
+            else:
+                print(f"  {name} {len(spec.rows(ds, split.test_idx))}")
 
     report: dict = {
         "labels": label_source,
         "n_changes": ds.n_changes,
         "n_tests": ds.n_tests,
-        "held_out_faults": int(len(ds.test_fault_idx)),
+        "held_out_faults": int(len(accessors.test_fault_idx(ds, split.test_idx))),
         "populations": {
-            k: (None if is_unmeasured(v) else int(len(v))) for k, v in populations.items()
+            k: (None if isinstance(v, Unmeasured) else len(v.rows(ds, split.test_idx)))
+            for k, v in declared.items()
         },
         "populations_unmeasured": {
-            k: v.to_dict() for k, v in populations.items() if is_unmeasured(v)
+            k: v.to_dict() for k, v in declared.items() if isinstance(v, Unmeasured)
         },
-        "dataset_declaration": {
-            "name": ds.name,
-            "ordering": ds.ordering().value,
-            "test_unit": ds.test_unit().value,
-            "capabilities": sorted(ds.capabilities()),
-            "semantics": dict(ds.semantics()),
-        },
-        "warnings": ds.warnings.to_list(),
+        "dataset_declaration": ds.declaration(),
         "rungs": {},
     }
 
     for rung, removed in RUNGS:
         t0 = time.perf_counter()
-        X_rung, bm25_rung = _mask_context(X, names, bm25, removed)
-        ctx = models.Context(ds=ds, X=X_rung, names=names, bm25=bm25_rung)
+        block = _rung_block(removed)
+        matrix = features.structured(ds, history=STRUCTURED_HISTORY, block=block)
+        ctx = models.Context(
+            ds=ds,
+            features=matrix,
+            split=split,
+            bm25=features.text.build_bm25_scores(ds),
+        )
         scores_by_name: dict[str, np.ndarray] = {}
         for selector in _selectors(include_semif=SEMIF_LADDER_CACHE.exists()):
             try:
@@ -233,16 +217,22 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
             except FileNotFoundError as exc:
                 if verbose:
                     print(f"  [skip] {selector.name}: {str(exc).splitlines()[0]}")
-        rung_report: dict = {"removed": list(removed), "selectors": {}, "comparisons": {}}
 
-        for pop_name, rows in populations.items():
-            if is_unmeasured(rows):
+        rung_report: dict = {
+            "removed": list(removed),
+            "withheld": [c for c, _ in matrix.unmeasured],
+            "warnings": [w.to_dict() for w in matrix.warnings],
+            "selectors": {},
+            "comparisons": {},
+        }
+
+        for pop_name, spec in declared.items():
+            if isinstance(spec, Unmeasured):
                 # Unavailable, not empty: record why and evaluate nothing, rather than
                 # reporting an average over a population that cannot exist.
-                if verbose:
-                    print(f"    {pop_name}: unmeasured -- {rows.note}")
-                rung_report["selectors"][pop_name] = {"unmeasured": rows.to_dict()}
+                rung_report["selectors"][pop_name] = {"unmeasured": spec.to_dict()}
                 continue
+            rows = spec.rows(ds, split.test_idx)
             has_semif = SEMIF_NAME in scores_by_name and pop_name == "starved141"
             table: dict[str, dict] = {}
             for name, scores in scores_by_name.items():
@@ -280,8 +270,8 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
                     }
                 rung_report["comparisons"]["starved141_vs_semif_b0.05"] = comps
 
-                # The headline quantity: SemIf's margin over the best classical selector,
-                # at every budget. A growing margin as rungs are removed is the hypothesis.
+                # The headline quantity: SemIf's margin over the best classical selector, at
+                # every budget. A growing margin as rungs are removed is the hypothesis.
                 classical = [n for n in table if n != SEMIF_NAME and n != "random"]
                 margins: dict[str, dict] = {}
                 for budget in BUDGETS:
@@ -299,8 +289,11 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
 
         report["rungs"][rung] = rung_report
         if verbose:
-            print(f"\n  [{rung}] removed={list(removed) or 'nothing'}  ({time.perf_counter()-t0:.1f}s)")
-            for pop_name in rung_report["selectors"]:
+            print(
+                f"\n  [{rung}] removed={list(removed) or 'nothing'}  "
+                f"({time.perf_counter()-t0:.1f}s)"
+            )
+            for pop_name in report["rungs"][rung]["selectors"]:
                 table = rung_report["selectors"][pop_name]
                 if "unmeasured" in table:
                     continue
@@ -335,8 +328,9 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--labels", nargs="*", default=["mutmut", "full"],
-                        choices=["mutmut", "full"])
+    parser.add_argument(
+        "--labels", nargs="*", default=["mutmut", "full"], choices=list(config.LABEL_SOURCES)
+    )
     args = parser.parse_args()
 
     out_path = config.ARTIFACTS / "ladder.json"

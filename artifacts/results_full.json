@@ -45,12 +45,25 @@
       "durations": "wall-clock from the mutmut stats file; hardware-dependent, so available but not comparable with a duration measured elsewhere"
     }
   },
+  "split": {
+    "fraction": 0.8,
+    "shuffle": false,
+    "effective_ordering": "imposed"
+  },
   "warnings": [
     {
       "code": "feature.history_on_imposed_order",
       "requirement": "ordering.observed",
       "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
-      "scope": "structured_features"
+      "scope": "features:history"
+    }
+  ],
+  "audit": [
+    {
+      "code": "split.contiguous_prefix_on_imposed_order",
+      "requirement": "ordering.observed",
+      "note": "a contiguous prefix on an imposed order is a well-defined partition but carries no temporal reading",
+      "scope": "split"
     }
   ],
   "results": {

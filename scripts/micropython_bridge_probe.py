@@ -131,14 +131,14 @@ def main() -> None:
     docs = [pool[k] for k in pool]
     keys = list(pool)
     index_of = {k: i for i, k in enumerate(keys)}
-    scorer = features.BM25Scorer().fit(docs)
+    scorer = features.text.BM25Scorer().fit(docs)
 
     rows: list[dict] = []
     for commit in commits:
         diff = sh(["git", "show", "--format=", "--unified=0", commit["sha"], "--", *SOURCE_DIRS])
         if not diff.strip():
             continue
-        change_tokens = set(features.tokenize(diff))
+        change_tokens = set(features.text.tokenize(diff))
         if not change_tokens:
             continue
         scores = scorer.score(diff)
@@ -150,7 +150,7 @@ def main() -> None:
             continue
         target_cols = {index_of[t] for t in targets}
         best_rank = min(rank_of[c] for c in target_cols)
-        overlaps = {t: len(change_tokens & set(features.tokenize(pool[t]))) for t in targets}
+        overlaps = {t: len(change_tokens & set(features.text.tokenize(pool[t]))) for t in targets}
 
         rows.append(
             {

@@ -14,7 +14,7 @@ coexist in one process -- the property §7's testability argument rests on.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import artifacts, config

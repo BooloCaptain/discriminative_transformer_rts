@@ -51,7 +51,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets
+from . import accessors, config, contract, datasets, populations, splits
 from .semif_runner import PairSet, build_pair_set, load_done_keys
 
 # The criterion for pairwise direct mode. Deliberately the same content as the
@@ -78,7 +78,7 @@ def load_direct_model(device: str = "auto"):
 
 
 def build_rows(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     pair_set: PairSet,
     criterion: str = CRITERION,
 ) -> list[dict]:
@@ -169,7 +169,7 @@ def score_batch_direct(model, tokenizer, prompts: list[str], slots: list[int], m
 def score_to_cache_direct(
     model,
     tokenizer,
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     pair_set: PairSet,
     out_path: Path,
     batch_size: int = 8,
@@ -262,11 +262,12 @@ def score_arm(
     device: str = "auto",
 ) -> dict:
     ds = datasets.marshmallow(order_seed=seed)
-    candidates = dataset.candidate_mask(ds, candidates_mode)
-    rows = ds.test_idx
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, candidates_mode)
+    rows = split.test_idx
     if starved_max_failures is not None:
-        mask = dataset.starved_mask(ds, max_failures=starved_max_failures)
-        rows = ds.test_idx[mask[ds.test_idx]]
+        mask = populations.starved_mask(ds, max_failures=starved_max_failures)
+        rows = split.test_idx[mask[split.test_idx]]
     if limit is not None:
         rows = rows[:limit]
     pair_set = build_pair_set(ds, rows, candidates)

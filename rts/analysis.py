@@ -28,7 +28,19 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets, evaluate, features, models, semif
+from . import (
+    accessors,
+    config,
+    contract,
+    datasets,
+    evaluate,
+    features,
+    models,
+    populations,
+    reporting,
+    semif,
+    splits,
+)
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10
@@ -38,23 +50,24 @@ MIN_BIN_FOR_PARTIAL = 8
 # --- sparsity axis ---------------------------------------------------------
 
 
-def sparsity_values(ds: dataset.Dataset) -> dict[int, float]:
+def sparsity_values(ds: contract.Dataset) -> dict[int, float]:
     """Failure count of each fault change's killing (file, test) pair.
 
-    Lower means less history: the pair has rarely or never failed before, which is
-    the proxy for a file that has not changed in years.
+    Lower means less history: the pair has rarely or never failed before, which is the
+    proxy for a file that has not changed in years.
     """
-    _, fails = dataset.pair_history_counts(ds)
+    _, fails = accessors.pair_history_counts(ds)
+    paths = accessors.change_paths(ds)
     out: dict[int, float] = {}
-    for i in ds.fault_idx:
+    for i in accessors.fault_idx(ds):
         i = int(i)
-        key = (ds.change_paths[i], ds.changes[i].killing_tests[0])
+        key = (paths[i], sorted(ds.killing_tests(ds.changes[i]))[0])
         out[i] = float(fails.get(key, 0))
     return out
 
 
 def sparsity_bins(
-    ds: dataset.Dataset, n_bins: int = N_BINS
+    ds: contract.Dataset, n_bins: int = N_BINS
 ) -> tuple[list[np.ndarray], list[dict]]:
     """Equal-count bins over fault changes, sparsest first."""
     values = sparsity_values(ds)
@@ -80,7 +93,7 @@ def sparsity_bins(
 
 def panel_a(
     scores: dict[str, np.ndarray],
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     bins: list[np.ndarray],
     budget: float,
     candidates: np.ndarray,
@@ -114,7 +127,7 @@ def panel_a(
 
 
 def panel_c(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     bins: list[np.ndarray],
     score_set: dict[str, np.ndarray],
     budget: float,
@@ -123,10 +136,9 @@ def panel_c(
     min_faults: int = 3,
 ) -> dict[str, list[float]]:
     """Mechanistic quantities per sparsity bin."""
-    ix = {n: i for i, n in enumerate(features.STRUCTURED_NAMES)}
-    X, _ = features.structured_features(ds, history=True)
-    covered = X[:, :, ix["covers_function"]]
-    name_match = X[:, :, ix["filename_stem_match"]]
+    matrix = features.structured(ds, history=True)
+    covered = matrix.column("covers_function")
+    name_match = matrix.column("filename_stem_match")
 
     funnel, cov_only, median_rank = [], [], []
     funnel_size, rank_in_funnel = [], []
@@ -141,7 +153,7 @@ def panel_c(
         evaluated = [int(i) for i in chunk if int(i) in held]
         held_counts.append(len(evaluated))
         for i in evaluated:
-            kill = ds.test_index[ds.changes[i].killing_tests[0]]
+            kill = ds.test_index[sorted(ds.killing_tests(ds.changes[i]))[0]]
             in_cov += int(covered[i, kill] > 0.5)
             in_funnel += int(covered[i, kill] > 0.5 and name_match[i, kill] > 0.5)
             # Rank of the killer under the lexical model, within candidates.
@@ -323,8 +335,9 @@ def _write_csv(rows: list[dict], path: Path) -> None:
 
 def run(n_bins: int = N_BINS) -> dict:
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "covered")
-    held = set(int(i) for i in ds.test_fault_idx)
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
+    held = set(int(i) for i in accessors.test_fault_idx(ds, split.test_idx))
 
     bins, meta = sparsity_bins(ds, n_bins)
     for m, chunk in zip(meta, bins):
@@ -336,9 +349,13 @@ def run(n_bins: int = N_BINS) -> dict:
               f"failures {m['failures_min']:.0f}-{m['failures_max']:.0f} "
               f"(median {m['failures_median']:.0f})")
 
-    X, names = features.structured_features(ds, history=True)
-    bm25 = features.build_bm25_scores(ds)
-    ctx = models.Context(ds=ds, X=X, names=names, bm25=bm25)
+    bm25 = features.text.build_bm25_scores(ds)
+    ctx = models.Context(
+        ds=ds,
+        features=features.structured(ds, history=True),
+        split=split,
+        bm25=bm25,
+    )
     classical = {
         s.name: s.scores(ctx) for s in models.default_selectors(include_semif=False)
     }

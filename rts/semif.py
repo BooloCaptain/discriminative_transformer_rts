@@ -35,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset
+from . import accessors, config, contract, features
 # Measured on a 3090 with no prefix reuse (prefix reuse is a direct-mode feature).
 DECISIONS_PER_SECOND = 1.86
 
@@ -60,7 +60,7 @@ def build_state(change_text: str, test_text: str) -> str:
 
 
 def build_pairs(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     change_rows: np.ndarray | None = None,
     candidates: np.ndarray | None = None,
     shuffle: bool = False,
@@ -74,9 +74,9 @@ def build_pairs(
     if change_rows is None:
         change_rows = np.arange(ds.n_changes)
     if candidates is None:
-        candidates = dataset.candidate_mask(ds, "covered")
+        candidates = accessors.candidates(ds, "covered")
 
-    texts = [dataset.change_query_text(ds, c) for c in ds.changes]
+    texts = [features.derived.change_query_text(ds, c) for c in ds.changes]
     if shuffle:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(texts))
@@ -187,7 +187,7 @@ def write_scores(records: list[dict], path: Path) -> Path:
     return path
 
 
-def load_scores(path: Path, ds: dataset.Dataset) -> np.ndarray:
+def load_scores(path: Path, ds: contract.Dataset) -> np.ndarray:
     """Load cached scores into a ``[n_changes, n_tests]`` matrix.
 
     Unscored pairs get a very low score so they sort last. Restricting to the
@@ -216,7 +216,7 @@ def load_scores(path: Path, ds: dataset.Dataset) -> np.ndarray:
             # mis-maps if the candidate pool changes (e.g. under full-suite labels, where the
             # pool grows from 1187 to 1189 and every later column shifts).
             if "change_id" in record and "test_nodeid" in record:
-                row = ds.change_index.get(record["change_id"])
+                row = accessors.change_index(ds).get(record["change_id"])
                 # The dataset knows whether its pool was rebuilt from a fresh
                 # collection and therefore needs unstable parametrization ids
                 # collapsed; the loader does not have to guess from a global.
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     rows_n = np.arange(ds.n_changes)
     if args.max_changes:
         rows_n = rows_n[: args.max_changes]
-    cand = dataset.candidate_mask(ds, args.candidates)
+    cand = accessors.candidates(ds, args.candidates)
 
     rows, index = build_pairs(
         ds, change_rows=rows_n, candidates=cand, shuffle=args.shuffle

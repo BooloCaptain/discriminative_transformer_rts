@@ -28,17 +28,18 @@
         "durations": "wall-clock from the mutmut stats file; hardware-dependent, so available but not comparable with a duration measured elsewhere"
       }
     },
-    "warnings": [
-      {
-        "code": "feature.history_on_imposed_order",
-        "requirement": "ordering.observed",
-        "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
-        "scope": "structured_features"
-      }
-    ],
     "rungs": {
       "L0_all": {
         "removed": [],
+        "withheld": [],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          }
+        ],
         "selectors": {
           "starved141": {
             "random": {
@@ -390,6 +391,37 @@
       "L1_nohistory": {
         "removed": [
           "history"
+        ],
+        "withheld": [
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
         ],
         "selectors": {
           "starved141": {
@@ -743,6 +775,58 @@
         "removed": [
           "history",
           "coverage"
+        ],
+        "withheld": [
+          "covers_function",
+          "n_covering_tests",
+          "coverage_rank_prior",
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'covers_function' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:covers_function"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_covering_tests' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_covering_tests"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'coverage_rank_prior' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:coverage_rank_prior"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
         ],
         "selectors": {
           "starved141": {
@@ -1098,6 +1182,79 @@
           "coverage",
           "traceability"
         ],
+        "withheld": [
+          "covers_function",
+          "n_covering_tests",
+          "coverage_rank_prior",
+          "path_distance",
+          "n_tests_in_test_file",
+          "filename_stem_match",
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'covers_function' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:covers_function"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_covering_tests' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_covering_tests"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'coverage_rank_prior' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:coverage_rank_prior"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'path_distance' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:path_distance"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_tests_in_test_file' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_tests_in_test_file"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'filename_stem_match' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:filename_stem_match"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
+        ],
         "selectors": {
           "starved141": {
             "random": {
@@ -1193,9 +1350,9 @@
             "xgboost_struct_lex": {
               "recall": {
                 "0.01": 0.2979,
-                "0.05": 0.4965,
-                "0.10": 0.6454,
-                "0.20": 0.766
+                "0.05": 0.461,
+                "0.10": 0.6028,
+                "0.20": 0.7872
               },
               "k": {
                 "0.01": 12,
@@ -1209,8 +1366,8 @@
               "recall": {
                 "0.01": 0.0071,
                 "0.05": 0.0638,
-                "0.10": 0.0993,
-                "0.20": 0.4752
+                "0.10": 0.1135,
+                "0.20": 0.4681
               },
               "k": {
                 "0.01": 12,
@@ -1329,10 +1486,10 @@
             },
             "xgboost_struct_lex": {
               "recall": {
-                "0.01": 0.5302,
-                "0.05": 0.7716,
-                "0.10": 0.8556,
-                "0.20": 0.9116
+                "0.01": 0.5345,
+                "0.05": 0.7543,
+                "0.10": 0.8384,
+                "0.20": 0.9159
               },
               "k": {
                 "0.01": 12,
@@ -1344,10 +1501,10 @@
             },
             "xgboost_struct": {
               "recall": {
-                "0.01": 0.2651,
-                "0.05": 0.5302,
-                "0.10": 0.6853,
-                "0.20": 0.8362
+                "0.01": 0.2608,
+                "0.05": 0.5216,
+                "0.10": 0.681,
+                "0.20": 0.8341
               },
               "k": {
                 "0.01": 12,
@@ -1404,9 +1561,9 @@
               "semif_ahead": true
             },
             "xgboost_struct_lex": {
-              "delta_baseline_minus_semif": -0.1844,
-              "lo": -0.2695,
-              "hi": -0.0993,
+              "delta_baseline_minus_semif": -0.2199,
+              "lo": -0.305,
+              "hi": -0.1418,
               "p": 0.0,
               "semif_ahead": true
             },
@@ -1434,15 +1591,15 @@
           },
           "0.10": {
             "best_classical": "xgboost_struct_lex",
-            "best_recall": 0.6454,
+            "best_recall": 0.6028,
             "semif_recall": 0.7447,
-            "semif_margin": 0.0993
+            "semif_margin": 0.1419
           },
           "0.20": {
             "best_classical": "xgboost_struct_lex",
-            "best_recall": 0.766,
+            "best_recall": 0.7872,
             "semif_recall": 0.8369,
-            "semif_margin": 0.0709
+            "semif_margin": 0.0497
           }
         }
       }
@@ -1478,17 +1635,18 @@
         "pool": "canonical pool of the full-suite run; wall-clock parametrization ids are collapsed so the pool is stable across collections"
       }
     },
-    "warnings": [
-      {
-        "code": "feature.history_on_imposed_order",
-        "requirement": "ordering.observed",
-        "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
-        "scope": "structured_features"
-      }
-    ],
     "rungs": {
       "L0_all": {
         "removed": [],
+        "withheld": [],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          }
+        ],
         "selectors": {
           "starved141": {
             "random": {
@@ -1840,6 +1998,37 @@
       "L1_nohistory": {
         "removed": [
           "history"
+        ],
+        "withheld": [
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
         ],
         "selectors": {
           "starved141": {
@@ -2193,6 +2382,58 @@
         "removed": [
           "history",
           "coverage"
+        ],
+        "withheld": [
+          "covers_function",
+          "n_covering_tests",
+          "coverage_rank_prior",
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'covers_function' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:covers_function"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_covering_tests' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_covering_tests"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'coverage_rank_prior' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:coverage_rank_prior"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
         ],
         "selectors": {
           "starved141": {
@@ -2548,6 +2789,79 @@
           "coverage",
           "traceability"
         ],
+        "withheld": [
+          "covers_function",
+          "n_covering_tests",
+          "coverage_rank_prior",
+          "path_distance",
+          "n_tests_in_test_file",
+          "filename_stem_match",
+          "test_failure_rate_cum",
+          "test_runs_cum",
+          "test_last_failure_age"
+        ],
+        "warnings": [
+          {
+            "code": "feature.history_on_imposed_order",
+            "requirement": "ordering.observed",
+            "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+            "scope": "features:history"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'covers_function' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:covers_function"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_covering_tests' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_covering_tests"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'coverage_rank_prior' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:coverage_rank_prior"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'path_distance' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:path_distance"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'n_tests_in_test_file' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:n_tests_in_test_file"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'filename_stem_match' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:filename_stem_match"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_failure_rate_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_failure_rate_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_runs_cum' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_runs_cum"
+          },
+          {
+            "code": "feature.withheld",
+            "requirement": "withheld",
+            "note": "'test_last_failure_age' withheld by the caller; coerced to 0 at the model-input boundary",
+            "scope": "block:structured:test_last_failure_age"
+          }
+        ],
         "selectors": {
           "starved141": {
             "random": {
@@ -2643,9 +2957,9 @@
             "xgboost_struct_lex": {
               "recall": {
                 "0.01": 0.3688,
-                "0.05": 0.5816,
-                "0.10": 0.6879,
-                "0.20": 0.7872
+                "0.05": 0.617,
+                "0.10": 0.6596,
+                "0.20": 0.773
               },
               "k": {
                 "0.01": 12,
@@ -2657,10 +2971,10 @@
             },
             "xgboost_struct": {
               "recall": {
-                "0.01": 0.234,
-                "0.05": 0.3333,
+                "0.01": 0.2695,
+                "0.05": 0.3617,
                 "0.10": 0.4113,
-                "0.20": 0.5035
+                "0.20": 0.5106
               },
               "k": {
                 "0.01": 12,
@@ -2779,10 +3093,10 @@
             },
             "xgboost_struct_lex": {
               "recall": {
-                "0.01": 0.5343,
-                "0.05": 0.6931,
-                "0.10": 0.7725,
-                "0.20": 0.8433
+                "0.01": 0.5408,
+                "0.05": 0.7146,
+                "0.10": 0.7618,
+                "0.20": 0.8455
               },
               "k": {
                 "0.01": 12,
@@ -2794,10 +3108,10 @@
             },
             "xgboost_struct": {
               "recall": {
-                "0.01": 0.3906,
-                "0.05": 0.5172,
-                "0.10": 0.6159,
-                "0.20": 0.6717
+                "0.01": 0.4013,
+                "0.05": 0.5343,
+                "0.10": 0.618,
+                "0.20": 0.6845
               },
               "k": {
                 "0.01": 12,
@@ -2854,16 +3168,16 @@
               "semif_ahead": true
             },
             "xgboost_struct_lex": {
-              "delta_baseline_minus_semif": -0.2766,
-              "lo": -0.3688,
-              "hi": -0.1915,
+              "delta_baseline_minus_semif": -0.2411,
+              "lo": -0.3333,
+              "hi": -0.156,
               "p": 0.0,
               "semif_ahead": true
             },
             "xgboost_struct": {
-              "delta_baseline_minus_semif": -0.5248,
-              "lo": -0.617,
-              "hi": -0.4255,
+              "delta_baseline_minus_semif": -0.4965,
+              "lo": -0.5887,
+              "hi": -0.3972,
               "p": 0.0,
               "semif_ahead": true
             }

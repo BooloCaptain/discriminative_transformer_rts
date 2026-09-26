@@ -1,9 +1,16 @@
 """RTS selectors: statistical baselines, XGBoost, and the SemIf reranker.
 
-Every selector implements ``scores(ctx) -> [n_changes, n_tests]``. Higher is
-better; evaluation takes the top ``k`` per change. Selectors never see labels for
-changes they are being evaluated on -- the structured features are already
-cumulative, and XGBoost is fit on the training window only.
+Every selector implements ``scores(ctx) -> [n_changes, n_tests]``. Higher is better;
+evaluation takes the top ``k`` per change. Selectors never see labels for changes they
+are being evaluated on -- the structured features are already cumulative, and XGBoost is
+fit on the training window only.
+
+The context carries a :class:`~rts.features.block.FeatureMatrix` rather than a bare
+``(X, names)`` pair. That is what lets a selector ask for a column by name and fail
+loudly if it was renamed, instead of doing ``names.index(...)`` and silently reading
+whatever moved into that slot. It also carries the matrix's warnings, so a model-input
+coercion -- a column that could not be measured and was zeroed -- travels to the layer
+that produced the number rather than being printed and forgotten.
 """
 
 from __future__ import annotations
@@ -13,48 +20,47 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, semif
-from .dataset import Unmeasured, Warning, Warnings
+from . import accessors, config, contract, features, semif, splits
+from .contract import Dataset, Unmeasured, Warning
 
-# Cumulative history features, i.e. everything derived from prior change outcomes.
-# The names come from the contract's column list so there is one definition of what
-# "the history family" is, rather than a second list here that can drift.
-HISTORY_FEATURES = dataset.HISTORY_COLUMNS
-
-# Per-test coverage features. In a huge codebase with long-running integration
-# tests, obtaining these means running the suite you are trying to avoid, so a
-# deployment may genuinely not have them.
-COVERAGE_FEATURES = dataset.COVERAGE_COLUMNS
-
-# Features that exist only because tests are co-located with the code, conventionally
-# named, and instrumented in the same process. None of these survive a boundary that puts
-# the changed code outside the test process -- which is the regime of interest, see
-# plan_next_steps.md. Kept as a named family so the traceability ladder can remove them as
-# a group.
-TRACEABILITY_FEATURES = (
-    "filename_stem_match",
-    "path_distance",
-    "n_tests_in_file",
-)
+# Feature families, taken from the block's own declaration so there is one definition of
+# what "the history family" is rather than a second list here that can drift from it.
+HISTORY_FEATURES = features.STRUCTURED.family("history")
+COVERAGE_FEATURES = features.STRUCTURED.family("coverage")
+TRACEABILITY_FEATURES = features.STRUCTURED.family("traceability")
 
 
 @dataclass
 class Context:
-    """Everything a selector may read."""
+    """Everything a selector may read.
 
-    ds: dataset.Dataset
-    X: np.ndarray  # structured features [n_changes, n_tests, n_features]
-    names: list[str]
+    The split is here rather than derived inside a selector because it is evaluation
+    configuration: the experiment chooses it, every selector in a run must see the same
+    one, and a selector that invented its own would train and be evaluated on different
+    partitions without saying so.
+    """
+
+    ds: Dataset
+    features: features.FeatureMatrix
+    split: "splits.Split"
     bm25: np.ndarray  # [n_changes, n_tests]
     extras: dict = field(default_factory=dict)
-    # Warnings raised while materialising the features -- including every column that
-    # is unmeasured and therefore coerced to 0 at this, the model-input boundary.
-    # They travel with the context rather than being printed, so the layer that could
-    # act on them can still see them.
-    warnings: tuple[Warning, ...] = ()
+
+    @property
+    def X(self) -> np.ndarray:
+        return self.features.X
+
+    @property
+    def names(self) -> list[str]:
+        return list(self.features.columns)
 
     def feature(self, name: str) -> np.ndarray:
-        return self.X[:, :, self.names.index(name)]
+        return self.features.column(name)
+
+    @property
+    def warnings(self) -> tuple[Warning, ...]:
+        """Warnings raised while materialising the features for this context."""
+        return self.features.warnings
 
 
 class Selector:
@@ -68,9 +74,8 @@ class Selector:
     def _prefer_small_coverage(covered: np.ndarray, n_covering: np.ndarray) -> np.ndarray:
         """Rank covered tests first, then by ascending coverage-set size.
 
-        Ties inside a coverage set are otherwise arbitrary, and a test whose
-        function is covered by 3 tests is far more likely to be the killer than
-        one in a set of 761.
+        Ties inside a coverage set are otherwise arbitrary, and a test whose function is
+        covered by 3 tests is far more likely to be the killer than one in a set of 761.
         """
         return np.where(covered > 0, 1e6, 0.0) - n_covering
 
@@ -89,8 +94,8 @@ class RandomSelector(Selector):
 class RecencySelector(Selector):
     """Select tests that failed most recently. Expected to be uninformative.
 
-    The synthetic history has no real temporal structure, so this baseline exists
-    to be reported as a limitation of the setup, not as a finding about recency.
+    The synthetic history has no real temporal structure, so this baseline exists to be
+    reported as a limitation of the setup, not as a finding about recency.
     """
 
     name = "recency"
@@ -121,10 +126,10 @@ class StructuralRuleSelector(Selector):
     """Hand-built rule: covered tests whose file name matches the changed module.
 
     This exists because it turns out to explain most of the achievable recall. The
-    conjunction ``covers_function AND filename_stem_match`` narrows the suite to a
-    median of 9 candidate tests, so most of the task is solved by cheap structural
-    funneling rather than by anything semantic. Any model claiming to work must be
-    measured against this, not just against random.
+    conjunction ``covers_function AND filename_stem_match`` narrows the suite to a median
+    of 9 candidate tests, so most of the task is solved by cheap structural funneling
+    rather than by anything semantic. Any model claiming to work must be measured against
+    this, not just against random.
     """
 
     name = "structural_rule"
@@ -149,17 +154,21 @@ class LexicalSelector(Selector):
 class XGBoostSelector(Selector):
     """Gradient-boosted trees on the structured features.
 
-    Two independent switches:
+    Three independent switches:
 
-    * ``include_lexical`` adds the BM25 score as an input column. This is the cell
-      that separates "the features matter" from "the model matters": if trees
-      given the lexical signal match the transformer, the transformer's semantic
-      machinery is not doing the work.
-    * ``exclude_history`` drops the cumulative history features. This isolates how
-      much of the score is failure-history memorisation rather than coverage or
-      static structure -- important here because mutation testing revisits the
-      same function many times, so a (function, killing-test) pair recurs far
-      more often than it would in real evolution.
+    * ``include_lexical`` adds the BM25 score as an input column. This is the cell that
+      separates "the features matter" from "the model matters": if trees given the lexical
+      signal match the transformer, the transformer's semantic machinery is not doing the
+      work.
+    * ``exclude_history`` drops the cumulative history features. This isolates how much of
+      the score is failure-history memorisation rather than coverage or static structure
+      -- important here because mutation testing revisits the same function many times, so
+      a (function, killing-test) pair recurs far more often than it would in real
+      evolution.
+    * ``exclude_coverage`` drops the coverage features, which is the target regime: where
+      the changed code does not run in the test process there is no coverage to have.
+    * ``exclude`` drops arbitrary columns by name, so an ablation that is not one of the
+      named families does not need a new flag.
     """
 
     def __init__(
@@ -167,6 +176,7 @@ class XGBoostSelector(Selector):
         include_lexical: bool = False,
         exclude_history: bool = False,
         exclude_coverage: bool = False,
+        exclude: tuple[str, ...] = (),
         n_estimators: int = 300,
         max_depth: int = 6,
         learning_rate: float = 0.15,
@@ -177,21 +187,20 @@ class XGBoostSelector(Selector):
         self.include_lexical = include_lexical
         self.exclude_history = exclude_history
         self.exclude_coverage = exclude_coverage
+        self.exclude = tuple(exclude)
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
         self.seed = seed
-        # P5: extra per-(change, test) score columns supplied by another model.
-        # The canonical use is adding the SemIf reranker score to the structured
-        # features to test whether the transformer is redundant given BM25 plus
-        # cheap structure.
+        # P5: extra per-(change, test) score columns supplied by another model. The
+        # canonical use is adding the SemIf reranker score to the structured features to
+        # test whether the transformer is redundant given BM25 plus cheap structure.
         self.extra_score_files = dict(extra_score_files or {})
-        # When set, XGBoost trains only on the candidate pairs it will actually be
-        # asked to rank. Training over the whole suite (the historical default)
-        # lets it spend its capacity learning the candidate mask, which is
-        # constant at evaluation time -- that is what produced the once-reported
-        # 0.71 importance on ``covers_function``. None preserves the old behaviour
-        # so existing documented numbers stay reproducible.
+        # When set, XGBoost trains only on the candidate pairs it will actually be asked to
+        # rank. Training over the whole suite (the historical default) lets it spend its
+        # capacity learning the candidate mask, which is constant at evaluation time -- that
+        # is what produced the once-reported 0.71 importance on ``covers_function``. None
+        # preserves the old behaviour so existing documented numbers stay reproducible.
         self.candidates_mode = candidates_mode
         parts = ["xgboost"]
         parts.append("struct" if not exclude_history else "static")
@@ -207,7 +216,7 @@ class XGBoostSelector(Selector):
         self._extra_cache: dict[str, np.ndarray] = {}
 
     def _dropped(self) -> set[str]:
-        dropped: set[str] = set()
+        dropped: set[str] = set(self.exclude)
         if self.exclude_history:
             dropped |= set(HISTORY_FEATURES)
         if self.exclude_coverage:
@@ -233,8 +242,8 @@ class XGBoostSelector(Selector):
     ) -> np.ndarray:
         """Flattened design matrix over (change, test) pairs.
 
-        ``cols_mask`` (shape ``[len(rows), n_tests]``) restricts the output to a
-        subset of the pairs, which is how candidate-only training is implemented.
+        ``cols_mask`` (shape ``[len(rows), n_tests]``) restricts the output to a subset of
+        the pairs, which is how candidate-only training is implemented.
         """
         keep = self._kept_columns(ctx)
         block = ctx.X[rows][:, :, keep]
@@ -251,12 +260,12 @@ class XGBoostSelector(Selector):
     def scores(self, ctx: Context) -> np.ndarray:
         import xgboost as xgb
 
-        train_rows = ctx.ds.train_idx
+        train_rows = ctx.split.train_idx
         train_mask = None
         if self.candidates_mode is not None:
-            train_mask = dataset.candidate_mask(ctx.ds, self.candidates_mode)[train_rows]
+            train_mask = accessors.candidates(ctx.ds, self.candidates_mode)[train_rows]
         X_train = self._design(ctx, train_rows, train_mask)
-        labels = ctx.ds.labels[train_rows]
+        labels = accessors.labels(ctx.ds)[train_rows]
         y_train = (labels[train_mask] if train_mask is not None else labels).reshape(-1)
 
         model = xgb.XGBClassifier(
@@ -294,9 +303,9 @@ class XGBoostSelector(Selector):
 class SemIfSelector(Selector):
     """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
 
-    Scoring is expensive (~1.9 decisions/s) and needs the SemIf checkout plus the
-    checkpoint, so it is computed once by ``rts.semif`` and cached. See
-    implementation.md for the exact pinned configuration.
+    Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is
+    computed once by ``rts.semif`` and cached. See implementation.md for the pinned
+    configuration.
     """
 
     name = "semif_reranker"

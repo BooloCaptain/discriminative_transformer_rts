@@ -1,17 +1,10 @@
 """Lexical features: BM25 between the changed lines and the test source.
 
-The structured, cumulative features used to live here. They are now harness functions
-over the dataset contract (see :mod:`rts.dataset`), because they are defined for
-*every* dataset rather than being computed once for this SUT -- and keeping one
-implementation is what makes an identical statistic mean an identical quantity across
-datasets.
-
-What remains here is the **unstructured / lexical** family, which is also the cheapest
-competing explanation for a transformer win: token overlap between the changed lines
-and the test source. It is a harness function too, built on the contract's
-``change_query_text`` and ``test_source`` primitives, so it works on any dataset.
-
-Also here: the tokenizer the lexical baseline and the BugsInPy bridge audit share.
+The cheapest competing explanation for a transformer win, and therefore a required
+baseline rather than an optional extra. It is also a harness function over the
+contract's ``change_query_text`` and ``test_source`` primitives, so it works on any
+dataset -- which is what lets the same BM25 numbers be compared across the mutation SUT
+and the real-bug corpus.
 """
 
 from __future__ import annotations
@@ -19,21 +12,12 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
+from typing import Sequence
 
 import numpy as np
 
-from . import dataset as contract
-
-# Re-exported so callers that ask the feature layer what the columns of ``X`` are
-# keep working, and so there is one list rather than two that can drift.
-from .dataset import (  # noqa: F401
-    COVERAGE_COLUMNS,
-    DURATION_COLUMNS,
-    HISTORY_COLUMNS,
-    STRUCTURED_NAMES,
-    change_query_text,
-    structured_features,
-)
+from .. import accessors
+from ..contract import Dataset
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 KEYWORDS = {
@@ -53,9 +37,6 @@ def tokenize(text: str) -> list[str]:
     boilerplate that appears in every test and would swamp the lexical signal.
     """
     return [t.lower() for t in TOKEN_RE.findall(text) if t.lower() not in KEYWORDS]
-
-
-# --- BM25 -----------------------------------------------------------------
 
 
 class BM25Scorer:
@@ -115,36 +96,38 @@ class BM25Scorer:
         return out
 
 
-def test_documents(ds: contract.Dataset) -> list[str]:
+def test_documents(ds: Dataset) -> list[str]:
     """The test side of every pair: one document per test in the pool.
 
     ``test_source`` returning ``None`` and returning ``""`` are different states, and
     both become an empty document here -- the difference is preserved for the size
     features, not for a lexical score, which has nothing to read either way.
     """
-    return [ds.test_source(t) or "" for t in ds.test_ids]
+    return [accessors.test_source(ds, t) or "" for t in ds.test_ids]
 
 
-def change_documents(ds: contract.Dataset) -> list[str]:
+def change_documents(ds: Dataset) -> list[str]:
     """The change side of every pair: added plus removed lines."""
-    return [contract.change_query_text(ds, c) for c in ds.changes]
+    from .derived import change_query_text
+
+    return [change_query_text(ds, c) for c in ds.changes]
 
 
 def build_bm25_scores(
-    ds: contract.Dataset,
+    ds: Dataset,
     shuffle_changes: bool = False,
     shuffle_tests: bool = False,
     seed: int = 20260924,
 ) -> np.ndarray:
     """``[n_changes, n_tests]`` BM25 score of the change text against each test.
 
-    Two ablation switches, both of which destroy one half of the pair while
-    preserving its distribution:
+    Two ablation switches, both of which destroy one half of the pair while preserving
+    its distribution:
 
-    * ``shuffle_changes`` --- permute the change text across changes. If recall
-      barely drops, the model was exploiting a change-independent test prior.
-    * ``shuffle_tests`` --- permute the test documents. The symmetric check: if
-      recall barely drops, the change side is not doing any work.
+    * ``shuffle_changes`` --- permute the change text across changes. If recall barely
+      drops, the model was exploiting a change-independent test prior.
+    * ``shuffle_tests`` --- permute the test documents. The symmetric check: if recall
+      barely drops, the change side is not doing any work.
     """
     docs = test_documents(ds)
     if shuffle_tests:
@@ -163,31 +146,28 @@ def build_bm25_scores(
     raw = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
     for i, text in enumerate(texts):
         raw[i] = scorer.score(text)
-    # With shuffled documents, position p holds the text of a different test, so
-    # keeping the score at position p is precisely the ablation: test p is scored
-    # against the wrong test's source. Mapping the scores back would undo it.
+    # With shuffled documents, position p holds the text of a different test, so keeping
+    # the score at position p is precisely the ablation: test p is scored against the
+    # wrong test's source. Mapping the scores back would undo it.
     return raw
 
 
-if __name__ == "__main__":
-    import time
+def bm25_over(pairs: Sequence[tuple[str, str]], query: str) -> np.ndarray:
+    """BM25 of one query against an explicit document list.
 
-    from . import datasets
+    Used by the BugsInPy arm, which fits the scorer per bug on that bug's own pool: a
+    global index over eight projects would make a term's idf depend on the other seven,
+    which is a different quantity from the one the marshmallow arm reports.
+    """
+    return BM25Scorer().fit(list(pairs)).score(query)
 
-    ds = datasets.marshmallow()
-    t0 = time.perf_counter()
-    X, names = structured_features(ds, history=True)
-    t1 = time.perf_counter()
-    print(f"structured X: {X.shape} {X.nbytes / 1e6:.1f} MB in {t1 - t0:.1f}s")
-    for k, name in enumerate(names):
-        col = X[:, :, k]
-        print(f"  {name:>24}: min {col.min():.3f}  max {col.max():.3f}  mean {col.mean():.3f}")
 
-    t0 = time.perf_counter()
-    bm = build_bm25_scores(ds)
-    t1 = time.perf_counter()
-    print(f"bm25: {bm.shape} in {t1 - t0:.1f}s")
-    faults = ds.fault_idx
-    hit = [bm[i, ds.test_index[t]] for i in faults for t in ds.killing_tests(ds.changes[i])]
-    print(f"  mean bm25 on killing tests: {np.mean(hit):.3f}")
-    print(f"  mean bm25 overall        : {bm.mean():.3f}")
+__all__ = [
+    "BM25Scorer",
+    "KEYWORDS",
+    "bm25_over",
+    "build_bm25_scores",
+    "change_documents",
+    "test_documents",
+    "tokenize",
+]

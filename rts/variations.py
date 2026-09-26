@@ -40,7 +40,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets, evaluate, features, models, semif
+from . import (
+    accessors, config, contract, datasets, evaluate, features, models,
+    populations, semif, splits,
+)
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 PROBE = 0.05
@@ -55,12 +58,11 @@ STRUCTURED_HISTORY = True
 # --- shared helpers --------------------------------------------------------
 
 
-def build_context(ds: dataset.Dataset) -> models.Context:
-    X, names = features.structured_features(ds, history=STRUCTURED_HISTORY)
-    bm25 = features.build_bm25_scores(ds)
-    return models.Context(
-        ds=ds, X=X, names=names, bm25=bm25, warnings=tuple(ds.warnings)
-    )
+def build_context(ds: contract.Dataset) -> models.Context:
+    matrix = features.structured(ds, history=STRUCTURED_HISTORY)
+    split = splits.make_split(ds)
+    bm25 = features.text.build_bm25_scores(ds)
+    return models.Context(ds=ds, features=matrix, split=split, bm25=bm25)
 
 
 def rank_normalize(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
@@ -87,7 +89,7 @@ def rank_average(*score_matrices: np.ndarray, candidates: np.ndarray) -> np.ndar
 
 
 def eval_group(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     rows: np.ndarray,
     candidates: np.ndarray,
     scores_by_name: dict[str, np.ndarray],
@@ -151,7 +153,7 @@ def _table(group: dict, title: str, name_width: int = 34) -> str:
     return "\n".join(lines)
 
 
-def _selectors(ds: dataset.Dataset, ctx: models.Context, candidates_mode: str) -> dict[str, np.ndarray]:
+def _selectors(ds: contract.Dataset, ctx: models.Context, candidates_mode: str) -> dict[str, np.ndarray]:
     """The classical reference arms, all trained on the same candidate pairs."""
     return {
         "random": models.RandomSelector().scores(ctx),
@@ -221,9 +223,10 @@ def full_starved(max_failures: int = 2) -> dict:
         raise FileNotFoundError(f"missing {cache}; run the starved full-suite scoring arm first")
 
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "full")
-    mask = dataset.starved_mask(ds, max_failures=max_failures)
-    rows = ds.test_idx[mask[ds.test_idx]]
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "full")
+    mask = populations.starved_mask(ds, max_failures=max_failures)
+    rows = split.test_idx[mask[split.test_idx]]
     ctx = build_context(ds)
 
     scores = _selectors(ds, ctx, "full")
@@ -264,7 +267,7 @@ def full_starved(max_failures: int = 2) -> dict:
         "experiment": "full_starved",
         "max_failures": max_failures,
         "changes": int(len(rows)),
-        "faults": int(sum(1 for i in rows if ds.changes[i].killing_tests)),
+        "faults": int(sum(1 for i in rows if ds.killing_tests(ds.changes[i]))),
         "candidates": "full",
         **group,
     }
@@ -293,8 +296,9 @@ def p5_redundancy() -> dict:
     the reduced-window SemIf scores exist.
     """
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "covered")
-    rows = ds.test_idx
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
+    rows = split.test_idx
     ctx = build_context(ds)
 
     base = _selectors(ds, ctx, "covered")
@@ -387,7 +391,7 @@ def _fit_predict(
         colsample_bytree=0.8, min_child_weight=5, tree_method="hist", n_jobs=-1,
         random_state=seed, eval_metric="logloss",
     )
-    model.fit(design(train_rows, mask), ctx.ds.labels[train_rows][mask].reshape(-1))
+    model.fit(design(train_rows, mask), accessors.labels(ctx.ds)[train_rows][mask].reshape(-1))
     X_all = design(np.arange(ctx.ds.n_changes), None)
     matrix = model.predict_proba(X_all)[:, 1].reshape(ctx.ds.n_changes, ctx.ds.n_tests)
     return matrix, model
@@ -410,9 +414,10 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
     history, plus BM25), and ``struct_lex`` is the full feature set.
     """
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "covered")
+    held_split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
     ctx = build_context(ds)
-    held = ds.test_idx
+    held = held_split.test_idx
     split = int(round(len(held) * (1.0 - eval_fraction)))
     train_rows, eval_rows = held[:split], held[split:]
     semif_scores = semif.load_scores(config.SEMIF_SCORES_FILE, ds)
@@ -468,7 +473,7 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
         "candidates": "covered",
         "train_changes": int(len(train_rows)),
         "eval_changes": int(len(eval_rows)),
-        "eval_faults": int(sum(1 for i in eval_rows if ds.changes[i].killing_tests)),
+        "eval_faults": int(sum(1 for i in eval_rows if ds.killing_tests(ds.changes[i]))),
         "family_tests": family_tests,
         "importances": importances,
         **group,
@@ -490,9 +495,10 @@ def full_starved_seeds(seeds: tuple[int, ...] = (1, 2, 3, 4)) -> dict:
     """
     cache = config.ARTIFACTS / "semif_scores_starved2_full.jsonl"
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "full")
-    mask = dataset.starved_mask(ds, max_failures=2)
-    rows = ds.test_idx[mask[ds.test_idx]]
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "full")
+    mask = populations.starved_mask(ds, max_failures=2)
+    rows = split.test_idx[mask[split.test_idx]]
     ctx = build_context(ds)
     semif_scores = semif.load_scores(cache, ds)
     semif_hits = {
@@ -546,7 +552,8 @@ def p2_instruction(max_failures: int = 5) -> dict:
     would show up as a difference between the two thresholds.
     """
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "covered")
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
     ctx = build_context(ds)
 
     base_scores = {
@@ -569,12 +576,12 @@ def p2_instruction(max_failures: int = 5) -> dict:
 
     groups: dict[str, dict] = {}
     for threshold in (max_failures, 2):
-        mask = dataset.starved_mask(ds, max_failures=threshold)
-        rows = ds.test_idx[mask[ds.test_idx]]
+        mask = populations.starved_mask(ds, max_failures=threshold)
+        rows = split.test_idx[mask[split.test_idx]]
         key = f"starved{threshold}"
         groups[key] = eval_group(ds, rows, candidates, scores, reference=reference)
         groups[key]["changes"] = int(len(rows))
-        groups[key]["faults"] = int(sum(1 for i in rows if ds.changes[i].killing_tests))
+        groups[key]["faults"] = int(sum(1 for i in rows if ds.killing_tests(ds.changes[i])))
         print(_table(
             groups[key],
             f"P2 instruction sweep (starved failures<={threshold}, {len(rows)} held-out "
@@ -610,8 +617,9 @@ def p3_embed(device: str = "cpu", force: bool = False) -> dict:
     from . import embed
 
     ds = datasets.marshmallow()
-    candidates_covered = dataset.candidate_mask(ds, "covered")
-    candidates_full = dataset.candidate_mask(ds, "full")
+    split = splits.make_split(ds)
+    candidates_covered = accessors.candidates(ds, "covered")
+    candidates_full = accessors.candidates(ds, "full")
     cache = config.ARTIFACTS / "embed_scores.npy"
 
     if cache.exists() and not force:
@@ -633,12 +641,12 @@ def p3_embed(device: str = "cpu", force: bool = False) -> dict:
         ).scores(ctx),
     }
     group_covered = eval_group(
-        ds, ds.test_idx, candidates_covered, covered, reference="bm25_lexical"
+        ds, split.test_idx, candidates_covered, covered, reference="bm25_lexical"
     )
     print(_table(group_covered, "P3 embedding baseline (covered candidates, 464 held-out faults)"))
 
-    starved = dataset.starved_mask(ds, max_failures=5)
-    rows = ds.test_idx[starved[ds.test_idx]]
+    starved = populations.starved_mask(ds, max_failures=5)
+    rows = split.test_idx[starved[split.test_idx]]
     group_starved = eval_group(
         ds, rows, candidates_covered, covered, reference="bm25_lexical"
     )
@@ -687,11 +695,12 @@ def p1_direct(max_failures: int | None = 2) -> dict:
     -1e9 and a partially scored change would rank as if nothing matched.
     """
     ds = datasets.marshmallow()
-    candidates = dataset.candidate_mask(ds, "covered")
-    rows = ds.test_idx
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
+    rows = split.test_idx
     if max_failures is not None:
-        mask = dataset.starved_mask(ds, max_failures=max_failures)
-        rows = ds.test_idx[mask[ds.test_idx]]
+        mask = populations.starved_mask(ds, max_failures=max_failures)
+        rows = split.test_idx[mask[split.test_idx]]
     cache = config.ARTIFACTS / (
         "semif_direct_heldout_covered.jsonl" if max_failures is None
         else f"semif_direct_starved{max_failures}_covered.jsonl"
@@ -724,7 +733,7 @@ def p1_direct(max_failures: int | None = 2) -> dict:
         "max_failures": max_failures,
         "changes": int(len(rows)),
         "changes_unscored": int(dropped),
-        "faults": int(sum(1 for i in rows if ds.changes[i].killing_tests)),
+        "faults": int(sum(1 for i in rows if ds.killing_tests(ds.changes[i]))),
         "model": config.DIRECT_MODEL,
         "revision": config.DIRECT_MODEL_REVISION,
         "note": "direct mode measured at ~1.25 pairs/s; scope limited by throughput, not design",

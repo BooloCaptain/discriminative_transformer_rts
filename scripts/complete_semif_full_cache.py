@@ -22,7 +22,7 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE))
 
-from rts import artifacts, config, dataset, datasets  # noqa: E402
+from rts import accessors, artifacts, config, datasets, features  # noqa: E402
 
 SOURCES = [
     config.ARTIFACTS / "semif_scores_starved5_full.jsonl",
@@ -48,9 +48,10 @@ def main() -> None:
     print(f"[complete] {len(existing):,} cached pairs over {len(change_ids)} changes")
 
     pool = ds.test_ids
+    change_index = accessors.change_index(ds)
     missing: list[tuple[int, int]] = []
     for cid in change_ids:
-        row = ds.change_index.get(cid)
+        row = change_index.get(cid)
         if row is None:
             continue
         for col, nodeid in enumerate(pool):
@@ -61,7 +62,7 @@ def main() -> None:
 
     merged: list[dict] = []
     for cid in change_ids:
-        row = ds.change_index.get(cid)
+        row = change_index.get(cid)
         if row is None:
             continue
         for col, nodeid in enumerate(pool):
@@ -83,7 +84,7 @@ def main() -> None:
         from rts import semif_runner
 
         model, tokenizer, _meta = semif_runner.load_model(device="auto")
-        change_texts = [dataset.change_query_text(ds, c) for c in ds.changes]
+        change_texts = [features.derived.change_query_text(ds, c) for c in ds.changes]
         pairs = [
             (change_texts[row], ds.test_source(pool[col]) or "")
             for row, col in missing
@@ -97,7 +98,7 @@ def main() -> None:
                 {
                     "change_row": row,
                     "test_col": col,
-                    "change_id": ds.changes[row].change_id,
+                    "change_id": ds.change_id(ds.changes[row]),
                     "test_nodeid": pool[col],
                     "score": float(score),
                 }

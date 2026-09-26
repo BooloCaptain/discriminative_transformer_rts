@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets, features
+from . import accessors, config, contract, datasets, features, populations, splits
 
 INSTRUCTION = (
     "Given a code change, judge whether the test below exercises the changed "
@@ -179,9 +179,8 @@ def _answer_ids_cached(tokenizer):
 
 
 def format_features(
-    ds: dataset.Dataset,
-    X,
-    names: list[str],
+    ds: contract.Dataset,
+    matrix: features.FeatureMatrix,
     row: int,
     col: int,
     mode: str = "full",
@@ -207,8 +206,9 @@ def format_features(
     source = col if value_col is None else value_col
     test_file, _, test_name = ds.test_ids[col].partition("::")
     change = ds.changes[row]
+    names = matrix.columns
     lines = [
-        f"- changed file: {change.file}",
+        f"- changed file: {accessors.change_paths(ds)[row]}",
         f"- changed function: {change.func_name}",
         f"- test file: {test_file}",
         f"- test name: {test_name}",
@@ -229,7 +229,7 @@ def format_features(
         if mode == "placebo":
             lines.append(f"- {name}: n/a")
             continue
-        value = float(X[row, source, k])
+        value = float(matrix.X[row, source, k])
         if name == "test_last_failure_age":
             lines.append(
                 f"- {name}: never failed in prior changes"
@@ -407,7 +407,7 @@ class PairSet:
 
 
 def build_pair_set(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     rows: np.ndarray,
     candidates: np.ndarray,
     shuffle: bool = False,
@@ -425,18 +425,18 @@ def build_pair_set(
     if include_features and feature_mode is None:
         feature_mode = "full"
 
-    texts = [dataset.change_query_text(ds, c) for c in ds.changes]
+    texts = [features.derived.change_query_text(ds, c) for c in ds.changes]
     if shuffle:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(texts))
         texts = [texts[i] for i in perm]
 
-    X = names = None
+    matrix = None
     want_blocks = feature_mode is not None
     if want_blocks:
         # The mirror/informative arms exist to compare a model's input against the
         # classical model's, so they ask for the same feature block explicitly.
-        X, names = features.structured_features(ds, history=True)
+        matrix = features.structured(ds, history=True)
 
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, int]] = []
@@ -458,7 +458,7 @@ def build_pair_set(
             if blocks is not None:
                 blocks.append(
                     format_features(
-                        ds, X, names, r, j,
+                        ds, matrix, r, j,
                         mode=feature_mode, value_col=value_sources[pos],
                     )
                 )
@@ -492,7 +492,7 @@ def load_done_keys(path: Path) -> set[tuple[int, int]]:
 def score_to_cache(
     model,
     tokenizer,
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     pair_set: PairSet,
     out_path: Path,
     batch_size: int = 8,
@@ -532,7 +532,7 @@ def score_to_cache(
                     {
                         "change_row": row,
                         "test_col": col,
-                        "change_id": ds.changes[row].change_id,
+                        "change_id": ds.change_id(ds.changes[row]),
                         "test_nodeid": ds.test_ids[col],
                         "score": float(score),
                     }
@@ -574,8 +574,9 @@ def pilot(
     from . import evaluate
 
     ds = datasets.marshmallow(order_seed=seed)
-    candidates = dataset.candidate_mask(ds, "covered")
-    fault_held = [int(i) for i in ds.test_fault_idx]
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
+    fault_held = [int(i) for i in accessors.test_fault_idx(ds, split.test_idx)]
     rows = np.array(fault_held[:n_changes], dtype=np.int64)
 
     pair_set = build_pair_set(ds, rows, candidates)
@@ -601,7 +602,7 @@ def pilot(
     )
     print(evaluate.format_table(f"semif_reranker ({orientation}, pilot n={len(rows)})", results))
 
-    full_pairs = int(candidates[ds.test_idx].sum())
+    full_pairs = int(candidates[split.test_idx].sum())
     print(f"\nfull held-out cost at this throughput: {full_pairs:,} pairs "
           f"-> {full_pairs / stats['pairs_per_second'] / 3600:.1f} h")
     return {"stats": stats, "results": evaluate.results_to_dicts(results)}
@@ -614,8 +615,9 @@ def smoke_test(n_changes: int = 10, n_distractors: int = 9, batch_size: int = 8,
     the full grid.
     """
     ds = datasets.marshmallow(order_seed=seed)
+    split = splits.make_split(ds)
     rng = np.random.default_rng(seed)
-    faults = [i for i in ds.test_fault_idx]
+    faults = [i for i in accessors.test_fault_idx(ds, split.test_idx)]
     picked = rng.choice(faults, size=min(n_changes, len(faults)), replace=False)
 
     print(f"loading {config.SEMIF_MODEL} @ {config.SEMIF_MODEL_REVISION[:12]} ...")
@@ -627,12 +629,12 @@ def smoke_test(n_changes: int = 10, n_distractors: int = 9, batch_size: int = 8,
     for n, i in enumerate(picked, 1):
         killing = sorted(ds.killing_tests(ds.changes[i]))[0]
         kill_col = ds.test_index[killing]
-        pool = [c for c in ds.covered[i] if c != killing]
+        pool = [c for c in accessors.covered(ds)[i] if c != killing]
         distractors = rng.choice(pool, size=min(n_distractors, len(pool)), replace=False)
         cols = [kill_col] + [ds.test_index[ds.test_ids[c]] if isinstance(c, (int, np.integer)) else ds.test_index[c] for c in distractors]
         cols = [int(c) for c in cols]
 
-        texts = dataset.change_query_text(ds, ds.changes[i])
+        texts = features.derived.change_query_text(ds, ds.changes[i])
         pairs = [(texts, ds.test_source(ds.test_ids[c]) or "") for c in cols]
         scores, _ = score_pairs(model, tokenizer, pairs, batch_size=batch_size, progress_every=0)
 
@@ -694,13 +696,14 @@ def score_heldout(
       the baseline trained on exactly the same rows.
     """
     ds = datasets.marshmallow(order_seed=seed)
-    candidates = dataset.candidate_mask(ds, candidates_mode)
-    rows = ds.test_idx
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, candidates_mode)
+    rows = split.test_idx
     if starved_max_failures is not None:
-        mask = dataset.starved_mask(ds, max_failures=starved_max_failures)
-        rows = ds.test_idx[mask[ds.test_idx]]
+        mask = populations.starved_mask(ds, max_failures=starved_max_failures)
+        rows = split.test_idx[mask[split.test_idx]]
     if train_prefix is not None:
-        rows = ds.train_idx[-train_prefix:]
+        rows = split.train_idx[-train_prefix:]
     if exclude_scored is not None:
         # Score only the changes a previous arm has not already covered. Used to
         # build a superset arm incrementally: `failures <= 2` is a subset of
@@ -765,10 +768,11 @@ def run_controls(
     loaded once.
     """
     ds = datasets.marshmallow(order_seed=seed)
-    candidates = dataset.candidate_mask(ds, "covered")
-    mask = dataset.starved_mask(ds, max_failures=max_failures)
-    rows = ds.test_idx[mask[ds.test_idx]]
-    n_faults = int(sum(1 for i in rows if ds.fault_mask[i]))
+    split = splits.make_split(ds)
+    candidates = accessors.candidates(ds, "covered")
+    mask = populations.starved_mask(ds, max_failures=max_failures)
+    rows = split.test_idx[mask[split.test_idx]]
+    n_faults = int(sum(1 for i in rows if accessors.fault_mask(ds)[i]))
 
     print(f"subset          : starved failures<={max_failures}")
     print(f"changes         : {len(rows)}")

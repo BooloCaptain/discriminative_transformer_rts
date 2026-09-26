@@ -13,8 +13,12 @@ W2c scoping spike are complete. Results are written up in `implementation.md` §
 them change the plan's own premises:
 
 * **The ladder confirms the hypothesis, on synthetic labels.** Removing coverage flips SemIf from
-  −0.050 behind the best classical selector to **+0.170** ahead (§12.2), and it is *coverage*
-  alone — the traceability features add nothing once coverage is gone (L2 ≡ L3).
+  −0.050 behind the best classical selector to **+0.170** ahead (§12.2). Coverage is the dominant
+  term: history removal changes nothing, and removing traceability on top of coverage moves the
+  strongest tree by 0.014 at b0.05 (0.631 → 0.617) without changing which classical selector
+  leads, which is raw BM25 at both L2 and L3. (An earlier draft said traceability adds *nothing*,
+  L2 ≡ L3; that was an artefact of an incomplete ablation — see `implementation.md` §12.2 and
+  `refactor.md` §14.)
 * **But it does not replicate on real bugs.** On BugsInPy, with an identical feature condition,
   SemIf and BM25 **tie** at every budget (§12.3). This is the most important result here: the
   L3 win looks like an artefact of mutant labels that remain coverage-defined.
@@ -308,7 +312,13 @@ multi-week one.
 **All done.** Recorded here because the reasoning matters for reading the results:
 
 1. **A feature-exclusion family.** `models.TRACEABILITY_FEATURES = ("filename_stem_match",
-   "path_distance", "n_tests_in_file")` now exists. The ladder does not use an exclusion flag;
+   "path_distance", "n_tests_in_file")` now exists. ⚠️ **The third name was wrong.** The column is
+   `n_tests_in_test_file`, and because a name-based ablation ignores a name that matches nothing,
+   the rung that removed this family kept that column alive. The family is now derived from the
+   feature block's own `traceability` family rather than listed here, and withholding is strict, so
+   the same typo raises instead of quietly ablating two thirds of a family. See
+   `implementation.md` §12.2 and `refactor.md` §14 for the corrected numbers. The ladder does not
+   use an exclusion flag;
    it *zeroes* the columns of the removed families, because a zeroed column is exactly "a
    feature that carries no information" and it keeps one code path for the learned and the
    hand-built selectors — so `structural_rule` degrades to "shortest test first" rather than

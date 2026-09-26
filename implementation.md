@@ -881,8 +881,8 @@ full candidate set of 1189 tests, so k = 60 tests at b0.05 for every row.
 | L3 | `coverage` | 0.106 | 0.248 | 0.340 | 0.461 |
 | L3 | `structural_rule` | 0.021 | 0.163 | 0.255 | 0.369 |
 | L3 | `bm25_lexical` | 0.511 | **0.688** | 0.745 | 0.794 |
-| L3 | `xgboost_struct_lex` | 0.369 | 0.582 | 0.688 | 0.787 |
-| L3 | `xgboost_struct` | 0.234 | 0.333 | 0.411 | 0.503 |
+| L3 | `xgboost_struct_lex` | 0.369 | 0.617 | 0.660 | 0.773 |
+| L3 | `xgboost_struct` | 0.270 | 0.362 | 0.411 | 0.511 |
 | L3 | **`semif_reranker`** | 0.674 | 0.858 | 0.886 | 0.922 |
 
 The same ladder under the historical `mutmut` labels, for comparison:
@@ -922,8 +922,8 @@ The same ladder under the historical `mutmut` labels, for comparison:
 | L3 | `coverage` | 0.000 | 0.064 | 0.142 | 0.277 |
 | L3 | `structural_rule` | 0.021 | 0.092 | 0.149 | 0.241 |
 | L3 | `bm25_lexical` | 0.305 | **0.503** | 0.553 | 0.617 |
-| L3 | `xgboost_struct_lex` | 0.298 | 0.496 | 0.645 | 0.766 |
-| L3 | `xgboost_struct` | 0.007 | 0.064 | 0.099 | 0.475 |
+| L3 | `xgboost_struct_lex` | 0.298 | 0.461 | 0.603 | 0.787 |
+| L3 | `xgboost_struct` | 0.007 | 0.064 | 0.114 | 0.468 |
 | L3 | **`semif_reranker`** | 0.425 | 0.681 | 0.745 | 0.837 |
 
 Four things follow.
@@ -931,16 +931,40 @@ Four things follow.
 1. **Removing coverage is the single step that flips the result.** History removal does nothing
    (consistent with §5.7); the crossing happens exactly at L2, where `xgboost_struct_lex` falls
    0.908 → 0.631 and `coverage` collapses 0.801 → 0.248 (to its own degenerate value).
-2. **Traceability features add nothing once coverage is gone.** L2 and L3 are identical to four
-   decimal places under full labels, so filename matching and path proximity are not what the
-   classical floor is made of — coverage is.
-3. **The floor really is a floor.** At L3 the no-text tree (`xgboost_struct`) falls to 0.333 at
-   b0.05 and `structural_rule` to 0.163 — *below* `random`'s 0.284, because with coverage and
-   filename matching gone it degenerates to "shortest test first", which is actively worse than
-   guessing.
+2. **Traceability features contribute little once coverage is gone.** Removing them on top of
+   coverage costs the strongest tree 0.014 at b0.05 (0.631 → 0.617) and 0.010 at b0.01, so they
+   are not what the classical floor is made of — coverage is. They are not *nothing* either, and
+   the earlier claim that L2 and L3 were identical was an artefact of an incomplete ablation: the
+   L3 rung used to keep `n_tests_in_test_file` alive because its exclusion list named
+   `n_tests_in_file`, which is not a column (see the note below). At b0.01–b0.10 the SemIf *margin*
+   over the best classical selector is still unchanged by the rung, but only because the leading
+   selector at both rungs is raw BM25; at b0.20 the rungs now differ (0.114 vs 0.128), because the
+   tree leads L2 and BM25 leads L3.
+3. **The floor really is a floor, but the hand-built rule is what falls through it.** At L3 the
+   no-text tree (`xgboost_struct`) falls to 0.362 at b0.05 — still above `random`'s 0.284, and
+   below it only from b0.10 (0.411 vs 0.433). `structural_rule` falls to 0.163 at b0.05 and to
+   0.255 at b0.10, *below* `random`'s 0.433, because with coverage and filename matching gone it
+   degenerates to "shortest test first", which is actively worse than guessing.
 4. **SemIf does not move at all across rungs** (0.858 at b0.05 throughout), which is the whole
    point of the curve: it is a text model, its input is unchanged, and the classical side falls
    away beneath it.
+
+**Correction: the L3 rung was not traceability-free.** The exclusion list named
+`n_tests_in_file`, which is not a column — the real name is `n_tests_in_test_file` — and a
+name-based ablation ignores a name that matches nothing. So L3 zeroed two of the three traceability
+columns and kept the third live while reporting itself as traceability-free. The numbers above are
+the corrected ones; the L3 rows for `xgboost_struct_lex` and `xgboost_struct` are the only values
+in this section that changed, and every other rung is unchanged. The families are now derived from
+the feature block rather than written out by hand, so the typo cannot recur, and withholding is
+strict so a bad name raises instead of silently ablating nothing. The old numbers are kept here for
+the record:
+
+| labels | selector | b0.01 | b0.05 | b0.10 | b0.20 |
+|---|---|---|---|---|---|
+| full | `xgboost_struct_lex` | 0.369 | 0.582 | 0.688 | 0.787 |
+| full | `xgboost_struct` | 0.234 | 0.333 | 0.411 | 0.503 |
+| mutmut | `xgboost_struct_lex` | 0.298 | 0.496 | 0.645 | 0.766 |
+| mutmut | `xgboost_struct` | 0.007 | 0.064 | 0.099 | 0.475 |
 
 Note also that under corrected labels `random` reaches 0.284 at b0.05, far above the 0.043 it
 scores under `mutmut` labels. That is the killer-count correction of §12.1 showing up directly:
@@ -953,7 +977,7 @@ Paired bootstrap against SemIf at b0.05 (negative delta = SemIf ahead), full lab
 | L0 | **−0.170 p<0.0001** | +0.050 p=0.23 | +0.028 p=0.54 | −0.057 p=0.25 |
 | L1 | **−0.170 p<0.0001** | **+0.078 p=0.036** | +0.028 p=0.54 | −0.057 p=0.25 |
 | L2 | **−0.170 p<0.0001** | **−0.227 p<0.0001** | **−0.503 p<0.0001** | **−0.610 p<0.0001** |
-| L3 | **−0.170 p<0.0001** | **−0.277 p<0.0001** | **−0.695 p<0.0001** | **−0.610 p<0.0001** |
+| L3 | **−0.170 p<0.0001** | **−0.241 p<0.0001** | **−0.695 p<0.0001** | **−0.610 p<0.0001** |
 
 Read carefully, this is a **much more favourable picture for SemIf than §5 and §11 convey**.
 Even with every feature available, SemIf is *significantly* better than raw BM25 (+0.170,
@@ -1071,7 +1095,9 @@ labels rather than the features:
 
 * **On synthetic mutant labels, coverage is what defeats SemIf and removing it reverses the
   ordering** (0.908 → 0.688 for the best classical method, while SemIf holds at 0.858). Filename
-  and path features contribute nothing; it is coverage alone.
+  and path features contribute little on top of that — removing them moves the strongest tree by
+  0.014 at b0.05 and does not change which classical selector leads, which is raw BM25 at both L2
+  and L3.
 * **On real bug labels the ordering does not reverse** — SemIf 0.211 against BM25's 0.225, on an
   arm whose feature condition is identical to L3, where the ladder reports SemIf 0.170 ahead.
 * **The boundary does not destroy the lexical bridge** (MicroPython: 98.4% token overlap,
@@ -1150,5 +1176,28 @@ pooled matrix instead of per bug over its own pool, which moved every random-bas
 SemIf-vs-random comparison with them; and the reported `mean_k` was the rounded per-change figure
 rather than the mean. Both are fixed. The general lesson, which is why §9 lists a diff rather than a
 test as the gate: **RNG consumption pattern is part of a recorded number.**
+
+## 14. Module layout of the harness
+
+The interface above was first implemented in a single 1357-line `rts/dataset.py` that also held
+feature assembly, the population vocabulary and evaluation configuration. It has since been
+decomposed; the design record, the defects that motivated each split, and the proposal that was
+declined are in `refactor.md` §14. What matters for reading this document:
+
+- `rts/contract.py` is the interface — what a dataset supplies and declares, and nothing computed
+  from it.
+- Everything derived lives in `rts/accessors.py` (accessors and the one material catalogue),
+  `rts/features/` (derived features, and the two declared feature blocks), and `rts/populations.py`.
+- `rts/splits.py` owns the train/test split. It is a **value**, and `reporting.describe` requires one,
+  because a dataset cannot know which of its changes were held out. `results_full.json` therefore
+  carries an explicit `split` block.
+- Warnings are returned by the computation that produced them (`FeatureMatrix.warnings`, or
+  `reporting.audit`), not stored on the dataset.
+
+`rts/dataset.py` and `rts/features.py` no longer exist. The head of the reproduction chain is
+`rts/datasets.py`, and the pipeline and ladder are unchanged in what they compute: the decomposition
+was verified by diffing `results_full.json`, `results_covered.json`, `ladder.json` and
+`bugsinpy_results.json` against the pre-decomposition versions, with zero value differences.
+
 
 

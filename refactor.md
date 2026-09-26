@@ -421,3 +421,146 @@ Known gaps, stated rather than implied:
   as complete as the populations actually written down. `no_prior_failure`, `starved` and
   `low_pair_recurrence` are the three that exist.
 
+## 14. Second pass: decomposition
+
+§11–13 implemented the contract but left it in one 1357-line module, with feature assembly, the
+population vocabulary and evaluation configuration inside it. A review of that result found the
+separation-of-concerns problem and a set of specific defects. This section records what changed and,
+where a proposal was declined, why.
+
+### The layout
+
+| module | lines | responsibility |
+|---|---|---|
+| `contract.py` | 465 | primitives, declarations, `Capability`/`Requirement`/`Policy`, `Unmeasured`, `Warnings` |
+| `accessors.py` | 393 | derived accessors as free functions, and the single `MATERIAL` catalogue |
+| `splits.py` | 120 | `Split` and `make_split` — evaluation configuration |
+| `features/block.py` | 375 | `FeatureBlock`, `FeatureGroup`, `FeatureMatrix` |
+| `features/derived.py` | 269 | one function per quantity, pure over its input |
+| `features/structured.py` | 184 | the 15-column block, declared as data |
+| `features/bundle.py` | 181 | the bundle block, declared as data |
+| `features/text.py` | 173 | tokenizer and BM25 |
+| `populations.py` | 266 | populations, predicates, registry value |
+| `composition.py` | 236 | namespacing, pooling, derived datasets |
+| `reporting.py` | 174 | audit, describe, save |
+| `datasets.py` | 522 | the concrete datasets |
+
+`rts/dataset.py` and `rts/features.py` are gone; the one-letter `dataset`/`datasets` hazard the first
+pass introduced is gone with them.
+
+### The division that mattered most
+
+A **derived feature** is one quantity computed from the contract. A **feature block** is an ordered,
+named *selection* of them assembled into a tensor for a model input. Colocating those is why the first
+pass could not add a feature without editing an assembly function that also had to know about
+capability gating, history policy and column order. They are now separate, and adding a column is:
+add the computation to `features/derived.py`, add a `FeatureColumn` to a group in the block that wants
+it. `tests/test_extensions.py` does exactly that and asserts the result, without touching `rts/`.
+
+`FeatureBlock.build` returns a `FeatureMatrix` rather than a bare `(X, names)` tuple. That retired nine
+separate `{n: i for i, n in enumerate(names)}` reconstructions across the package and made a renamed
+column fail loudly instead of reading its neighbour.
+
+### Gating is derived, not asserted
+
+A group or a population names the *material* it reads (`needs=("coverage",)`);
+`accessors.MATERIAL` — one catalogue, not the three parallel spellings the first pass had — maps that
+onto requirements. So a requirement set cannot disagree with the code that reads it. Declaring too
+little used to raise a capability error from inside a predicate instead of reporting unmeasured;
+declaring too much reported a working computation unavailable. Both are now unrepresentable.
+
+Where a caller supplies material the contract does not know about — the bundle block's members and its
+base's features — the block declares it as external and raises if it is not supplied, because a
+caller-supplied material is a promise rather than a capability.
+
+### Declined: decorator registration
+
+A proposal to register features and populations with `@feature`/`@population` decorators was declined.
+The reasons, in order of weight: a decorator registry is module-level state, which is what the first
+pass spent its effort removing, and it makes availability a property of the import graph so it cannot
+express "dataset A has this, dataset B does not" — the case that needs it least and the one the
+contract exists to express. Column order would become import order. The metadata a column needs (unit,
+capability gate, dtype, broadcast rule, family) does not fit an annotation. And the proposal does not
+address the defect that motivated it, since a decorated predicate still hand-writes its requirements.
+
+What the proposal wanted was extension ergonomics, and that is delivered: an explicit tuple of columns
+in the block's own module is one line more than a decorator and has none of those costs. A name→
+implementation registry remains legitimate at the *experiment* layer, and exists there as
+`PopulationRegistry`, an immutable value that composes with `+`.
+
+### Defects fixed
+
+* **Warnings were attached to the wrong object.** `structured_features` mutated `ds.warnings`, so a
+  dataset accumulated a record of how a harness function had been *called*. Warnings are now returned
+  by the computation that produced them (`FeatureMatrix.warnings`) or derived by
+  `reporting.audit(ds, split)`, and `Dataset` has no `warnings` attribute at all. The symptom was a
+  test whose assertion was `... or True` — a tautology that passed unconditionally; it is gone, and
+  `test_warnings_are_returned_not_stored` asserts the absence of the attribute instead.
+* **`describe` and `save` baked in a default split**, publishing evaluation configuration as dataset
+  metadata and putting it in the recorded artifacts. Both now require a `Split`. That is why
+  `results_full.json` gains a `split` key.
+* **`no_prior_failure` and `starved_mask`** were two implementations of one predicate that had already
+  drifted (only one supported `max_runs`). There is one implementation, with a declared population and
+  a parameterised helper as two entry points onto it.
+* **Nine copies of the memoisation idiom**, one of which (`PooledDataset`) omitted all of them, so
+  inherited `n_changes` rebuilt the entire change list to take a length. There is now one
+  `Dataset.cached` mechanism, and the pooled dataset uses it.
+* **`PooledDataset` keyed its change→owner map by `id(change)`**, which worked only because the map
+  held strong references. Pooled changes are now `PooledChange` values carrying their dataset and id,
+  so identity is namespaced and stable — two projects with a bug numbered `3` cannot be confused.
+* **`labels`, `runs` and `fault_mask` handed out mutable internals.** They are frozen on construction.
+* **An expensive `test_source` was read twice per test.** `accessors.test_source` memoises per dataset
+  instance, which is the opposite of the module-level node-id cache the design forbids.
+* **`REQ_ORDERING_OBSERVED` carried three meanings.** A `Policy` vocabulary now separates the
+  dataset's order (`OBSERVED_ORDER`) from the run's (`EFFECTIVE_ORDER`), so a shuffle warning no longer
+  claims the dataset lacks a real order.
+* **A second feature generator** lived in `rts/bundles.py`, invisible to the structured block and
+  coupled to it by string lookups. It is `features/bundle.py` now, declared like any other block, and
+  `bundles.bundle_arrays` is a thin wrapper over it.
+* **Six back-compat shims** were deleted.
+* **The ladder ablated by comparing column names against a list in its own module.** A rename would
+  have silently stopped ablating anything, with no error and a plausible number. A rung is now the
+  block with a family withheld, which takes the same unmeasured path a genuinely absent capability
+  takes and reports what it withheld.
+
+### The ablation bug this exposed
+
+The prediction above was not hypothetical. `TRACEABILITY_FEATURES` named
+``("filename_stem_match", "path_distance", "n_tests_in_file")``, and ``n_tests_in_file`` **is not a
+column** -- the real name is ``n_tests_in_test_file``. A name-based ablation ignores a name that
+matches nothing, so the L3 rung zeroed two of the three traceability columns and kept
+``n_tests_in_test_file`` live while reporting itself as traceability-free. The comment above that
+tuple in the old ``models.py`` even documents this hazard for a *different* name, which is what makes
+it a good example of the class of bug rather than an isolated typo.
+
+Under the historical `mutmut` labels the leaked column was worth up to **+0.042 recall at b0.10** to
+the strongest tree (`starved141` L3 `xgboost_struct_lex`: 0.645 → 0.603), and +0.035 at b0.05
+(0.496 → 0.461). The corrected `full`-label figures are in ``implementation.md`` §12.2.
+
+Three things follow, and they are the argument for the design rather than an aside:
+
+1. **The ablation was silently wrong for as long as it existed**, and no test noticed because nothing
+   checked that a family name matched a column. Withholding is strict now: the same typo raises.
+2. **The numbers it produced were plausible.** L3 looked like a clean monotone degradation, which is
+   exactly why "L2 == L3, so coverage is the whole effect" survived review. A plausible number from a
+   broken ablation is worse than an error.
+3. `tests/test_extensions.py` now pins the traceability family to its three real columns and asserts
+   that each rung withholds exactly the columns its families name.
+
+Note that this is a change to a *documented* number, and the only one the decomposition produced:
+every other ladder rung, both pipeline artifacts and the BugsInPy artifact reproduce exactly. The
+corrected L3 rows are recorded in ``implementation.md`` §12.2.
+
+
+### Verification
+
+`ladder.json` is **exact**: zero value differences across both label sources, all four rungs, both
+populations, every selector and every SemIf margin. `results_full.json` and `results_covered.json` are
+**exact** over every section present in both. `bugsinpy_results.json` is **byte-identical**, including
+the T0 audit gate (87.3% share a token, 2.66 vs 2.03). 66 tests pass.
+
+The only artifact differences are additive keys (`split`, `audit`) and one renamed warning scope
+(`structured_features` → `features:history`), each of which is the intended consequence of a fix
+above.
+
+

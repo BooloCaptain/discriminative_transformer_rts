@@ -5,6 +5,7 @@ Usage::
     python -m rts.pipeline                    # full run, full candidate set
     python -m rts.pipeline --candidates covered
     python -m rts.pipeline --skip-ablations
+    python -m rts.pipeline --labels full
 """
 
 from __future__ import annotations
@@ -15,21 +16,33 @@ import time
 
 import numpy as np
 
-from . import config, dataset, datasets, evaluate, features, models
+from . import (
+    accessors,
+    config,
+    datasets,
+    evaluate,
+    features,
+    models,
+    populations,
+    reporting,
+    splits,
+)
 
 # The study's documented arm explicitly enables history on an imposed dataset and
-# explicitly names the averaging population. Both are opt-ins: the harness default is
-# history off (§2.4), and a population that cannot exist is unmeasured rather than
-# silently empty (§6).
+# explicitly names the averaging population. Both are opt-ins: the default is history off
+# for an imposed order, and a population that cannot exist is unmeasured rather than
+# silently empty.
 HISTORY = True
 POPULATION = "fault_bearing"
 
 
-def build_context(ds: dataset.Dataset) -> models.Context:
-    X, names = features.structured_features(ds, history=HISTORY)
-    bm25 = features.build_bm25_scores(ds)
+def build_context(ds, split: splits.Split) -> models.Context:
+    matrix = features.structured(ds, history=HISTORY)
     return models.Context(
-        ds=ds, X=X, names=names, bm25=bm25, warnings=tuple(ds.warnings)
+        ds=ds,
+        features=matrix,
+        split=split,
+        bm25=features.text.build_bm25_scores(ds),
     )
 
 
@@ -48,15 +61,22 @@ def run(
     print("=" * 78)
 
     ds = datasets.marshmallow(labels=labels, order_seed=seed)
-    for key, value in dataset.describe(ds).items():
+    split = splits.make_split(ds)
+    for key, value in reporting.describe(ds, split).items():
         print(f"  {key:>32}: {value}")
 
-    candidates = dataset.candidate_mask(ds, candidates_mode)
-    cand_counts = ds.candidate_counts(candidates)
+    candidates = accessors.candidates(ds, candidates_mode)
+    cand_counts = accessors.candidate_counts(ds, candidates)
     print(f"\ncandidate mode      : {candidates_mode}")
-    print(f"candidates per change: mean {cand_counts.mean():.1f}  min {cand_counts.min()}  max {cand_counts.max()}")
+    print(
+        f"candidates per change: mean {cand_counts.mean():.1f}  "
+        f"min {cand_counts.min()}  max {cand_counts.max()}"
+    )
 
-    ctx = build_context(ds)
+    ctx = build_context(ds, split)
+    audit = reporting.audit(ds, split)
+    for warning in audit:
+        print(f"  [audit] {warning.code}: {warning.note}")
 
     # --- selectors ---
     selectors = models.default_selectors(include_semif=include_semif)
@@ -74,8 +94,9 @@ def run(
             continue
         all_scores[selector.name] = scores
         results[selector.name] = evaluate.evaluate(
-            scores, ds, ds.test_idx, budgets=budgets,
+            scores, ds, split.test_idx, budgets=budgets,
             n_bootstrap=n_bootstrap, seed=seed, candidates=candidates,
+            population=POPULATION,
         )
         print(evaluate.format_table(selector.name, results[selector.name]))
         print(f"  ({time.perf_counter() - t0:.1f}s)")
@@ -101,10 +122,11 @@ def run(
             ("bm25_test_shuffled", {"shuffle_tests": True}),
             ("bm25_both_shuffled", {"shuffle_changes": True, "shuffle_tests": True}),
         ]:
-            shuffled = features.build_bm25_scores(ds, seed=seed, **kwargs)
+            shuffled = features.text.build_bm25_scores(ds, seed=seed, **kwargs)
             ablations[label] = evaluate.evaluate(
-                shuffled, ds, ds.test_idx, budgets=budgets,
+                shuffled, ds, split.test_idx, budgets=budgets,
                 n_bootstrap=n_bootstrap, seed=seed, candidates=candidates,
+                population=POPULATION,
             )
             print(evaluate.format_table(label, ablations[label]))
 
@@ -114,16 +136,16 @@ def run(
     print("=" * 78)
     probe_budget = 0.05
     hits = {
-        name: evaluate.per_change_hits(scores, ds, ds.test_idx, probe_budget, candidates)
+        name: evaluate.per_change_hits(scores, ds, split.test_idx, probe_budget, candidates)
         for name, scores in all_scores.items()
     }
     for label, kwargs in [
         ("bm25_change_shuffled", {"shuffle_changes": True}),
         ("bm25_test_shuffled", {"shuffle_tests": True}),
     ]:
-        shuffled = features.build_bm25_scores(ds, seed=seed, **kwargs)
+        shuffled = features.text.build_bm25_scores(ds, seed=seed, **kwargs)
         hits[label] = evaluate.per_change_hits(
-            shuffled, ds, ds.test_idx, probe_budget, candidates
+            shuffled, ds, split.test_idx, probe_budget, candidates
         )
 
     comparisons: dict[str, dict] = {}
@@ -146,17 +168,20 @@ def run(
         print("\n" + "=" * 78)
         print("Sparse arm: changes whose (file, test) pairs recur least")
         print("=" * 78)
-        counts = ds.pair_counts()
+        counts = accessors.pair_counts(ds)
+        faults = accessors.fault_idx(ds)
+        covered_by = accessors.covered(ds)
+        paths = accessors.change_paths(ds)
         fault_pairs = np.array(
             [
-                counts.get((ds.changes[i].file, ds.changes[i].killing_tests[0]), 0)
-                for i in ds.fault_idx
+                counts.get((paths[i], sorted(ds.killing_tests(ds.changes[i]))[0]), 0)
+                for i in faults
             ]
         )
         maxpc = np.array(
             [
-                max((counts[(c.file, t)] for t in ds.covered[i]), default=0)
-                for i, c in enumerate(ds.changes)
+                max((counts[(paths[i], t)] for t in covered_by[i]), default=0)
+                for i in range(ds.n_changes)
             ]
         )
         recurrence = {
@@ -177,9 +202,9 @@ def run(
         )
 
         for threshold in (80, 160):
-            mask = ds.sparse_mask(max_pair_count=threshold)
-            sub = ds.test_idx[mask[ds.test_idx]]
-            n_faults = int(sum(1 for i in sub if ds.changes[i].killing_tests))
+            mask = populations.sparse_mask(ds, max_pair_count=threshold)
+            sub = split.test_idx[mask[split.test_idx]]
+            n_faults = int(sum(1 for i in sub if ds.killing_tests(ds.changes[i])))
             if n_faults < 10:
                 print(f"\n  threshold {threshold}: only {n_faults} held-out faults, skipped")
                 continue
@@ -191,6 +216,7 @@ def run(
                 res = evaluate.evaluate(
                     scores, ds, sub, budgets=(0.05, 0.1, 0.2),
                     n_bootstrap=n_bootstrap, seed=seed, candidates=candidates,
+                    population=POPULATION,
                 )
                 sparse_report[f"{name}@{threshold}"] = evaluate.results_to_dicts(res)
                 cells = "  ".join(f"b{r.budget:.2f}={r.recall:.3f}" for r in res)
@@ -204,15 +230,15 @@ def run(
         "seed": seed,
         "labels": labels,
         "population": POPULATION,
-        "dataset": dataset.describe(ds),
-        "dataset_declaration": {
-            "name": ds.name,
-            "ordering": ds.ordering().value,
-            "test_unit": ds.test_unit().value,
-            "capabilities": sorted(ds.capabilities()),
-            "semantics": dict(ds.semantics()),
+        "dataset": reporting.describe(ds, split),
+        "dataset_declaration": ds.declaration(),
+        "split": {
+            "fraction": split.fraction,
+            "shuffle": split.shuffle,
+            "effective_ordering": split.effective_ordering.value,
         },
-        "warnings": ds.warnings.to_list(),
+        "warnings": [w.to_dict() for w in ctx.warnings],
+        "audit": [w.to_dict() for w in audit],
         "results": {name: evaluate.results_to_dicts(res) for name, res in results.items()},
         "ablations": {name: evaluate.results_to_dicts(res) for name, res in ablations.items()},
         "sparse_arm": sparse_report,
@@ -234,7 +260,7 @@ def main() -> None:
     parser.add_argument("--skip-ablations", action="store_true")
     parser.add_argument("--bootstrap", type=int, default=config.DEFAULT_BOOTSTRAP)
     parser.add_argument("--seed", type=int, default=config.SEED)
-    parser.add_argument("--labels", default="mutmut", choices=["mutmut", "full"])
+    parser.add_argument("--labels", default="mutmut", choices=list(config.LABEL_SOURCES))
     args = parser.parse_args()
 
     run(

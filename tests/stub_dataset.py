@@ -1,15 +1,15 @@
 """A fixture-backed dataset, to show the contract is cheap to satisfy.
 
-§7 of ``refactor.md``: "a fixture-backed dataset returning ten changes over three
-tests is complete and valid, and two of them can exist at once." Nothing here touches
-a real checkout or a real test run, and the whole file is importable without one.
+"A fixture-backed dataset returning ten changes over three tests is complete and valid,
+and two of them can exist at once." Nothing here touches a real checkout or a real test
+run, and the whole file is importable without one.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rts.dataset import Dataset, Ordering, TestUnit
+from rts.contract import Capability, Dataset, Ordering, TestUnit
 
 TEST_IDS = (
     "tests/test_alpha.py::test_one",
@@ -71,6 +71,8 @@ class StubChange:
     file: str
     diff: str
     killing: tuple[str, ...]
+    #: Extra files this change touches, so a test can exercise the plural accessor.
+    extra_files: tuple[str, ...] = ()
 
 
 class StubDataset(Dataset):
@@ -85,14 +87,22 @@ class StubDataset(Dataset):
         test_unit: TestUnit = TestUnit.FUNCTION,
         changes: tuple[tuple[str, str, str, tuple[str, ...]], ...] = CHANGES,
         sources=SOURCES,
+        extra_files: dict[str, tuple[str, ...]] | None = None,
     ):
         self._name = name
         self._coverage = coverage
         self._durations = durations
         self._ordering = ordering
         self._test_unit = test_unit
+        extras = dict(extra_files or {})
         self._changes = tuple(
-            StubChange(change_id=cid, file=file, diff=diff, killing=killed)
+            StubChange(
+                change_id=cid,
+                file=file,
+                diff=diff,
+                killing=killed,
+                extra_files=extras.get(cid, ()),
+            )
             for cid, file, diff, killed in changes
         )
         self._sources = dict(sources)
@@ -108,7 +118,7 @@ class StubDataset(Dataset):
         return self._changes
 
     def files(self, change):
-        return (change.file,)
+        return (change.file,) + tuple(change.extra_files)
 
     def diff_text(self, change) -> str:
         return change.diff
@@ -132,9 +142,9 @@ class StubDataset(Dataset):
     def capabilities(self):
         caps = set()
         if self._coverage:
-            caps.add("coverage")
+            caps.add(Capability.COVERAGE)
         if self._durations:
-            caps.add("durations")
+            caps.add(Capability.DURATIONS)
         return frozenset(caps)
 
     def coverage(self, change):

@@ -43,7 +43,7 @@ import json
 
 import numpy as np
 
-from . import config, dataset, datasets, evaluate, features
+from . import accessors, config, contract, datasets, evaluate, features
 from .datasets import Bundle
 
 # Rung construction is a study choice, so the rung definitions stay here; the *shape* of
@@ -65,37 +65,23 @@ RUNGS: dict[int, tuple[int, bool, str]] = {
     5: (5, True, "coherent"),
 }
 # rung 0 is the existing single-mutant benchmark; kept for reference only.
-BUNDLE_FEATURES = [
-    "n_mutations",
-    "n_mutations_covered",
-    "frac_mutations_covered",
-    "name_match_any",
-    "min_path_distance",
-    "change_size",
-    "test_duration",
-    "test_n_lines",
-    "test_n_tokens",
-    "n_tests_in_test_file",
-    "test_failure_rate_cum",
-    "test_runs_cum",
-    "test_last_failure_age",
-]
 
 
-def _survivor_pool(ds: dataset.Dataset) -> dict[str, list[int]]:
+def _survivor_pool(ds: contract.Dataset) -> dict[str, list[int]]:
     pool: dict[str, list[int]] = {}
+    paths = accessors.change_paths(ds)
     for i, change in enumerate(ds.changes):
         if getattr(change, "survived", False):
-            pool.setdefault(ds.change_paths[i], []).append(i)
+            pool.setdefault(paths[i], []).append(i)
     return pool
 
 
-def _coverage_matrix(ds: dataset.Dataset) -> np.ndarray:
+def _coverage_matrix(ds: contract.Dataset) -> np.ndarray:
     """[n_changes, n_tests] float32 indicator of which tests cover each change."""
     if not ds.has_capability("coverage"):
-        raise dataset.CapabilityMissing(ds.name, "coverage")
+        raise contract.CapabilityMissing(ds.name, "coverage")
     C = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
-    for i, covered in enumerate(ds.covered):
+    for i, covered in enumerate(accessors.covered(ds)):
         for test in covered:
             j = ds.test_index.get(test)
             if j is not None:
@@ -104,7 +90,7 @@ def _coverage_matrix(ds: dataset.Dataset) -> np.ndarray:
 
 
 def _coherent_ranking(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     fault: list[int],
     survivors: list[int],
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +112,7 @@ def _coherent_ranking(
 
 
 def make_bundles(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     rung: int,
     seed: int = config.SEED,
 ) -> list[Bundle]:
@@ -135,7 +121,8 @@ def make_bundles(
         raise ValueError(f"unknown rung {rung}; expected one of {sorted(RUNGS)}")
     k, cross_file, kind = RUNGS[rung]
 
-    fault = [int(i) for i in ds.fault_idx]
+    fault = [int(i) for i in accessors.fault_idx(ds)]
+    paths = accessors.change_paths(ds)
     survivors_by_file = _survivor_pool(ds)
     all_survivors = [i for v in survivors_by_file.values() for i in v]
 
@@ -153,18 +140,18 @@ def make_bundles(
         elif kind == "coherent":
             p = signal_pos[i]
             external = np.array(
-                [ds.change_paths[int(j)] != ds.change_paths[i] for j in survivors_arr],
+                [paths[int(j)] != paths[i] for j in survivors_arr],
                 dtype=bool,
             )
             top = np.argsort(-np.where(external, jaccard[p], -1.0), kind="stable")[:k]
             distractors = tuple(int(survivors_arr[t]) for t in top)
         elif kind == "survived":
             if cross_file:
-                pool = [j for j in all_survivors if ds.change_paths[j] != ds.change_paths[i]]
+                pool = [j for j in all_survivors if paths[j] != paths[i]]
                 if len(pool) < k:
                     pool = all_survivors
             else:
-                pool = survivors_by_file.get(ds.change_paths[i], [])
+                pool = survivors_by_file.get(paths[i], [])
                 if len(pool) < k:
                     pool = all_survivors
             replace = len(pool) < k
@@ -180,13 +167,13 @@ def make_bundles(
     return bundles
 
 
-def bundle_text(ds: dataset.Dataset, bundle: Bundle, token_budget: int | None = None) -> str:
+def bundle_text(ds: contract.Dataset, bundle: Bundle, token_budget: int | None = None) -> str:
     """Change text: the signal's diff first, then distractors'.
 
     ``token_budget`` truncates on whitespace tokens so a rung can be compared
     against the single-mutant arm at matched query length.
     """
-    parts = [dataset.change_query_text(ds, ds.changes[m]) for m in bundle.members]
+    parts = [features.derived.change_query_text(ds, ds.changes[m]) for m in bundle.members]
     text = "\n".join(parts)
     if token_budget is None:
         return text
@@ -197,78 +184,28 @@ def bundle_text(ds: dataset.Dataset, bundle: Bundle, token_budget: int | None = 
 # --- features --------------------------------------------------------------
 
 
-def bundle_arrays(
-    base: dataset.Dataset,
-    bundle_ds: datasets.BundleDataset,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return (X, labels, candidates, signals) for a rung.
+def bundle_matrix(bundle_ds, *, history: bool = True):
+    """The bundle feature matrix, from the declared block in rts.features.bundle."""
+    return features.bundle_features(bundle_ds, history=history)
 
-    ``X`` is ``[n_bundles, n_tests, n_features]``; ``labels`` marks killing tests.
 
-    The bundle feature block is genuinely different from the contract's per-change
-    block -- it aggregates over a *set* of members, rather than describing one change
-    -- so it is computed here rather than inherited. Everything it reads comes from
-    the base dataset's derived features, so its columns mean the same thing they mean
-    on the base, which is the condition for comparing the rungs at all.
-
-    Candidates come from the wrapper, not from a second construction: a rung's pool is
-    either the signal's covered set (held fixed across rungs, so bundling varies only
-    the change *description*) or the union of the members' (the realistic pool, which
-    grows with the bundle so ``covers_function`` becomes less selective).
-    """
-    X_base, names = features.structured_features(base, history=True)
-    ix = {n: i for i, n in enumerate(names)}
-    cov = X_base[:, :, ix["covers_function"]] > 0.5
-    nm = X_base[:, :, ix["filename_stem_match"]] > 0.5
-    pd = X_base[:, :, ix["path_distance"]]
-    dur = X_base[:, :, ix["test_duration"]]
-    nlin = X_base[:, :, ix["test_n_lines"]]
-    ntok = X_base[:, :, ix["test_n_tokens"]]
-    nfile = X_base[:, :, ix["n_tests_in_test_file"]]
-    frate = X_base[:, :, ix["test_failure_rate_cum"]]
-    nruns = X_base[:, :, ix["test_runs_cum"]]
-    fage = X_base[:, :, ix["test_last_failure_age"]]
-
-    bundles = list(bundle_ds.changes)
-    n_b, n_t = len(bundles), base.n_tests
-    X = np.zeros((n_b, n_t, len(BUNDLE_FEATURES)), dtype=np.float32)
-    labels = np.zeros((n_b, n_t), dtype=np.uint8)
-
-    for b, bundle in enumerate(bundles):
-        members = np.array(bundle.members, dtype=np.int64)
-        n_mut = len(members)
-        cov_count = cov[members].sum(axis=0).astype(np.float32)
-        X[b, :, 0] = n_mut
-        X[b, :, 1] = cov_count
-        X[b, :, 2] = cov_count / n_mut
-        X[b, :, 3] = nm[members].any(axis=0).astype(np.float32)
-        X[b, :, 4] = pd[members].min(axis=0)
-        X[b, :, 5] = dataset.change_size(bundle_ds, bundle)
-        X[b, :, 6] = dur[bundle.signal]
-        X[b, :, 7] = nlin[bundle.signal]
-        X[b, :, 8] = ntok[bundle.signal]
-        X[b, :, 9] = nfile[bundle.signal]
-        X[b, :, 10] = frate[bundle.signal]
-        X[b, :, 11] = nruns[bundle.signal]
-        X[b, :, 12] = fage[bundle.signal]
-
-        for test in bundle_ds.killing_tests(bundle):
-            j = bundle_ds.test_index.get(test)
-            if j is not None:
-                labels[b, j] = 1
-
-    candidates = bundle_ds.candidates("covered")
-    return X, labels, candidates, np.array([bundle.signal for bundle in bundles])
+def bundle_arrays(base, bundle_ds):
+    """Return (matrix, labels, candidates, signals) for a rung."""
+    matrix = bundle_matrix(bundle_ds, history=True)
+    labels = accessors.labels(bundle_ds)
+    candidates = accessors.candidates(bundle_ds, "covered")
+    signals = np.array([b.signal for b in bundle_ds.changes])
+    return matrix, labels, candidates, signals
 
 
 def bundle_bm25(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     bundles: list[Bundle],
     token_budget: int | None = None,
 ) -> np.ndarray:
     """BM25 of the bundled change text against every test."""
     docs = [ds.test_source(t) or "" for t in ds.test_ids]
-    scorer = features.BM25Scorer().fit(docs)
+    scorer = features.text.BM25Scorer().fit(docs)
     out = np.zeros((len(bundles), ds.n_tests), dtype=np.float32)
     for b, bundle in enumerate(bundles):
         out[b] = scorer.score(bundle_text(ds, bundle, token_budget))
@@ -326,6 +263,7 @@ def _xgb_scores(
     X_train: np.ndarray,
     y_train: np.ndarray,
     X_eval: np.ndarray,
+    columns,
     seed: int = config.SEED,
 ):
     import xgboost as xgb
@@ -345,7 +283,7 @@ def _xgb_scores(
     model.fit(X_train, y_train)
     return model.predict_proba(X_eval)[:, 1], dict(
         sorted(
-            zip(BUNDLE_FEATURES, model.feature_importances_.tolist()),
+            zip(columns, model.feature_importances_.tolist()),
             key=lambda kv: -kv[1],
         )
     )
@@ -376,31 +314,30 @@ def run_cpu(
 
     for rung in sorted(rungs or RUNGS):
         bundle_ds = datasets.bundles(ds, rung, seed, pool=pool)
-        X, labels, candidates, signals = bundle_arrays(ds, bundle_ds)
+        matrix, labels, candidates, signals = bundle_arrays(ds, bundle_ds)
         bm25 = bundle_bm25(ds, list(bundle_ds.changes))
 
         # Train on candidate pairs only. Training over the whole suite lets the
         # model spend its capacity learning the candidate mask (which is constant
         # inside the pool at evaluation time) instead of learning to rank within it.
         train_mask = candidates[:split]
-        X_train = X[:split][train_mask]
+        X_train = matrix.X[:split][train_mask]
         y_train = labels[:split][train_mask]
         held_rows, held_cols = np.nonzero(candidates[held])
-        X_eval = X[held][held_rows, held_cols]
-        pred, importances = _xgb_scores(X_train, y_train, X_eval)
+        X_eval = matrix.X[held][held_rows, held_cols]
+        pred, importances = _xgb_scores(X_train, y_train, X_eval, matrix.columns)
         xgb_scores = np.full((n_b, ds.n_tests), -1e9, dtype=np.float32)
         xgb_scores[held[held_rows], held_cols] = pred
 
-        ix = {n: i for i, n in enumerate(BUNDLE_FEATURES)}
         structural = (
-            X[:, :, ix["name_match_any"]] * 2.0
-            + 1.0 / (1.0 + X[:, :, ix["test_n_lines"]])
+            matrix.column("name_match_any") * 2.0
+            + 1.0 / (1.0 + matrix.column("test_n_lines"))
         )
         model_scores = {
             "bundled_xgboost": xgb_scores,
             "bundled_bm25": bm25,
             "bundled_structural": structural,
-            "packing_frac_covered": X[:, :, ix["frac_mutations_covered"]],
+            "packing_frac_covered": matrix.column("frac_mutations_covered"),
             "random": np.random.default_rng(seed).random((n_b, ds.n_tests)).astype(np.float32),
         }
 
@@ -468,19 +405,16 @@ def plot_ladder(
 
     curves: dict[str, list[float]] = {}
     hits: dict[int, dict[str, np.ndarray]] = {}
-    ix_all = None
     for rung in rungs:
         bundle_ds = datasets.bundles(ds, rung, seed)
-        X, labels, candidates, _ = bundle_arrays(ds, bundle_ds)
-        if ix_all is None:
-            ix_all = {n: i for i, n in enumerate(BUNDLE_FEATURES)}
+        matrix, labels, candidates, _ = bundle_arrays(ds, bundle_ds)
         bm = bundle_bm25(ds, list(bundle_ds.changes))
         sf = load_bundle_scores(
             config.ARTIFACTS / f"semif_bundles_rung{rung}_signal.jsonl", n_b, ds.n_tests
         )
         train_mask = candidates[:split]
-        pred, _ = _xgb_scores(X[:split][train_mask], labels[:split][train_mask],
-                              X[held][candidates[held]])
+        pred, _ = _xgb_scores(matrix.X[:split][train_mask], labels[:split][train_mask],
+                              matrix.X[held][candidates[held]], matrix.columns)
         xg = np.full((n_b, ds.n_tests), -1e9, dtype=np.float32)
         r, c = np.nonzero(candidates[held])
         xg[held[r], c] = pred
@@ -488,8 +422,8 @@ def plot_ladder(
             "SemIf (text)": sf,
             "BM25 (text)": bm,
             "XGBoost (structural)": xg,
-            "structural rule": X[:, :, ix_all["name_match_any"]] * 2.0
-            + 1.0 / (1.0 + X[:, :, ix_all["test_n_lines"]]),
+            "structural rule": matrix.column("name_match_any") * 2.0
+            + 1.0 / (1.0 + matrix.column("test_n_lines")),
             "random": np.random.default_rng(seed).random((n_b, ds.n_tests)).astype(np.float32),
         }
         hits[rung] = {name: bundle_hits(s, labels, candidates, held, budget)
@@ -570,7 +504,7 @@ def plot_ladder(
     return str(out)
 
 
-def _test_source(ds: dataset.Dataset, col: int) -> str:
+def _test_source(ds: contract.Dataset, col: int) -> str:
     """Source text of one test function, for the SemIf Document side."""
     return ds.test_source(ds.test_ids[col]) or ""
 

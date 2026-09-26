@@ -52,7 +52,15 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets as dataset_module, evaluate, features
+from . import (
+    accessors,
+    composition,
+    config,
+    contract,
+    datasets as dataset_module,
+    evaluate,
+    features,
+)
 
 BUGSINPY_DIR = config.ARTIFACTS / "bugsinpy"
 SEMIF_CACHE = config.ARTIFACTS / "semif_scores_bugsinpy.jsonl"
@@ -79,34 +87,34 @@ def bug_key(ds: dataset_module.BugsInPyDataset, bug) -> str:
     return f"{ds.name}/{ds.change_id(bug)}"
 
 
-def pooled_row(ds: dataset_module.BugsInPyDataset, bug, pooled: dataset.Dataset) -> int:
+def pooled_row(ds: dataset_module.BugsInPyDataset, bug, pooled: contract.Dataset) -> int:
     """The bug's row in the pooled matrix, whose change ids are namespaced.
 
     Resolved through the pooled dataset's own index rather than a module-level cache:
     the row layout belongs to the pooled value, and two pools must be able to coexist.
     """
-    return pooled.change_index[f"{ds.name}::{ds.change_id(bug)}"]
+    return accessors.change_index(pooled)[f"{ds.name}::{ds.change_id(bug)}"]
 
 
-def pooled_dataset(project_datasets: list[dataset_module.BugsInPyDataset]) -> dataset.Dataset:
+def pooled_dataset(project_datasets: list[dataset_module.BugsInPyDataset]) -> contract.Dataset:
     """The eight projects as one evaluation population, namespacing test ids."""
-    return dataset.pool(project_datasets, name="bugsinpy")
+    return composition.pool(project_datasets, name="bugsinpy")
 
 
 def bug_pools(
     project_datasets: list[dataset_module.BugsInPyDataset],
-    pooled: dataset.Dataset,
+    pooled: contract.Dataset,
 ) -> dict[str, tuple[str, ...]]:
     """``project/bug_id`` -> its own pool, in the pooled dataset's namespaced id space."""
     return {
-        bug_key(ds, bug): tuple(dataset.namespace(ds, t) for t in bug.pool)
+        bug_key(ds, bug): tuple(composition.namespace(ds, t) for t in bug.pool)
         for ds in project_datasets
         for bug in ds.changes
     }
 
 
 def candidate_matrix(
-    project_datasets: list[dataset_module.BugsInPyDataset], pooled: dataset.Dataset
+    project_datasets: list[dataset_module.BugsInPyDataset], pooled: contract.Dataset
 ) -> np.ndarray:
     """``[n_bugs, n_tests]``: a bug is rankable only within its own project's pool.
 
@@ -119,7 +127,7 @@ def candidate_matrix(
         for bug in ds.changes:
             row = pooled_row(ds, bug, pooled)
             for nodeid in bug.pool:
-                col = index.get(dataset.namespace(ds, nodeid))
+                col = index.get(composition.namespace(ds, nodeid))
                 if col is not None:
                     mask[row, col] = True
     return mask
@@ -156,14 +164,14 @@ def audit_bridge(project_datasets: list[dataset_module.BugsInPyDataset]) -> dict
     rows: list[dict] = []
     for ds in project_datasets:
         for bug in ds.changes:
-            change_tokens = set(features.tokenize(ds.diff_text(bug)))
+            change_tokens = set(features.text.tokenize(ds.diff_text(bug)))
             if not change_tokens:
                 continue
             pool = list(bug.pool)
             failing = set(bug.failing)
             overlaps = {}
             for nodeid in pool:
-                test_tokens = set(features.tokenize(ds.test_source(nodeid) or ""))
+                test_tokens = set(features.text.tokenize(ds.test_source(nodeid) or ""))
                 overlaps[nodeid] = len(change_tokens & test_tokens)
             fail_overlap = [overlaps[t] for t in pool if t in failing]
             subset = [t for t in pool if t in failing]
@@ -213,7 +221,7 @@ def audit_bridge(project_datasets: list[dataset_module.BugsInPyDataset]) -> dict
 
 
 def bm25_scores(
-    project_datasets: list[dataset_module.BugsInPyDataset], pooled: dataset.Dataset
+    project_datasets: list[dataset_module.BugsInPyDataset], pooled: contract.Dataset
 ) -> np.ndarray:
     """``[n_bugs, n_tests]`` BM25 of the change text against the bug's own pool.
 
@@ -227,17 +235,17 @@ def bm25_scores(
         for bug in ds.changes:
             row = pooled_row(ds, bug, pooled)
             docs = [ds.test_source(t) or "" for t in bug.pool]
-            scorer = features.BM25Scorer().fit(docs)
+            scorer = features.text.BM25Scorer().fit(docs)
             values = scorer.score(ds.diff_text(bug))
             for nodeid, value in zip(bug.pool, values):
-                col = index.get(dataset.namespace(ds, nodeid))
+                col = index.get(composition.namespace(ds, nodeid))
                 if col is not None:
                     out[row, col] = value
     return out
 
 
 def random_scores(
-    project_datasets: list[dataset_module.BugsInPyDataset], pooled: dataset.Dataset
+    project_datasets: list[dataset_module.BugsInPyDataset], pooled: contract.Dataset
 ) -> np.ndarray:
     """Uniform scores, drawn per bug over that bug's own pool.
 
@@ -254,7 +262,7 @@ def random_scores(
             row = pooled_row(ds, bug, pooled)
             values = rng.random(len(bug.pool)).astype(np.float32)
             for nodeid, value in zip(bug.pool, values):
-                col = index.get(dataset.namespace(ds, nodeid))
+                col = index.get(composition.namespace(ds, nodeid))
                 if col is not None:
                     out[row, col] = value
     return out
@@ -313,7 +321,7 @@ def score_semif(
 
 
 def load_semif(
-    project_datasets: list[dataset_module.BugsInPyDataset], pooled: dataset.Dataset
+    project_datasets: list[dataset_module.BugsInPyDataset], pooled: contract.Dataset
 ) -> np.ndarray:
     """Load the SemIf cache into the pooled matrix layout."""
     pools = bug_pools(project_datasets, pooled)
@@ -344,7 +352,7 @@ def load_semif(
 
 def recall_at_budget(
     scores: np.ndarray,
-    pooled: dataset.Dataset,
+    pooled: contract.Dataset,
     candidates: np.ndarray,
     budgets=BUDGETS,
     rows: np.ndarray | None = None,
@@ -384,7 +392,7 @@ def recall_at_budget(
 
 
 def paired(
-    pooled: dataset.Dataset,
+    pooled: contract.Dataset,
     candidates: np.ndarray,
     a: np.ndarray,
     b: np.ndarray,
@@ -405,7 +413,7 @@ def paired(
 
 def collect_scores(
     project_datasets: list[dataset_module.BugsInPyDataset],
-    pooled: dataset.Dataset,
+    pooled: contract.Dataset,
 ) -> dict[str, np.ndarray]:
     """Every selector this arm can afford, in the pooled matrix layout."""
     scores: dict[str, np.ndarray] = {
@@ -447,7 +455,7 @@ def main() -> None:
             }
             for d in project_datasets
         },
-        "warnings": [w.to_dict() for w in pooled.warnings],
+        "warnings": [w.to_dict() for w in pooled.integrity_notes()],
     }
 
     if args.stage in ("audit", "all"):

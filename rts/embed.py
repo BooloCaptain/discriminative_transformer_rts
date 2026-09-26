@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, datasets
+from . import accessors, config, contract, datasets, features, splits
 
 
 def load_embedding_model(
@@ -94,7 +94,7 @@ def embed_texts(
 
 
 def build_scores(
-    ds: dataset.Dataset,
+    ds: contract.Dataset,
     batch_size: int = 16,
     max_length: int = 512,
     model=None,
@@ -105,9 +105,8 @@ def build_scores(
     if model is None:
         model, tokenizer, metadata = load_embedding_model(device=device)
         print(f"[embed] {metadata}", flush=True)
-    infos = {t: ds.test_source(t) for t in ds.test_ids}
-    test_texts = [infos[t] if infos[t] is not None else "" for t in ds.test_ids]
-    change_texts = [dataset.change_query_text(ds, c) for c in ds.changes]
+    test_texts = [accessors.test_source(ds, t) or "" for t in ds.test_ids]
+    change_texts = [features.derived.change_query_text(ds, c) for c in ds.changes]
 
     print(f"[embed] encoding {len(test_texts)} tests ...", flush=True)
     test_vecs = embed_texts(model, tokenizer, test_texts, batch_size, max_length)
@@ -121,10 +120,11 @@ def run(batch_size: int = 16, max_length: int = 512, device: str = "auto") -> np
     from . import evaluate
 
     ds = datasets.marshmallow()
+    split = splits.make_split(ds)
     scores = build_scores(ds, batch_size=batch_size, max_length=max_length, device=device)
     results = evaluate.evaluate(
-        scores, ds, ds.test_idx, budgets=(0.01, 0.05, 0.1, 0.2),
-        n_bootstrap=1000, candidates=dataset.candidate_mask(ds, "covered"),
+        scores, ds, split.test_idx, budgets=(0.01, 0.05, 0.1, 0.2),
+        n_bootstrap=1000, candidates=accessors.candidates(ds, "covered"),
     )
     print(evaluate.format_table("embed_codebert (covered candidates)", results))
     np.save(config.ARTIFACTS / "embed_scores.npy", scores)
