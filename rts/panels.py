@@ -418,4 +418,9 @@ def run(n_bins: int = N_BINS) -> dict:
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bins", type=int, default=N_BINS, help="sparsity deciles")
+    args = parser.parse_args()
+    run(n_bins=args.bins)

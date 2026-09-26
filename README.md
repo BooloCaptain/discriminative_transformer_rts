@@ -5,11 +5,11 @@ the feasibility study that answers it, on a mutation-testing benchmark and then 
 and the harness that makes the measurements reproducible.
 
 **Bottom line: on this benchmark SemIf loses in every regime where coverage is available, and wins
-only once it is removed.** With the full feature set, a coverage + BM25 tree reaches 0.700 recall
-at budget 0.05 against SemIf's 0.306. On the real-label corpus (BugsInPy, no coverage at all)
-SemIf ties BM25 rather than beating it. The full numbers, the four text-side levers that were
-tried and failed, and what would change the verdict are in
-[`docs/handoff.md`](docs/handoff.md).
+only once it is removed.** With the coverage-based candidate mask, a coverage + BM25 tree reaches
+0.700 recall at budget 0.05 against SemIf's 0.306 (`artifacts/results_covered.json`). On the
+real-label corpus (BugsInPy, which has no coverage at all) SemIf ties BM25 rather than beating it.
+The full numbers, the four text-side levers that were tried and failed, and what would change the
+verdict are in [`docs/handoff.md`](docs/handoff.md).
 
 ## Layout
 
