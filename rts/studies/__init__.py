@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 
 from ..experiment import run
+from . import bugsinpy
 from .arms import (
     SPARSE_BUDGETS,
     SPARSE_THRESHOLDS,
@@ -48,6 +49,11 @@ from .arms import (
     semif_production_arm,
     sparse_arm,
     study_arm,
+)
+from .bugsinpy import (
+    BUGSINPY_BUDGETS,
+    bugsinpy_arm,
+    run_bugsinpy,
 )
 from .axes import (
     ABLATION_MODELS,
@@ -100,6 +106,7 @@ from .variations import (
 __all__ = [
     "ABLATION_MODELS",
     "ARMS",
+    "BUGSINPY_BUDGETS",
     "LADDER_BUDGETS",
     "LADDER_PROBE",
     "LADDER_RESAMPLES",
@@ -116,6 +123,7 @@ __all__ = [
     "VARIATION_TABLE_RESAMPLES",
     "dataset",
     "dataset_axis",
+    "bugsinpy_arm",
     "embed_arm",
     "embed_cache",
     "embed_model_axis",
@@ -135,6 +143,7 @@ __all__ = [
     "redundancy_arm",
     "redundancy_model_axis",
     "rung_block",
+    "run_bugsinpy",
     "run_study",
     "semif_margins",
     "semif_production_arm",
@@ -161,6 +170,9 @@ ARMS: dict[str, object] = {
     # Declared so score *production* is addressable like any other arm: the GPU tier is what
     # makes it score rather than report an unmeasured cell.
     "semif.produce": lambda: semif_production_arm(),
+    # One budget, which is the arm's unit: the recorded intervals are per-budget, so the full
+    # sweep is four runs through ``studies.run_bugsinpy`` (see ``rts/studies/bugsinpy``).
+    "bugsinpy": lambda: bugsinpy_arm(0.05),
 }
 
 

@@ -253,6 +253,21 @@ class BugsInPyDataset(Dataset):
     def test_source(self, test: TestId) -> str | None:
         return self._sources.get(test)
 
+    def own_candidate_pool(self) -> np.ndarray:
+        """A bug's candidates are its own project's enumerated tests.
+
+        Not the whole suite: pooling eight projects means a budget of a fraction of their
+        union would mean eight different things.
+        """
+        mask = np.zeros((len(self._bugs), len(self._pool)), dtype=bool)
+        index = {test: j for j, test in enumerate(self._pool)}
+        for i, bug in enumerate(self._bugs):
+            for test in bug.pool:
+                j = index.get(test)
+                if j is not None:
+                    mask[i, j] = True
+        return mask
+
     # --- declarations -----------------------------------------------------
 
     def capabilities(self) -> frozenset[Capability]:

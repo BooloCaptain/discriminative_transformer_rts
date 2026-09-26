@@ -164,13 +164,14 @@ leaf** against the recorded one:
     python scripts/verify_experiment_layer.py variations
 
 It exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the
-documented addition list. Three migrations have passed it:
+documented addition list. Four migrations have passed it:
 
 | artifact | result |
 |---|---|
 | `results_full.json`, `results_covered.json` | 1581 leaves each, exact; refreshed for one documented addition |
 | `ladder.json`, both label sources | 967 and 968 leaves, exact; regeneration is **byte-identical** |
 | `variations.json`, six of seven sections | 6490 leaves, exact; **nothing changed** |
+| `bugsinpy_results.json` | 194 leaves, exact; regeneration is **byte-identical** |
 
 So the recorded artifacts are the specification, not a sanity check. If a migration moves a
 number, either the migration is wrong or the movement is a finding to be argued and recorded --
@@ -186,7 +187,9 @@ sample of fields compared.
 | `rts/pipeline.py` | renders `results_{full,covered}.json` from a declared arm |
 | `rts/ladder.py` | renders `ladder.json` from a declared arm |
 | `rts/variations.py` | six of seven sections rendered; `p5_trained` and `p1_direct` keep their original code |
-| `rts/studies.py` | the declarations: axes, arms, and the readings that turn a report back into a table |
+| `rts/bugsinpy.py` | renders `bugsinpy_results.json` from a declared arm, byte-identically |
+| `rts/panels.py` | the sparsity panels; off the layer on purpose (see §13 of `experiment.md`) |
+| `rts/studies/` | the declarations: axes, arms, the ladder, the variations, the readings, and the BugsInPy arm |
 | `rts/experiment.py` | the layer itself |
 
 ### The remaining work, in priority order
@@ -207,11 +210,30 @@ definitions as a dataset axis, the pool mode as an element parameter, and a rend
 `bundles_cpu_signal.json` / `bundles_cpu_union.json` plus `figures/complexity_ladder.png`. Gate:
 regenerate both artifacts.
 
-**3. `bugsinpy` -- the real-data arm.** `bugsinpy_results.json` is a documented artifact and the
-only real-label data in the study. Needs a dataset element for the pooled corpus (eight projects,
-one dataset each, already composed by `datasets.bugsinpy_pooled`) and a renderer for its bespoke
-content: the T0 bridge audit and the per-project recall breakdown. Gate: regenerate
-`bugsinpy_results.json`; the pooled SemIf-vs-BM25 tie at b0.05 is the number to watch.
+**3. `bugsinpy` -- the real-data arm. DONE.** `bugsinpy_results.json` was a documented artifact
+and the only real-label data in the study. Migrated, and the rendered artifact is **byte-identical**
+(194 leaves, 0 mismatches): `scripts/verify_experiment_layer.py bugsinpy` now covers it. The arm
+needed three capabilities, each added to the value rather than to the layer:
+
+* a **per-change candidate pool**, `Dataset.own_candidate_pool()`, because a budget is a fraction
+  of *that bug's* project suite rather than of the union of eight. It reproduces the old inline
+  `candidate_matrix` exactly, and a test pins that;
+* **per-change-scope selectors**, `PerPoolRandomSelector` and `PerPoolLexicalSelector`, because a
+  global BM25 index over eight projects would let one project's vocabulary move another's
+  scores, and a global random draw would give each bug a different set of ranks. Both reproduce
+  the legacy matrices bit-for-bit;
+* a **cache loader keyed by position within a bug's pool**, which is why it lives with the arm's
+  declarations rather than in `rts/semif.py`.
+
+The one thing deliberately left outside is **score production** (`--stage semif`): it writes a
+record format nothing else uses, and moving it onto the layer would need the same tier story
+`semif.produce` has. Unlike the marshmallow caches, this one is *read* as a requirement, so an
+absent cache is an unmeasured cell rather than a crash.
+
+One subtlety worth recording, because it nearly moved every interval: the recorded table
+intervals came from a **fresh bootstrap generator per budget**, so the arm is four runs (one
+budget each) sharing one score cache -- sweeping the grid in one call would consume one generator
+across the four. Budgets are a knob, so four runs is the honest expression of that.
 
 **4. Split `rts/studies.py` into a package.** It is now about 1150 lines holding three catalogues
 -- the headline arms, the ladder's declarations, the variation arms. Splitting is mechanical

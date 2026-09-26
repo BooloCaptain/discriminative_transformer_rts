@@ -180,6 +180,27 @@ class PooledDataset(Dataset):
             "note": "rows are concatenated in constituent order; test ids are namespaced",
         }
 
+    def own_candidate_pool(self) -> np.ndarray | None:
+        """The constituents' own pools, laid out against the pooled test order.
+
+        ``None`` unless *every* constituent has one: a per-change pool is only meaningful
+        when each change's candidates come from its own suite, and if one constituent cannot
+        say what its pool is, a pooled answer would be a guess.
+        """
+        masks = [d.own_candidate_pool() for d in self._datasets]
+        if any(mask is None for mask in masks):
+            return None
+        rows = sum(len(d.changes) for d in self._datasets)
+        out = np.zeros((rows, len(self._pool)), dtype=bool)
+        row = col = 0
+        for ds, mask in zip(self._datasets, masks):
+            assert mask is not None  # narrowed by the check above
+            n_rows, n_cols = len(ds.changes), len(ds.test_ids)
+            out[row : row + n_rows, col : col + n_cols] = mask
+            row += n_rows
+            col += n_cols
+        return out
+
     def integrity_notes(self) -> Sequence[Warning]:
         units = self.mixed_test_units()
         if not units:

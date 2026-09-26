@@ -540,36 +540,50 @@ code and artifact in step:
     recorded but not reproducible, and only the layer's *behaviour* differs today: it would report
     an unmeasured cell with the path instead of raising. The code is kept as the record of what
     ran.
-* **`bundles` and `bugsinpy` are not migrated.** `bundles` needs a bundle-rung dataset axis and a
-  bundle feature block; `studies._bundle_dataset` already shows the derived-dataset pattern as a
-  three-line element, so the dataset side is cheap and the block side is the work. `bugsinpy`
-  needs a dataset element for the pooled corpus and its own renderer (the bridge audit and the
-  per-project breakdown). `analysis` is a different case, and is now **settled**: it had no axes
-  or arms, so there was nothing to sweep. It is renamed `rts/panels.py` and sits beside
-  `reporting` and `figures` as an artifact reader. Its two non-cell properties are why it is not
-  an arm, and both are stated in its docstring: the deciles are cut from the dataset, and each
-  model is evaluated on the subset of a bin it actually has scores for -- a per-*row* filter,
-  where `Element.applies` is per-*cell*.
-  derives the sparsity-sweep panels from the recorded caches, so there is nothing to sweep -- it
-  belongs beside `reporting` and `figures` as an artifact reader rather than on the layer.
-* **`studies.py` is now ~1150 lines** and is three catalogues in one module (the headline arms, the
-  ladder's declarations, the variation arms). Splitting it into a package is mechanical and would
-  make the variation arms findable; it is pending rather than unclear.
+* **`bugsinpy` is migrated; `bundles` is not.** The real-label arm is declared in
+  `rts/studies/bugsinpy.py` and rendered byte-identically by `rts/bugsinpy.py`. It needed three
+  capabilities, each added to a *value* rather than to the layer: a per-change candidate pool
+  (`Dataset.own_candidate_pool`), per-change-scope selectors (a BM25 fitted per change over that
+  change's own documents, and a per-change random draw), and a cache loader keyed by position
+  within a bug's own pool. `bundles` still needs a bundle-rung dataset axis and a bundle feature
+  block; `studies._bundle_dataset` already shows the derived-dataset pattern as a three-line
+  element, so its dataset side is cheap and the block side is the work.
+* **`panels` is settled: off the layer on purpose.** It was `rts/analysis.py`, it had no axes or
+  arms, and it sits beside `reporting` and `figures` as an artifact reader. Its two non-cell
+  properties are why it is not an arm, and both are stated in its docstring: the deciles are cut
+  from the *dataset*, and each model is evaluated on the subset of a bin it actually has scores
+  for -- a per-*row* filter, where `Element.applies` is per-*cell*. Evaluating the unscored rows
+  instead would report `semif.load_scores`'s sentinel as a measurement.
+* **`rts/studies` is a package** (`axes`, `arms`, `ladder`, `variations`, `readings`,
+  `bugsinpy`), re-exporting every public name so no call site changed. The split was scripted as
+  an anchor-based partition that asserts the pieces rebuild the original file byte for byte, so a
+  mis-anchored cut cannot silently drop a function.
 * **`figures.py` is untouched and needs nothing.** It reads `artifacts/variations.json`, whose
-  shape the renderer reproduces, so the figures follow the payload without change.
-* **A `RunReport` cannot be handed to a consumer directly.** The pipeline renderer rebuilds the
-  dataset to call `reporting.describe` and `reporting.recurrence`, because the report records the
-dataset's *declaration* and per-cell counts but not the dataset itself. That is a deliberate
-  choice -- a report should stay serialisable -- and rebuilding is cheap and permitted
-  (`refactor.md` §7), but a consumer that wants several statistics would rather build once.
-* **Producing score caches is still outside the layer.** A `semif_runner` GPU arm is a
-  *precondition* of a model element, not a cell. Modelling production as well as consumption
-  would be a second feature (a build graph over artifacts); the layer currently treats caches
-  as given, which is what they are.
-* **`test_unit`/semantics checks across a pooled dataset** are declared but not policed
-  (`refactor.md` §13); the experiment layer does not change that.
+  shape the renderer reproduces, so the figures follow the payload without change. It is an
+  artifact reader like `panels.py`, and that is the stated boundary: a *figure* is a reading of
+  recorded numbers, not a sweep.
+* **A `RunReport` now carries what a renderer needs, but not the dataset object.** A run records,
+  once per (dataset, split), the dataset's declaration, its description under the split it used
+  and the pair-recurrence statistic, plus each population's size before and after the fault
+  filter. `pipeline.render` and `ladder.run_label_source` read those instead of rebuilding the
+  dataset, and `variations` reads its population sizes from the report, so no renderer can
+  describe a dataset the run did not measure. What is still *not* on the report is the dataset
+  itself: a value a renderer needs as an object (the ladder's populations, an arm's
+  `own_candidate_pool`) it rebuilds, which is cheap and permitted (`refactor.md` §7), and which
+  keeps the report serialisable.
+* **Producing score caches is a cell now, for the caches that read as requirements.**
+  `semif_runner.score_context` is the context-driven entry point and `models.ProducedScores` is
+  the selector whose `requirements()` is empty on purpose: declaring the cache would make the
+  cell unmeasured before it could produce it. `python -m rts.studies semif.produce --tiers gpu`
+  scores and writes; without the GPU tier the cell is reported unmeasured. The BugsInPy cache is
+  the exception and is still produced by `python -m rts.bugsinpy --stage semif`: it uses a record
+  format nothing else reads, so it would need its own production element.
+* **`test_unit`/semantics across a pooled dataset** are declared and now **policed**: the BugsInPy
+  pool's constituents agree on `test_unit`, and a test asserts both that and that the pool emits
+  no `pool.mixed_test_unit` note -- so a warning that fired unconditionally, or one that never
+  fired, would fail.
 * **Cost is recorded, not modelled.** No budget-limited execution.
-* **`splits.in_window` is not enforced.** A population's rows are taken from the split's
-  evaluation window by construction, but a custom population predicate that named rows outside
-  it would not be caught. Worth a check if a population is ever built from something other than
-  the held-out set.
+* **`splits.in_window` is enforced.** `Split` checks its own partition invariant, and
+  `evaluate_rows`/`evaluate` refuse rows outside the split's window when one is given. The layer
+  passes its split, so the guard holds there by construction -- which is the point: it exists for
+  the callers that pass rows *directly*, which is what evaluating inside the held-out tail does.

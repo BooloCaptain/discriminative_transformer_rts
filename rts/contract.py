@@ -42,6 +42,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Iterable, Mapping, Sequence, TypeVar
 
+import numpy as np
+
 TestId = str
 
 T = TypeVar("T")
@@ -302,6 +304,21 @@ class Dataset(ABC):
     def durations(self) -> Mapping[TestId, float]:
         """Per-test wall-clock durations. Only call when ``durations`` is declared."""
         raise CapabilityMissing(self.name, Capability.DURATIONS)
+
+    def own_candidate_pool(self) -> np.ndarray | None:
+        """A per-change candidate mask, when a change's pool is not the whole suite.
+
+        ``None`` -- the default -- means the harness's ``full``/``covered`` modes are the
+        only sensible ones, which is true when one suite serves every change. A pooled
+        corpus of projects is the case this exists for: a bug's candidates are its *own*
+        project's tests, so a budget of a fraction of the union of eight suites would mean
+        eight different things.
+
+        An ndarray rather than a path because it is derived from the labels-like material
+        the dataset already holds; returning it here keeps the knowledge of *what a pool
+        is* with the dataset that has one.
+        """
+        return None
 
     # --- declarations -----------------------------------------------------
 

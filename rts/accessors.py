@@ -156,11 +156,18 @@ def candidates(ds: Dataset, mode: str = "full") -> np.ndarray:
     ``full``    -- every test in the pool, the realistic RTS setting.
     ``covered`` -- only tests covering the change, plus that change's killing tests as
                    a safety net. Requires ``coverage``.
+    ``own``     -- the dataset's own per-change pool, for a corpus where each change's
+                   candidates come from its own suite ``(Dataset.own_candidate_pool)``.
 
     All selectors are evaluated on the same mask so the comparison stays fair.
     """
     if mode == "full":
         return np.ones((ds.n_changes, ds.n_tests), dtype=bool)
+    if mode == "own":
+        pool = ds.own_candidate_pool()
+        if pool is None:
+            raise CapabilityMissing(ds.name, "own_candidate_pool")
+        return pool
     if mode != "covered":
         raise ValueError(f"unknown candidate mode: {mode!r}")
     if not ds.has_capability(Capability.COVERAGE):

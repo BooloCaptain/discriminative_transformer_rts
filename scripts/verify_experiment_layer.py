@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rts import config, ladder, pipeline, studies, variations  # noqa: E402
+from rts import bugsinpy, config, ladder, pipeline, studies, variations  # noqa: E402
 
 #: The variation sections the layer produces. ``p5_trained`` and ``p1`` are not migrated -- the
 #: first needs an evaluation window inside the held-out tail, the second's cache is absent -- so
@@ -121,6 +121,21 @@ def verify_ladder(labels: str = "mutmut") -> None:
     compare_payload(f"ladder[{labels}]", ladder.run_label_source(labels, verbose=True), recorded)
 
 
+def verify_bugsinpy() -> None:
+    """Run the real-label arm and compare the artifact it renders.
+
+    This is the one arm whose labels are not defined by coverage, so it is the check that the
+    layer reproduces a *measurement* rather than a synthetic construction. Its numbers depend on
+    details that are easy to get subtly wrong -- a budget per run, because the recorded
+    intervals came from a fresh bootstrap generator each, and a column resolved through each
+    bug's own pool -- which is exactly why it is compared leaf by leaf rather than sampled.
+    """
+    recorded = load("bugsinpy_results.json")
+    print("\n--- bugsinpy arm vs bugsinpy_results.json ---")
+    got = bugsinpy.run(verbose=False, save=False)
+    compare_payload("bugsinpy", got, recorded)
+
+
 # --- the variation sections -------------------------------------------------
 
 
@@ -145,12 +160,12 @@ def verify_variations(sections=VARIATIONS_SECTIONS) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("arms", nargs="*", choices=["study", "ladder", "variations"])
+    parser.add_argument("arms", nargs="*", choices=["study", "ladder", "variations", "bugsinpy"])
     parser.add_argument("--labels", nargs="*", choices=list(config.LABEL_SOURCES))
     parser.add_argument("--candidates", nargs="*", choices=["full", "covered"])
     args = parser.parse_args()
 
-    arms = args.arms or ["study", "ladder", "variations"]
+    arms = args.arms or ["study", "ladder", "variations", "bugsinpy"]
     labels = args.labels or ["mutmut", "full"]
     candidates = args.candidates or ["full", "covered"]
 
@@ -164,6 +179,10 @@ def main() -> int:
         for name in labels:
             verify_ladder(name)
         print(f"  ladder arms total: {CHECKS[0] - before} comparisons")
+    if "bugsinpy" in arms:
+        before = CHECKS[0]
+        verify_bugsinpy()
+        print(f"  bugsinpy arm total: {CHECKS[0] - before} comparisons")
     if "variations" in arms:
         before = CHECKS[0]
         verify_variations()

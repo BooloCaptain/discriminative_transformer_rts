@@ -198,6 +198,81 @@ class LexicalSelector(Selector):
         )
 
 
+class PerPoolRandomSelector(Selector):
+    """Uniform scores drawn per change over that change's **own** candidate pool.
+
+    :class:`RandomSelector` draws over the whole matrix, which is the right baseline when every
+    change is ranked against one suite. When each change has its own pool, drawing over the
+    union gives each change a different set of ranks, so the baseline would move for a reason
+    that has nothing to do with the method under test.
+
+    One generator for the whole matrix, consumed change by change in canonical order. The draw
+    *sequence* is part of a recorded baseline, so it is deliberately not re-derived per row.
+    """
+
+    name = "random"
+
+    def __init__(self, candidates_mode: str = "full", seed: int | None = None):
+        self.candidates_mode = candidates_mode
+        # ``None`` means "the run's seed", the same rule the other selectors follow.
+        self.seed = seed
+
+    def scores(self, ctx: Context) -> np.ndarray:
+        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
+        rng = np.random.default_rng(ctx.seed if self.seed is None else self.seed)
+        out = np.full((ctx.ds.n_changes, ctx.ds.n_tests), -1e9, dtype=np.float32)
+        for row in range(ctx.ds.n_changes):
+            cols = np.flatnonzero(candidates[row])
+            if cols.size == 0:
+                continue
+            out[row, cols] = rng.random(cols.size).astype(np.float32)
+        return out
+
+
+class PerPoolLexicalSelector(Selector):
+    """BM25 fitted once per change, over that change's own candidate documents.
+
+    :class:`LexicalSelector` scores every pair against one index fitted over the whole suite,
+    which makes a term's idf depend on every other change's tests. That is right when one suite
+    serves every change. With per-change pools it is a different quantity -- and for a pooled
+    multi-project corpus it would let one project's vocabulary move another project's scores.
+
+    ``query`` selects which side of the change is the query:
+
+    * ``"change"`` -- the added-and-removed-lines extraction the study's own BM25 uses;
+    * ``"diff"`` -- the raw unified diff, ``+``/``-`` markers and hunk headers included, which
+      is what the BugsInPy arm's recorded numbers used.
+
+    The two are recorded as a choice rather than reconciled: they differ, and which one a model
+    is entitled to see is a decision about the arm, not a spelling of one idea.
+    """
+
+    name = "bm25_lexical"
+
+    def __init__(self, candidates_mode: str = "full", query: str = "change"):
+        if query not in ("diff", "change"):
+            raise ValueError(f"query must be 'diff' or 'change', not {query!r}")
+        self.candidates_mode = candidates_mode
+        self.query = query
+
+    def scores(self, ctx: Context) -> np.ndarray:
+        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
+        out = np.full((ctx.ds.n_changes, ctx.ds.n_tests), -1e9, dtype=np.float32)
+        for row, change in enumerate(ctx.ds.changes):
+            cols = np.flatnonzero(candidates[row])
+            if cols.size == 0:
+                continue
+            docs = [ctx.ds.test_source(ctx.ds.test_ids[int(c)]) or "" for c in cols]
+            scorer = features.text.BM25Scorer().fit(docs)
+            query = (
+                ctx.ds.diff_text(change)
+                if self.query == "diff"
+                else features.derived.change_query_text(ctx.ds, change)
+            )
+            out[row, cols] = scorer.score(query)
+        return out
+
+
 class XGBoostSelector(Selector):
     """Gradient-boosted trees on the structured features.
 
