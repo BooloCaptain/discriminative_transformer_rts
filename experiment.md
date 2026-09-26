@@ -524,7 +524,7 @@ code and artifact in step:
 
 ## 13. What remains
 
-> Status, ordering and cost for these items are in **`implementation.md` §15**, which is the
+> Status, ordering and cost for these items are in **`handoff.md` §2**, which is the
 > handoff for the harness. This section is the design-level statement of what is missing and why;
 > that one is the work record and is kept current.
 

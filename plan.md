@@ -67,12 +67,15 @@ section 5.7 of `implementation.md`.
 > and (b) real data — BugsInPy for honest labels, and a boundary-structured corpus for the
 > actual regime. **Proposal 2 below (de-lexicalisation) is retired**: it varied vocabulary while
 > holding structure fixed, and measurement showed the coverage-bearing tree is unaffected by it.
-
+>
+> Full status — the bottom line, what is complete, and the harness's own remaining work — is in
+> `handoff.md`, which carries this same agenda in its section 1. Keep the two in sync.
 This is the agenda for the next session. The study's question is answered — SemIf does not
 beat the classical selectors in any regime tested, and all four text-side levers failed
-(`implementation.md` §6 and §11) — so what follows is the work that could still change that,
-or show the benchmark is measuring the wrong thing. It rests on two independent gaps between
-this benchmark and the target setting (long-running integration tests of embedded systems).
+(`implementation.md` §6; the headline tables are in `handoff.md` §1) — so what follows is the
+work that could still change that, or show the benchmark is measuring the wrong thing. It rests
+on two independent gaps between this benchmark and the target setting (long-running integration
+tests of embedded systems).
 
 **Gap 1 — the label set is defined by coverage.** `mutmut` only *runs* the tests covering the
 mutated function, so a fault whose real killer does not cover the changed function is
