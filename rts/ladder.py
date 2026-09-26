@@ -57,7 +57,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, evaluate, features, models, semif
+from . import config, dataset, datasets, evaluate, features, models
+from .dataset import REQ_LABELS, Population, Unmeasured, is_unmeasured
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 PROBE = 0.05
@@ -65,6 +66,10 @@ N_BOOTSTRAP = 2000
 
 SEMIF_LADDER_CACHE = config.ARTIFACTS / "semif_scores_ladder141_full.jsonl"
 SEMIF_NAME = "semif_reranker"
+# The rungs and the SemIf cache reproduce the documented numbers by explicitly asking
+# for the features the harness would otherwise leave off (history on an imposed order)
+# and by opening the cache the paired comparison rests on.
+STRUCTURED_HISTORY = True
 
 # Feature families removed cumulatively. The rung name states what is *unavailable*.
 FAMILIES: dict[str, tuple[str, ...]] = {
@@ -94,24 +99,76 @@ def _mask_context(
     return X_masked, bm25_masked
 
 
-def build_populations(ds: dataset.Dataset) -> dict[str, np.ndarray]:
-    """Change-row indices for each evaluation population."""
-    held = set(ds.test_idx.tolist())
-    fault = {i for i in ds.fault_idx.tolist() if i in held}
+def _cached_change_ids() -> set[str] | None:
+    """Change ids with a complete full-pool SemIf cache, or ``None`` if there is none."""
+    if not SEMIF_LADDER_CACHE.exists():
+        return None
+    ids: set[str] = set()
+    with SEMIF_LADDER_CACHE.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                ids.add(json.loads(line)["change_id"])
+    return ids
 
-    cached_ids: set[str] = set()
-    if SEMIF_LADDER_CACHE.exists():
-        with SEMIF_LADDER_CACHE.open() as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    cached_ids.add(json.loads(line)["change_id"])
 
-    starved = np.array(
-        sorted(i for i in fault if ds.changes[i].change_id in cached_ids), dtype=np.int64
+def build_populations(ds: dataset.Dataset) -> dict[str, "Population | Unmeasured"]:
+    """The ladder's two averaging populations, declared rather than hard-coded.
+
+    A population declares its requirements; where a dataset -- or, here, an external
+    artifact -- cannot meet them, the population is *unavailable*, never silently
+    empty. ``starved141`` needs the SemIf cache to exist at all, so a missing cache
+    makes it unmeasured rather than making it smaller.
+
+    NOTE: ``starved141`` is a provenance name. Under corrected full-suite labels the
+    starved filter collapses (11 held-out faults at ``failures <= 5``), because it was
+    keyed on an under-counted failure history, so this population is no longer
+    interpretable as "starved" -- it is simply a held-out subset.
+    """
+    populations: dict[str, Population | Unmeasured] = {}
+
+    cached = _cached_change_ids()
+    if cached is None:
+        populations["starved141"] = Unmeasured(
+            requirement="artifact:semif_ladder_cache",
+            note=(
+                f"{SEMIF_LADDER_CACHE.name} is missing, so the starved141 population "
+                "cannot exist; the paired comparison has no SemIf scores to pair against"
+            ),
+        )
+    else:
+        populations["starved141"] = Population(
+            name="starved141",
+            note=(
+                "held-out changes with a complete full-pool SemIf cache; paired "
+                "comparisons happen here"
+            ),
+            requires=frozenset({REQ_LABELS}),
+            predicate=lambda d: np.array(
+                [d.change_id(c) in cached for c in d.changes], dtype=bool
+            ),
+        )
+
+    populations["heldout530"] = Population(
+        name="heldout530",
+        note="every held-out change; classical selectors only, since SemIf has no full-pool cache there",
+        requires=frozenset({REQ_LABELS}),
+        predicate=lambda d: d.fault_mask
+        & np.isin(np.arange(d.n_changes), d.test_idx),
     )
-    heldout = np.array(sorted(fault), dtype=np.int64)
-    return {"starved141": starved, "heldout530": heldout}
+    return populations
+
+
+def _population_rows(
+    ds: dataset.Dataset, populations: dict[str, "Population | Unmeasured"]
+) -> dict[str, np.ndarray | Unmeasured]:
+    out: dict[str, np.ndarray | Unmeasured] = {}
+    for name, spec in populations.items():
+        if isinstance(spec, Unmeasured):
+            out[name] = spec
+            continue
+        out[name] = spec.rows(ds, ds.test_idx)
+    return out
 
 
 def _selectors(include_semif: bool) -> list[models.Selector]:
@@ -128,11 +185,10 @@ def _selectors(include_semif: bool) -> list[models.Selector]:
 
 
 def run_label_source(label_source: str, verbose: bool = True) -> dict:
-    config.set_labels(label_source)
-    ds = dataset.build()
-    X, names = features.structured_features(ds)
+    ds = datasets.marshmallow(labels=label_source)
+    X, names = features.structured_features(ds, history=STRUCTURED_HISTORY)
     bm25 = features.build_bm25_scores(ds)
-    populations = build_populations(ds)
+    populations = _population_rows(ds, build_populations(ds))
     candidates = dataset.candidate_mask(ds, "full")
 
     if verbose:
@@ -140,14 +196,29 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
         print(f"TRACEABILITY LADDER -- labels={label_source}")
         print("=" * 78)
         print(f"  changes {ds.n_changes}  tests {ds.n_tests}  held-out faults {len(ds.test_fault_idx)}")
-        print(f"  starved141 {len(populations['starved141'])}  heldout530 {len(populations['heldout530'])}")
+        for name, rows in populations.items():
+            size = "unmeasured" if is_unmeasured(rows) else len(rows)
+            print(f"  {name} {size}")
 
     report: dict = {
         "labels": label_source,
         "n_changes": ds.n_changes,
         "n_tests": ds.n_tests,
         "held_out_faults": int(len(ds.test_fault_idx)),
-        "populations": {k: int(len(v)) for k, v in populations.items()},
+        "populations": {
+            k: (None if is_unmeasured(v) else int(len(v))) for k, v in populations.items()
+        },
+        "populations_unmeasured": {
+            k: v.to_dict() for k, v in populations.items() if is_unmeasured(v)
+        },
+        "dataset_declaration": {
+            "name": ds.name,
+            "ordering": ds.ordering().value,
+            "test_unit": ds.test_unit().value,
+            "capabilities": sorted(ds.capabilities()),
+            "semantics": dict(ds.semantics()),
+        },
+        "warnings": ds.warnings.to_list(),
         "rungs": {},
     }
 
@@ -165,6 +236,13 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
         rung_report: dict = {"removed": list(removed), "selectors": {}, "comparisons": {}}
 
         for pop_name, rows in populations.items():
+            if is_unmeasured(rows):
+                # Unavailable, not empty: record why and evaluate nothing, rather than
+                # reporting an average over a population that cannot exist.
+                if verbose:
+                    print(f"    {pop_name}: unmeasured -- {rows.note}")
+                rung_report["selectors"][pop_name] = {"unmeasured": rows.to_dict()}
+                continue
             has_semif = SEMIF_NAME in scores_by_name and pop_name == "starved141"
             table: dict[str, dict] = {}
             for name, scores in scores_by_name.items():
@@ -222,8 +300,10 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
         report["rungs"][rung] = rung_report
         if verbose:
             print(f"\n  [{rung}] removed={list(removed) or 'nothing'}  ({time.perf_counter()-t0:.1f}s)")
-            for pop_name in populations:
+            for pop_name in rung_report["selectors"]:
                 table = rung_report["selectors"][pop_name]
+                if "unmeasured" in table:
+                    continue
                 print(f"    {pop_name}:")
                 for name, row in table.items():
                     rec = row["recall"]

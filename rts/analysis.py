@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, evaluate, features, models, semif
+from . import config, dataset, datasets, evaluate, features, models, semif
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10
@@ -48,7 +48,7 @@ def sparsity_values(ds: dataset.Dataset) -> dict[int, float]:
     out: dict[int, float] = {}
     for i in ds.fault_idx:
         i = int(i)
-        key = (ds.files[i], ds.changes[i].killing_tests[0])
+        key = (ds.change_paths[i], ds.changes[i].killing_tests[0])
         out[i] = float(fails.get(key, 0))
     return out
 
@@ -124,7 +124,7 @@ def panel_c(
 ) -> dict[str, list[float]]:
     """Mechanistic quantities per sparsity bin."""
     ix = {n: i for i, n in enumerate(features.STRUCTURED_NAMES)}
-    X, _ = features.structured_features(ds)
+    X, _ = features.structured_features(ds, history=True)
     covered = X[:, :, ix["covers_function"]]
     name_match = X[:, :, ix["filename_stem_match"]]
 
@@ -322,7 +322,7 @@ def _write_csv(rows: list[dict], path: Path) -> None:
 
 
 def run(n_bins: int = N_BINS) -> dict:
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "covered")
     held = set(int(i) for i in ds.test_fault_idx)
 
@@ -336,7 +336,7 @@ def run(n_bins: int = N_BINS) -> dict:
               f"failures {m['failures_min']:.0f}-{m['failures_max']:.0f} "
               f"(median {m['failures_median']:.0f})")
 
-    X, names = features.structured_features(ds)
+    X, names = features.structured_features(ds, history=True)
     bm25 = features.build_bm25_scores(ds)
     ctx = models.Context(ds=ds, X=X, names=names, bm25=bm25)
     classical = {

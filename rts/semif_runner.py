@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, features, source
+from . import config, dataset, datasets, features
 
 INSTRUCTION = (
     "Given a code change, judge whether the test below exercises the changed "
@@ -425,8 +425,7 @@ def build_pair_set(
     if include_features and feature_mode is None:
         feature_mode = "full"
 
-    infos = source.load_all(ds.test_ids)
-    texts = [features.change_query_text(c) for c in ds.changes]
+    texts = [dataset.change_query_text(ds, c) for c in ds.changes]
     if shuffle:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(texts))
@@ -435,7 +434,9 @@ def build_pair_set(
     X = names = None
     want_blocks = feature_mode is not None
     if want_blocks:
-        X, names = features.structured_features(ds)
+        # The mirror/informative arms exist to compare a model's input against the
+        # classical model's, so they ask for the same feature block explicitly.
+        X, names = features.structured_features(ds, history=True)
 
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, int]] = []
@@ -452,8 +453,7 @@ def build_pair_set(
         else:
             value_sources = cols
         for pos, j in enumerate(cols):
-            info = infos.get(ds.test_ids[j])
-            pairs.append((texts[r], info.source if info else ""))
+            pairs.append((texts[r], ds.test_source(ds.test_ids[j]) or ""))
             index.append((r, j))
             if blocks is not None:
                 blocks.append(
@@ -573,7 +573,7 @@ def pilot(
     """
     from . import evaluate
 
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(order_seed=seed)
     candidates = dataset.candidate_mask(ds, "covered")
     fault_held = [int(i) for i in ds.test_fault_idx]
     rows = np.array(fault_held[:n_changes], dtype=np.int64)
@@ -613,7 +613,7 @@ def smoke_test(n_changes: int = 10, n_distractors: int = 9, batch_size: int = 8,
     This is the cheapest possible go/no-go: real data, known answer, no scoring of
     the full grid.
     """
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(order_seed=seed)
     rng = np.random.default_rng(seed)
     faults = [i for i in ds.test_fault_idx]
     picked = rng.choice(faults, size=min(n_changes, len(faults)), replace=False)
@@ -625,16 +625,15 @@ def smoke_test(n_changes: int = 10, n_distractors: int = 9, batch_size: int = 8,
 
     hits = 0
     for n, i in enumerate(picked, 1):
-        killing = ds.changes[i].killing_tests[0]
+        killing = sorted(ds.killing_tests(ds.changes[i]))[0]
         kill_col = ds.test_index[killing]
         pool = [c for c in ds.covered[i] if c != killing]
         distractors = rng.choice(pool, size=min(n_distractors, len(pool)), replace=False)
         cols = [kill_col] + [ds.test_index[ds.test_ids[c]] if isinstance(c, (int, np.integer)) else ds.test_index[c] for c in distractors]
         cols = [int(c) for c in cols]
 
-        texts = features.change_query_text(ds.changes[i])
-        infos = source.load_all([ds.test_ids[c] for c in cols])
-        pairs = [(texts, infos[ds.test_ids[c]].source) for c in cols]
+        texts = dataset.change_query_text(ds, ds.changes[i])
+        pairs = [(texts, ds.test_source(ds.test_ids[c]) or "") for c in cols]
         scores, _ = score_pairs(model, tokenizer, pairs, batch_size=batch_size, progress_every=0)
 
         order = np.argsort(-np.array(scores))
@@ -694,7 +693,7 @@ def score_heldout(
       of 400 changes is ~62k pairs and is enough to fit the column comparison, with
       the baseline trained on exactly the same rows.
     """
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(order_seed=seed)
     candidates = dataset.candidate_mask(ds, candidates_mode)
     rows = ds.test_idx
     if starved_max_failures is not None:
@@ -765,11 +764,11 @@ def run_controls(
     arms; scores the remaining arms sequentially in one process so the model is
     loaded once.
     """
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(order_seed=seed)
     candidates = dataset.candidate_mask(ds, "covered")
     mask = dataset.starved_mask(ds, max_failures=max_failures)
     rows = ds.test_idx[mask[ds.test_idx]]
-    n_faults = int(sum(1 for i in rows if ds.changes[i].killing_tests))
+    n_faults = int(sum(1 for i in rows if ds.fault_mask[i]))
 
     print(f"subset          : starved failures<={max_failures}")
     print(f"changes         : {len(rows)}")

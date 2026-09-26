@@ -1,11 +1,18 @@
 """Configuration: paths, constants, and pinned choices for the RTS feasibility study.
 
 See ``plan.md`` for the study design and ``implementation.md`` for tooling details.
+
+Note on what is *not* here. The label source (``mutmut`` vs ``full``) used to be a
+module global, on the argument that every selector, feature and evaluation must
+agree on it. The argument was right and the mechanism was wrong: agreement is now
+achieved by handing one :class:`rts.sources.MutmutSource` to every consumer of a
+run. A global could not be scoped to a test, could not be varied within a process,
+and made two datasets over two label sources impossible. See ``refactor.md`` §8,
+which asks for it to go last and deliberately.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 # --- Layout ---------------------------------------------------------------
@@ -30,29 +37,8 @@ FULL_SUITE_TESTS_FILE = SUT / "mutmut-full-suite-tests.json"
 
 ARTIFACTS = WORKSPACE / "artifacts"
 
-# --- Label source ---------------------------------------------------------
-
-# Which outcome log defines the fault labels.
-#   "mutmut" -- mutmut's selected tests only (the historical, documented default)
-#   "full"   -- all 1190 collected tests (the corrected labels)
-# Kept as module state rather than a parameter because it is a study-wide choice: every
-# selector, feature and evaluation must agree on it, and threading it through ~20 call sites
-# of ``dataset.build`` would be error-prone. Set with ``--labels`` on the CLIs, or the
-# ``RTS_LABELS`` environment variable.
-LABELS = os.environ.get("RTS_LABELS", "mutmut")
-
-
-def set_labels(name: str) -> str:
-    """Set the study-wide label source. Returns the previous value."""
-    global LABELS
-    if name not in ("mutmut", "full"):
-        raise ValueError(f"unknown label source: {name!r}")
-    previous, LABELS = LABELS, name
-    return previous
-
-
-def outcomes_file() -> Path:
-    return FULL_SUITE_OUTCOMES_FILE if LABELS == "full" else OUTCOMES_FILE
+# Valid label sources. The old global lived here; see the module docstring.
+LABEL_SOURCES = ("mutmut", "full")
 
 # --- Pinned choices -------------------------------------------------------
 

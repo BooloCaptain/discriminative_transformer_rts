@@ -1102,3 +1102,50 @@ which needs MicroPython built and its bug commits labelled.
   pairs/s measured on marshmallow: prompt length, not batching, sets the throughput on larger
   test files.
 
+## 13. The dataset interface (structural change)
+
+Sections 1-12 describe the study. This section records a structural change to the harness that does
+not alter any of their numbers, and the one place where reproducing those numbers required care.
+
+**What changed.** The harness now has one dataset contract, in `rts/dataset.py`. A dataset supplies
+seven primitives (`name`, `changes`, `files`, `diff_text`, `killing_tests`, `ran_tests`, `test_pool`,
+`test_source`) and three declarations (`capabilities`, `ordering`, `test_unit`/`semantics`). Every
+statistic computed from them — the 15 structured feature columns, cumulative history, candidate sets,
+pair recurrence, `describe` — is a harness function over the contract, implemented once and inherited
+by every dataset. The design and the parts of it that forced a decision are in `refactor.md` §11-13.
+
+**Why it matters for reading these results.** Sections 5 and 12 compare arms across a synthetic SUT,
+a real-bug corpus and a streaming-interop probe. Those comparisons were previously made by three
+separate pieces of code computing "the same" statistic independently. They are now the same function,
+which is what makes "BM25 recall at b0.05 is 0.225 on BugsInPy and 0.688 on marshmallow" a statement
+about two datasets rather than about two implementations.
+
+**Three facts that used to be prose are now declarations.** These are worth knowing when reading §10:
+
+- `ordering() == "imposed"` for both the mutant population and the BugsInPy corpus. History features
+  are therefore **off by default** for them, and the arms in sections 5 and 12 that report history
+  features have opted in explicitly — which is the honest spelling of a limitation that can otherwise
+  be forgotten. `MarshmallowDataset.semantics()` records the order seed.
+- The BugsInPy datasets declare **no capabilities at all**: no coverage, no durations (§12.4). Their
+  feature columns are *unmeasured* rather than an all-zero column a tree would split on.
+- The eight BugsInPy projects are **eight datasets**, pooled for the headline numbers by `pool(...)`.
+  The pooled population is a composition, not a dataset property, so a per-project breakdown (§12.5)
+  is now available — see `artifacts/bugsinpy_results.json`.
+
+**Reproduction.** `artifacts/results_full.json` and `artifacts/ladder.json` were recorded before the
+change and diffed after. Every arm present in both is identical, including bootstrap intervals, and
+`bugsinpy_results.json` reproduces exactly with two additive keys. `results_full.json` in the
+repository was **stale independently of this change**: it had been written before
+`models.default_selectors` gained `xgboost_static_nocov`, `xgboost_static_nocov_lex` and
+`semif_reranker`, so re-running today produces three arms it did not contain. Since diffing the arms
+at all requires regenerating it, the refreshed file is committed with those arms and the four new
+top-level keys (`labels`, `population`, `dataset_declaration`, `warnings`) named explicitly rather
+than absorbed silently.
+
+**Two defects found by diffing, not by reading.** The `random` baseline was being drawn over the whole
+pooled matrix instead of per bug over its own pool, which moved every random-baseline number and the
+SemIf-vs-random comparison with them; and the reported `mean_k` was the rounded per-change figure
+rather than the mean. Both are fixed. The general lesson, which is why §9 lists a diff rather than a
+test as the gate: **RNG consumption pattern is part of a recorded number.**
+
+

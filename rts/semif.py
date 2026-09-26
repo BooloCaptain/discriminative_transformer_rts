@@ -35,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import artifacts, config, dataset
+from . import config, dataset
 # Measured on a 3090 with no prefix reuse (prefix reuse is a direct-mode feature).
 DECISIONS_PER_SECOND = 1.86
 
@@ -71,15 +71,12 @@ def build_pairs(
     Returns ``(rows, index)`` where ``index[i] = (change_row, test_col)`` gives the
     matrix position each row's score belongs to.
     """
-    from . import features, source
-
     if change_rows is None:
         change_rows = np.arange(ds.n_changes)
     if candidates is None:
         candidates = dataset.candidate_mask(ds, "covered")
 
-    infos = source.load_all(ds.test_ids)
-    texts = [features.change_query_text(c) for c in ds.changes]
+    texts = [dataset.change_query_text(ds, c) for c in ds.changes]
     if shuffle:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(texts))
@@ -91,8 +88,7 @@ def build_pairs(
         row = int(r)
         for j in np.flatnonzero(candidates[row]):
             j = int(j)
-            info = infos.get(ds.test_ids[j])
-            test_text = info.source if info else ""
+            test_text = ds.test_source(ds.test_ids[j]) or ""
             rows.append(
                 {
                     "id": f"{ds.changes[row].change_id}|{ds.test_ids[j]}",
@@ -221,9 +217,10 @@ def load_scores(path: Path, ds: dataset.Dataset) -> np.ndarray:
             # pool grows from 1187 to 1189 and every later column shifts).
             if "change_id" in record and "test_nodeid" in record:
                 row = ds.change_index.get(record["change_id"])
-                nodeid = record["test_nodeid"]
-                if config.LABELS == "full":
-                    nodeid = artifacts.canonical_nodeid(nodeid)
+                # The dataset knows whether its pool was rebuilt from a fresh
+                # collection and therefore needs unstable parametrization ids
+                # collapsed; the loader does not have to guess from a global.
+                nodeid = ds.canonical_test_id(record["test_nodeid"])
                 col = ds.test_index.get(nodeid)
             if row is None or col is None:
                 row = record.get("change_row")
@@ -244,9 +241,12 @@ if __name__ == "__main__":
     parser.add_argument("--max-changes", type=int, default=None)
     parser.add_argument("--shuffle", action="store_true", help="change-shuffle ablation")
     parser.add_argument("--suffix", default="", help="suffix for output filenames")
+    parser.add_argument("--labels", default="mutmut", choices=list(config.LABEL_SOURCES))
     args = parser.parse_args()
 
-    ds = dataset.build()
+    from . import datasets
+
+    ds = datasets.marshmallow(labels=args.labels)
     rows_n = np.arange(ds.n_changes)
     if args.max_changes:
         rows_n = rows_n[: args.max_changes]

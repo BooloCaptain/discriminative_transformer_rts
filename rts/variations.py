@@ -40,20 +40,27 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, evaluate, features, models, semif
+from . import config, dataset, datasets, evaluate, features, models, semif
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 PROBE = 0.05
 N_BOOTSTRAP = 2000
+
+# The variation experiments reproduce the documented arm, so they explicitly ask for
+# the features the harness leaves off for an imposed dataset (§2.4) and record the
+# accompanying warning in each result.
+STRUCTURED_HISTORY = True
 
 
 # --- shared helpers --------------------------------------------------------
 
 
 def build_context(ds: dataset.Dataset) -> models.Context:
-    X, names = features.structured_features(ds)
+    X, names = features.structured_features(ds, history=STRUCTURED_HISTORY)
     bm25 = features.build_bm25_scores(ds)
-    return models.Context(ds=ds, X=X, names=names, bm25=bm25)
+    return models.Context(
+        ds=ds, X=X, names=names, bm25=bm25, warnings=tuple(ds.warnings)
+    )
 
 
 def rank_normalize(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
@@ -213,7 +220,7 @@ def full_starved(max_failures: int = 2) -> dict:
     if not cache.exists():
         raise FileNotFoundError(f"missing {cache}; run the starved full-suite scoring arm first")
 
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "full")
     mask = dataset.starved_mask(ds, max_failures=max_failures)
     rows = ds.test_idx[mask[ds.test_idx]]
@@ -285,7 +292,7 @@ def p5_redundancy() -> dict:
     The rank average is reported here; ``trained`` is run by ``--p5-trained`` when
     the reduced-window SemIf scores exist.
     """
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "covered")
     rows = ds.test_idx
     ctx = build_context(ds)
@@ -402,7 +409,7 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
     already has: ``static_nocov_lex`` is the cheapest strong model (no coverage, no
     history, plus BM25), and ``struct_lex`` is the full feature set.
     """
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "covered")
     ctx = build_context(ds)
     held = ds.test_idx
@@ -482,7 +489,7 @@ def full_starved_seeds(seeds: tuple[int, ...] = (1, 2, 3, 4)) -> dict:
     SemIf-side seed to vary.
     """
     cache = config.ARTIFACTS / "semif_scores_starved2_full.jsonl"
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "full")
     mask = dataset.starved_mask(ds, max_failures=2)
     rows = ds.test_idx[mask[ds.test_idx]]
@@ -538,7 +545,7 @@ def p2_instruction(max_failures: int = 5) -> dict:
     population: a wording that helped only in the densest part of the starved range
     would show up as a difference between the two thresholds.
     """
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "covered")
     ctx = build_context(ds)
 
@@ -602,7 +609,7 @@ def _instruction_cache(name: str, max_failures: int) -> Path:
 def p3_embed(device: str = "cpu", force: bool = False) -> dict:
     from . import embed
 
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates_covered = dataset.candidate_mask(ds, "covered")
     candidates_full = dataset.candidate_mask(ds, "full")
     cache = config.ARTIFACTS / "embed_scores.npy"
@@ -679,7 +686,7 @@ def p1_direct(max_failures: int | None = 2) -> dict:
     are not all scored are dropped, because ``load_scores`` fills missing pairs with
     -1e9 and a partially scored change would rank as if nothing matched.
     """
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     candidates = dataset.candidate_mask(ds, "covered")
     rows = ds.test_idx
     if max_failures is not None:

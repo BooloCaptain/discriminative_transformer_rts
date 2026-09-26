@@ -51,7 +51,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, features, source
+from . import config, dataset, datasets
 from .semif_runner import PairSet, build_pair_set, load_done_keys
 
 # The criterion for pairwise direct mode. Deliberately the same content as the
@@ -261,7 +261,7 @@ def score_arm(
     limit: int | None = None,
     device: str = "auto",
 ) -> dict:
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(order_seed=seed)
     candidates = dataset.candidate_mask(ds, candidates_mode)
     rows = ds.test_idx
     if starved_max_failures is not None:

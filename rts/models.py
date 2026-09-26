@@ -14,22 +14,17 @@ from pathlib import Path
 import numpy as np
 
 from . import config, dataset, semif
+from .dataset import Unmeasured, Warning, Warnings
 
 # Cumulative history features, i.e. everything derived from prior change outcomes.
-HISTORY_FEATURES = (
-    "test_failure_rate_cum",
-    "test_runs_cum",
-    "test_last_failure_age",
-)
+# The names come from the contract's column list so there is one definition of what
+# "the history family" is, rather than a second list here that can drift.
+HISTORY_FEATURES = dataset.HISTORY_COLUMNS
 
 # Per-test coverage features. In a huge codebase with long-running integration
 # tests, obtaining these means running the suite you are trying to avoid, so a
 # deployment may genuinely not have them.
-COVERAGE_FEATURES = (
-    "covers_function",
-    "n_covering_tests",
-    "coverage_rank_prior",
-)
+COVERAGE_FEATURES = dataset.COVERAGE_COLUMNS
 
 # Features that exist only because tests are co-located with the code, conventionally
 # named, and instrumented in the same process. None of these survive a boundary that puts
@@ -52,6 +47,11 @@ class Context:
     names: list[str]
     bm25: np.ndarray  # [n_changes, n_tests]
     extras: dict = field(default_factory=dict)
+    # Warnings raised while materialising the features -- including every column that
+    # is unmeasured and therefore coerced to 0 at this, the model-input boundary.
+    # They travel with the context rather than being printed, so the layer that could
+    # act on them can still see them.
+    warnings: tuple[Warning, ...] = ()
 
     def feature(self, name: str) -> np.ndarray:
         return self.X[:, :, self.names.index(name)]

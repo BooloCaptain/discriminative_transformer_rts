@@ -295,3 +295,116 @@ deferred. It is closer to a real interface already, and it can land independentl
 What is the *scope* of propagation — does an unmeasured input invalidate only the quantities that
 read it, or the whole run? An undefined population plainly should not invalidate an unrelated
 metric on the same dataset, but where that boundary sits is a choice.
+
+## 11. What was implemented
+
+Status: implemented on branch `refactor/dataset-contract`. This section records how the design
+above was realised, and every place where implementing it changed the design.
+
+**Modules.** The contract lives in `rts/dataset.py`: `TestUnit`, `Ordering`, `Capabilities`,
+`Unmeasured`, `Warning`/`Warnings`, `Split`, `Population`, the `Dataset` ABC, the derived-feature
+functions, the composition helpers (`pool`, `PooledDataset`, `namespace`) and the `describe`/`save`
+boundaries. Sources are in `rts/sources.py` (`MutmutSource`, `BugsInPySource`); concrete datasets in
+`rts/datasets.py` (`MarshmallowDataset`, `BugsInPyDataset`, `BundleDataset`, `DerivedDataset`).
+
+**Derived features are inherited, not implemented per dataset.** `Dataset` supplies `labels`,
+`ran`, `change_paths`, `covered`, `test_index`, `fault_idx`, `candidates`, `pair_counts`,
+`sparse_mask`, `pair_history_counts`, `change_index`, the default `split`, `describe` and
+`describe_starved` once, and `rts.dataset.structured_features` builds the model-input tensor from
+the primitives. A concrete dataset implements only the seven primitives plus its declarations, so
+the eight BugsInPy datasets are eight constructors over one source and one generator.
+
+**Granularity.** The eight BugsInPy projects are eight datasets, and the arm's headline numbers come
+from `pool(...)` of all eight — which is what makes the arm a *pooled population* rather than one
+flat dataset. Because test ids are namespaced, the pooled per-project breakdown (§13) is free.
+
+**Bundling is a dataset.** `BundleDataset` wraps a base dataset; `rts.bundles` keeps only the rung
+definitions (a study choice) and reads everything else through the wrapper. Its `diff_text` is a
+concatenation, which the design did not anticipate: the wrapper declares that, because it is a
+genuine semantic divergence from "one valid unified diff" — line structure is preserved, so the size
+features are exact, but the value is not itself a well-formed diff.
+
+**The label source is a source property.** `config.LABELS`, `config.set_labels`,
+`config.outcomes_file` and `artifacts.ALL_TEST_IDS` are gone. Agreement between selectors, features
+and evaluation is now achieved by handing one `MutmutSource` to every consumer of a run, which
+cannot disagree with itself and does not prevent a second source existing beside it. `config.SUT`
+survives only as the *default* a constructor may use; `source.py` takes the checkout as a parameter
+and caches per `(checkout, file)` rather than per bare node id.
+
+**Two things the contract forced apart.** `change_key` was doing two jobs. `change_id` is a change's
+stable identity and keys `change_index` *and* the score caches; `coverage_key` is what a coverage map
+is indexed by. For mutmut these differ (`marshmallow.utils.x_f` vs
+`marshmallow.utils.x_f__mutmut_1`) and conflating them mis-maps every lookup. Separately, the generic
+`describe()` was reading `change.killed`, a mutmut-only attribute — the fixture dataset in
+`tests/stub_dataset.py` has a `killing` field and exposed it immediately. Source-specific counts now
+come from a `source_counts()` hook, so `describe()` cannot become source-specific by accident.
+
+**§10's open question, answered in the one place it was forced.** Propagation is scoped to the
+quantities that read the unmeasured input. An unavailable population produces an `Unmeasured`
+`Evaluation` carrying the unmet requirement, and `evaluate()` raises `UnmeasuredPopulation` rather
+than returning an empty average; every other metric on the same dataset is unaffected. This is the
+narrow reading, and it is the one that keeps "a question was asked and could not be answered" a
+finding rather than a run-level failure.
+
+## 12. Verification
+
+The documented numbers are the deliverable, so the refactor was verified against them rather than
+trusted. `artifacts/results_full.json` and `artifacts/ladder.json` were copied aside before any edit
+and diffed field by field afterwards; `artifacts/bugsinpy_results.json` and
+`artifacts/variations.json` likewise.
+
+`results_full.json` — every arm present in both files is **identical**, including the bootstrap
+intervals. The regenerated report has three arms the recorded file lacked
+(`xgboost_static_nocov`, `xgboost_static_nocov_lex`, `semif_reranker`). That is **pre-existing
+drift**, not a regression: `git show HEAD:artifacts/results_full.json` lacks them too, so the
+artifact was written before `models.default_selectors` gained those arms. Because regenerating it is
+the only way to diff the arms at all, the refreshed artifact is committed alongside the refactor,
+with the three new arms and the four new top-level keys (`labels`, `population`,
+`dataset_declaration`, `warnings`) called out rather than absorbed silently.
+
+`ladder.json` — see §13.
+
+`bugsinpy_results.json` — **exact**, with two additive keys: `dataset_declaration` and
+`per_project_recall_at_0.05`. Adding the second is only possible because the eight projects became
+eight datasets; the pooled SemIf-vs-BM25 verdict (0.211 vs 0.225 at b0.05, p=0.854) is unchanged, and
+the breakdown shows the pooled tie holds per project rather than being carried by one.
+
+Verification found two defects in the refactor itself, both invisible without diffing:
+
+* the `random` baseline was drawn over the whole 71×3000 matrix instead of per bug over its own pool,
+  which moved every random-baseline number and, through them, the SemIf-vs-random comparison. RNG
+  *consumption pattern* is part of a recorded number; a rewrite that changes it changes the result;
+* `mean_k` was reported as `BudgetResult.k`, which is rounded, instead of as the mean of the
+  per-change counts.
+
+Both are fixed, and both are the reason §8 asks for a diff rather than an assertion.
+
+## 13. Tests, and what remains
+
+`tests/` holds 36 tests in two files. `tests/test_dataset_contract.py` pins the *contract* against a
+fixture-backed dataset (four changes over three tests, one flag per capability) — that a dataset is
+cheap to fake, that two coexist with different declarations, that an absent capability raises rather
+than returning zeros and simultaneously marks its columns unmeasured, that history is off by default
+on an imposed order and on by default on an observed one, that an unavailable population is
+unmeasured rather than empty, that pooling namespaces and warns on mixed `test_unit`, and that a
+bundle's derived `change_size` equals the sum over its members.
+`tests/test_marshmallow_reproduction.py` checks the arm against the recorded artifact, including that
+`describe()` still equals `results_full.json["dataset"]` exactly.
+
+Known gaps, stated rather than implied:
+
+* The **model half is still out of scope** (§9), so `models.Context` still carries a
+  pre-materialised `X` rather than requesting named derived features. Selectors now receive the
+  dataset's warnings with the features, which is the minimum the §6 argument requires of them.
+* **Durations are declared but not otherwise policed.** §2.3's comparability caveat (a duration is a
+  property of the machine as much as of the test) is recorded in `MarshmallowDataset.semantics` and
+  nowhere enforced.
+* `rts.variations`, `rts.analysis`, `rts.bundles` and `rts.semif_runner` were migrated for
+  construction and primitives only; their experiment logic, and therefore their numbers, were left
+  alone. None of them is re-verified here beyond importing, because each needs a GPU arm or a
+  multi-hour cache to re-run in full.
+* The **`starved` population and the ladder's `starved141`** are declared, and the latter is now
+  unmeasured rather than empty if its SemIf cache is absent — but §5's population vocabulary is only
+  as complete as the populations actually written down. `no_prior_failure`, `starved` and
+  `low_pair_recurrence` are the three that exist.
+

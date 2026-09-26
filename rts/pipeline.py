@@ -15,13 +15,22 @@ import time
 
 import numpy as np
 
-from . import config, dataset, evaluate, features, models
+from . import config, dataset, datasets, evaluate, features, models
+
+# The study's documented arm explicitly enables history on an imposed dataset and
+# explicitly names the averaging population. Both are opt-ins: the harness default is
+# history off (§2.4), and a population that cannot exist is unmeasured rather than
+# silently empty (§6).
+HISTORY = True
+POPULATION = "fault_bearing"
 
 
 def build_context(ds: dataset.Dataset) -> models.Context:
-    X, names = features.structured_features(ds)
+    X, names = features.structured_features(ds, history=HISTORY)
     bm25 = features.build_bm25_scores(ds)
-    return models.Context(ds=ds, X=X, names=names, bm25=bm25)
+    return models.Context(
+        ds=ds, X=X, names=names, bm25=bm25, warnings=tuple(ds.warnings)
+    )
 
 
 def run(
@@ -31,13 +40,14 @@ def run(
     include_semif: bool = True,
     run_ablations: bool = True,
     seed: int = config.SEED,
+    labels: str = "mutmut",
 ) -> dict:
     t_start = time.perf_counter()
     print("=" * 78)
     print("RTS feasibility pipeline")
     print("=" * 78)
 
-    ds = dataset.build(seed=seed)
+    ds = datasets.marshmallow(labels=labels, order_seed=seed)
     for key, value in dataset.describe(ds).items():
         print(f"  {key:>32}: {value}")
 
@@ -192,7 +202,17 @@ def run(
         "candidate_mode": candidates_mode,
         "budgets": list(budgets),
         "seed": seed,
+        "labels": labels,
+        "population": POPULATION,
         "dataset": dataset.describe(ds),
+        "dataset_declaration": {
+            "name": ds.name,
+            "ordering": ds.ordering().value,
+            "test_unit": ds.test_unit().value,
+            "capabilities": sorted(ds.capabilities()),
+            "semantics": dict(ds.semantics()),
+        },
+        "warnings": ds.warnings.to_list(),
         "results": {name: evaluate.results_to_dicts(res) for name, res in results.items()},
         "ablations": {name: evaluate.results_to_dicts(res) for name, res in ablations.items()},
         "sparse_arm": sparse_report,
@@ -214,6 +234,7 @@ def main() -> None:
     parser.add_argument("--skip-ablations", action="store_true")
     parser.add_argument("--bootstrap", type=int, default=config.DEFAULT_BOOTSTRAP)
     parser.add_argument("--seed", type=int, default=config.SEED)
+    parser.add_argument("--labels", default="mutmut", choices=["mutmut", "full"])
     args = parser.parse_args()
 
     run(
@@ -222,6 +243,7 @@ def main() -> None:
         include_semif=not args.no_semif,
         run_ablations=not args.skip_ablations,
         seed=args.seed,
+        labels=args.labels,
     )
 
 

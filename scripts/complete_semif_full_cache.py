@@ -22,7 +22,7 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE))
 
-from rts import artifacts, config, dataset, features, source  # noqa: E402
+from rts import artifacts, config, dataset, datasets  # noqa: E402
 
 SOURCES = [
     config.ARTIFACTS / "semif_scores_starved5_full.jsonl",
@@ -32,8 +32,7 @@ OUT = config.ARTIFACTS / "semif_scores_ladder141_full.jsonl"
 
 
 def main() -> None:
-    config.set_labels("full")
-    ds = dataset.build()
+    ds = datasets.marshmallow(labels="full")
 
     existing: dict[tuple[str, str], float] = {}
     for path in SOURCES:
@@ -84,10 +83,9 @@ def main() -> None:
         from rts import semif_runner
 
         model, tokenizer, _meta = semif_runner.load_model(device="auto")
-        infos = source.load_all(pool)
-        change_texts = [features.change_query_text(c) for c in ds.changes]
+        change_texts = [dataset.change_query_text(ds, c) for c in ds.changes]
         pairs = [
-            (change_texts[row], infos[pool[col]].source if pool[col] in infos else "")
+            (change_texts[row], ds.test_source(pool[col]) or "")
             for row, col in missing
         ]
         scores, stats = semif_runner.score_pairs(

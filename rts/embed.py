@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, dataset, features, source
+from . import config, dataset, datasets
 
 
 def load_embedding_model(
@@ -105,9 +105,9 @@ def build_scores(
     if model is None:
         model, tokenizer, metadata = load_embedding_model(device=device)
         print(f"[embed] {metadata}", flush=True)
-    infos = source.load_all(ds.test_ids)
-    test_texts = [infos[t].source if t in infos else "" for t in ds.test_ids]
-    change_texts = [features.change_query_text(c) for c in ds.changes]
+    infos = {t: ds.test_source(t) for t in ds.test_ids}
+    test_texts = [infos[t] if infos[t] is not None else "" for t in ds.test_ids]
+    change_texts = [dataset.change_query_text(ds, c) for c in ds.changes]
 
     print(f"[embed] encoding {len(test_texts)} tests ...", flush=True)
     test_vecs = embed_texts(model, tokenizer, test_texts, batch_size, max_length)
@@ -120,7 +120,7 @@ def build_scores(
 def run(batch_size: int = 16, max_length: int = 512, device: str = "auto") -> np.ndarray:
     from . import evaluate
 
-    ds = dataset.build()
+    ds = datasets.marshmallow()
     scores = build_scores(ds, batch_size=batch_size, max_length=max_length, device=device)
     results = evaluate.evaluate(
         scores, ds, ds.test_idx, budgets=(0.01, 0.05, 0.1, 0.2),

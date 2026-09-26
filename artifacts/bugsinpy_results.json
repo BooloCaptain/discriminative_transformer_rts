@@ -217,5 +217,109 @@
         "p": 0.131
       }
     }
+  },
+  "dataset_declaration": {
+    "pooled_name": "bugsinpy",
+    "per_project": {
+      "PySnooper": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 1,
+        "n_tests": 5
+      },
+      "black": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 19,
+        "n_tests": 145
+      },
+      "cookiecutter": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 3,
+        "n_tests": 272
+      },
+      "httpie": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 4,
+        "n_tests": 233
+      },
+      "sanic": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 3,
+        "n_tests": 467
+      },
+      "thefuck": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 23,
+        "n_tests": 675
+      },
+      "tornado": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 10,
+        "n_tests": 1110
+      },
+      "tqdm": {
+        "ordering": "imposed",
+        "test_unit": "case",
+        "capabilities": [],
+        "n_changes": 8,
+        "n_tests": 93
+      }
+    },
+    "warnings": []
+  },
+  "per_project_recall_at_0.05": {
+    "PySnooper": {
+      "random": 0.0,
+      "bm25_lexical": 0.0,
+      "semif_reranker": 0.0
+    },
+    "black": {
+      "random": 0.0,
+      "bm25_lexical": 0.1053,
+      "semif_reranker": 0.1053
+    },
+    "cookiecutter": {
+      "random": 0.0,
+      "bm25_lexical": 0.3333,
+      "semif_reranker": 0.3333
+    },
+    "httpie": {
+      "random": 0.0,
+      "bm25_lexical": 0.5,
+      "semif_reranker": 0.25
+    },
+    "sanic": {
+      "random": 0.0,
+      "bm25_lexical": 0.3333,
+      "semif_reranker": 0.0
+    },
+    "thefuck": {
+      "random": 0.0435,
+      "bm25_lexical": 0.2174,
+      "semif_reranker": 0.3478
+    },
+    "tornado": {
+      "random": 0.0,
+      "bm25_lexical": 0.3,
+      "semif_reranker": 0.2
+    },
+    "tqdm": {
+      "random": 0.0,
+      "bm25_lexical": 0.25,
+      "semif_reranker": 0.125
+    }
   }
 }
