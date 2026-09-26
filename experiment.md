@@ -524,6 +524,10 @@ code and artifact in step:
 
 ## 13. What remains
 
+> Status, ordering and cost for these items are in **`implementation.md` §15**, which is the
+> handoff for the harness. This section is the design-level statement of what is missing and why;
+> that one is the work record and is kept current.
+
 * **`variations` is six-sevenths migrated.** The starved arms, the seed refit, the instruction
   sweep, the embedding baseline and the redundancy test are declared in `rts/studies` and rendered
   by `rts/variations.py`. Two sections are not:
@@ -540,8 +544,9 @@ code and artifact in step:
   bundle feature block; `studies._bundle_dataset` already shows the derived-dataset pattern as a
   three-line element, so the dataset side is cheap and the block side is the work. `bugsinpy`
   needs a dataset element for the pooled corpus and its own renderer (the bridge audit and the
-  per-project breakdown). `analysis` writes no artifact at all -- it is descriptive statistics
-  over recorded results -- so it belongs with `reporting` rather than in the layer.
+  per-project breakdown). `analysis` is a different case: it has no axes or arms at all, and
+  derives the sparsity-sweep panels from the recorded caches, so there is nothing to sweep -- it
+  belongs beside `reporting` and `figures` as an artifact reader rather than on the layer.
 * **`studies.py` is now ~1150 lines** and is three catalogues in one module (the headline arms, the
   ladder's declarations, the variation arms). Splitting it into a package is mechanical and would
   make the variation arms findable; it is pending rather than unclear.

@@ -693,6 +693,11 @@ arms, `--exclude-scored`), `rts/direct_runner.py`, `rts/embed.py`, `rts/variatio
 > CPU-only traceability-loss ladder, and promotes real data (proposals 4-5) to the load-bearing
 > workstream.
 
+**Harness work is separate from study work.** The agenda above is about *what to measure next*.
+The work needed to extend or finish the measurement machinery -- migrating the remaining drivers,
+the two variation sections that are not on the layer, splitting `studies.py`, and the smaller
+gaps -- is in **§15**, which is the handoff for the experiment layer.
+
 The five proposals below come from a review of how this benchmark diverges from the target
 setting (long-running integration tests of embedded systems). The important observation is
 that there are **two independent gaps**, and the second is more fundamental than any feature
@@ -1198,6 +1203,133 @@ declined are in `refactor.md` §14. What matters for reading this document:
 `rts/datasets.py`, and the pipeline and ladder are unchanged in what they compute: the decomposition
 was verified by diffing `results_full.json`, `results_covered.json`, `ladder.json` and
 `bugsinpy_results.json` against the pre-decomposition versions, with zero value differences.
+
+## 15. Harness handoff: the experiment layer and what remains
+
+Branch `feature/experiment-layer`, three commits ahead of `main`, 111 tests, clean tree.
+`experiment.md` is the **design** record -- what an experiment is, why it has five roles, what was
+declined and why. This section is the **work** record: what is migrated, what is not, and in what
+order the rest should be done. Where the two overlap, `experiment.md` is authoritative for design
+and this section for status.
+
+### The gate every migration must pass
+
+A migration is accepted only when the driver's artifact is **regenerated and compared leaf by
+leaf** against the recorded one:
+
+    python scripts/verify_experiment_layer.py                  # study, ladder, variations
+    python scripts/verify_experiment_layer.py ladder --labels full
+    python scripts/verify_experiment_layer.py variations
+
+It exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the
+documented addition list. Three migrations have passed it:
+
+| artifact | result |
+|---|---|
+| `results_full.json`, `results_covered.json` | 1581 leaves each, exact; refreshed for one documented addition |
+| `ladder.json`, both label sources | 967 and 968 leaves, exact; regeneration is **byte-identical** |
+| `variations.json`, six of seven sections | 6490 leaves, exact; **nothing changed** |
+
+So the recorded artifacts are the specification, not a sanity check. If a migration moves a
+number, either the migration is wrong or the movement is a finding to be argued and recorded --
+never absorbed. `refactor.md` §12 and `experiment.md` §12 both record cases where a "plausible"
+number came from something broken, and the second of those (a score cache keyed on an element's
+name but not its seed) was found only because a whole artifact was regenerated rather than a
+sample of fields compared.
+
+### What is already migrated
+
+| module | state |
+|---|---|
+| `rts/pipeline.py` | renders `results_{full,covered}.json` from a declared arm |
+| `rts/ladder.py` | renders `ladder.json` from a declared arm |
+| `rts/variations.py` | six of seven sections rendered; `p5_trained` and `p1_direct` keep their original code |
+| `rts/studies.py` | the declarations: axes, arms, and the readings that turn a report back into a table |
+| `rts/experiment.py` | the layer itself |
+
+### The remaining work, in priority order
+
+**1. `p5_trained` -- the only variation section with a stated reason to be next.** It is P5 as
+originally proposed (SemIf as an extra XGBoost *column*), where `p5_redundancy` is the fitted-free
+proxy. Two things block it, both small and both a change to what an existing concept means: a split
+whose evaluation window sits *inside* the held-out tail (constructible as a `Split` value, but it
+is the first split that is neither a prefix nor a shuffle), and the NaN convention for unscored
+pairs in `XGBoostSelector`'s extra columns. Cost: about an hour. Gate: regenerate the section,
+expect 0 leaves, and note that the `_semif` arms' numbers depend on the NaN rule.
+
+**2. `bundles` -- the complexity ladder.** One of the study's headline negative results (SemIf
+loses on 6-mutation bundles, and loses to BM25 on the coherent ones), currently outside the layer.
+The dataset side is nearly free -- `studies._bundle_dataset` already shows a derived dataset as a
+three-line element, and `features/bundle.py` is a declared block -- so the work is the rung
+definitions as a dataset axis, the pool mode as an element parameter, and a renderer for
+`bundles_cpu_signal.json` / `bundles_cpu_union.json` plus `figures/complexity_ladder.png`. Gate:
+regenerate both artifacts.
+
+**3. `bugsinpy` -- the real-data arm.** `bugsinpy_results.json` is a documented artifact and the
+only real-label data in the study. Needs a dataset element for the pooled corpus (eight projects,
+one dataset each, already composed by `datasets.bugsinpy_pooled`) and a renderer for its bespoke
+content: the T0 bridge audit and the per-project recall breakdown. Gate: regenerate
+`bugsinpy_results.json`; the pooled SemIf-vs-BM25 tie at b0.05 is the number to watch.
+
+**4. Split `rts/studies.py` into a package.** It is now about 1150 lines holding three catalogues
+-- the headline arms, the ladder's declarations, the variation arms. Splitting is mechanical
+(`rts/studies/{axes,arms,ladder,variations,readings}.py`) and would make the variation arms
+findable without reading the whole file. No behaviour change, so the verification should show 0
+differences anywhere.
+
+**5. Decide the fate of `analysis.py`.** It is a *derivative* producer rather than an experiment:
+it has no axes and no arms, it reads the recorded score caches and the dataset, and it writes the
+sparsity-sweep panels under `artifacts/figures/` (`panels_budget0.01.csv`,
+`panels_budget0.05.csv`, `panels_summary.json`) that §5.4's figures come from. So it does not
+belong on the layer -- there is nothing to sweep. The open question is whether its panels should
+be derived from the layer's reports (which carry the per-cell tables) rather than recomputed from
+the raw caches, and the honest answer is that it is cheaper to leave it alone than to decide.
+Worth a line in `experiment.md` §13 either way, because "analysis and figures read artifacts"
+deserves to be a stated boundary rather than an omission.
+
+**6. `p1_direct` cannot be reproduced.** Its cache (`semif_direct_starved2_covered.jsonl`) is
+absent from `artifacts/`, which is why it is the one section that is recorded but unverifiable.
+Either regenerate the scores (8,329 pairs at the measured ~1.25 pairs/s, so roughly 104 minutes)
+and then migrate it as an ordinary cached-score element, or accept the recorded numbers as final
+and drop the code path. Leaving it as-is is the worst option, because it looks runnable.
+
+### Smaller items, deliberately not ordered
+
+- **Cache production is outside the layer.** A `semif_runner` GPU arm is a *precondition* of a
+  model element rather than a cell, so the study's most expensive step is invisible to the layer
+  and a stale cache is indistinguishable from a fresh one. Modelling production as well as
+  consumption is a build graph over artifacts -- a second feature, not a migration.
+- **`RunReport` has no consumer.** `python -m rts.studies` writes the layer's own uniform payload,
+  and nothing reads it; every reader still reads a legacy shape from a renderer. Either point the
+  figures at it, or accept it as a debugging aid and say so.
+- **Cost is recorded, not modelled.** Elements carry an optional `estimated_seconds` that is
+  mostly unset, and tiers only distinguish `cpu` from `gpu`. There is no budget-limited execution.
+- **`splits.in_window` is not enforced.** A population's rows come from the evaluation window by
+  construction, but a predicate naming rows outside it would not be caught.
+- **`test_unit` and semantics across a pooled dataset** are declared but not policed, carried over
+  from `refactor.md` §13.
+- **`Element.applies` is used exactly once** (SemIf against the ladder population its cache does
+  not cover). It earns its place, but a second user would confirm the shape.
+- **`history=True` is set explicitly by every arm**, so the derived default is never exercised by
+  the study. Worth confirming the default is the one a new arm should get.
+
+### How to add an arm or a section
+
+The recipe the five migrations followed, for the next one:
+
+1. Declare the sweep in `rts/studies.py`: axes of *values*, `Knobs` for what is genuinely free, and
+   one `Comparison` per (reference, probe budget) -- a comparison is defined by one budget.
+2. If a value needs a capability the harness lacks, add it **to the value** (`Selector`,
+   `Population`, `Dataset`) rather than to the arm. Every capability this work needed turned out
+   to be the general form of something that already existed: a cached score matrix, a fitted-free
+   combination of two selectors, a parameterised population.
+3. Render the artifact in the driver, and keep experiment logic out of the renderer. If the
+   driver needs the dataset itself (for `describe` or `recurrence`), rebuild it -- datasets are
+   values and two may coexist.
+4. Add the arm to `scripts/verify_experiment_layer.py`, run it, and expect **0 additions**.
+5. Pin the arm's element names against the recorded artifact's keys in `tests/test_studies.py`, so
+   a rename cannot pass quietly.
+
 
 
 
