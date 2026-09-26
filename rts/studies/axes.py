@@ -87,7 +87,7 @@ def structured_feature_axis() -> Axis:
 # --- models -----------------------------------------------------------------
 
 
-#: The BM25 ablation probes from ``plan.md``: shuffle the change text, the test text, or both,
+#: The BM25 ablation probes from ``docs/plan.md``: shuffle the change text, the test text, or both,
 #: and re-score the same pairs. They are *controls* rather than competitors, but they are
 #: produced by the same machinery from the same context, so they are model elements instead of a
 #: driver's second loop with its own bookkeeping.

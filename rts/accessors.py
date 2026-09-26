@@ -213,7 +213,7 @@ def pair_counts(ds: Dataset) -> dict[tuple[str, str], int]:
 def sparse_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
     """Changes whose every ``(file, test)`` combination recurs at most this often.
 
-    The "sparse" evaluation arm from ``plan.md``: a proxy for software evolution where a
+    The "sparse" evaluation arm from ``docs/plan.md``: a proxy for software evolution where a
     file and a test are not repeatedly paired. Note that it also removes exactly the
     repeated co-occurrences the structured history features depend on, so it is a
     robustness check, not a neutral split.

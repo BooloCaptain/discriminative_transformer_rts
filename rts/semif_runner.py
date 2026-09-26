@@ -40,7 +40,7 @@ INSTRUCTION = (
     "if the test would plausibly need to run for this change."
 )
 
-# P2 instruction sweep. The diagnosis in implementation.md is that the pinned
+# P2 instruction sweep. The diagnosis in docs/implementation.md is that the pinned
 # reranker was trained for *topical relevance over natural language*, while RTS
 # asks an *executional and causal* question, so the instruction is a real lever
 # rather than boilerplate. Each variant changes exactly one thing: the framing of

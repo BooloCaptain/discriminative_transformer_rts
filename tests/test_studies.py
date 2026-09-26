@@ -207,3 +207,54 @@ def test_the_production_element_names_its_prompt_configuration():
 def test_the_production_arm_is_addressable_from_the_cli():
     assert "semif.produce" in studies.ARMS
     assert studies.ARMS["semif.produce"]().models.names()[0].startswith("semif_scored")
+
+
+# --- the shape of the package -----------------------------------------------
+
+
+def test_no_studies_submodule_imports_a_driver():
+    """The declarations must not import a driver, or a driver importing them closes a cycle.
+
+    ``rts.ladder`` is the live risk: it imports ``rts.studies``, so a submodule importing it back
+    would make the import order decide whether the package loads at all.
+    """
+    import ast
+    from pathlib import Path
+
+    import rts.studies as package
+
+    root = Path(package.__file__).parent
+    offenders: list[str] = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [f"{node.module or ''}.{a.name}" for a in node.names]
+                if node.level == 2 and node.module in {"ladder", "pipeline", "variations", "bugsinpy"}:
+                    names.append(f"rts.{node.module}")
+            else:
+                continue
+            offenders.extend(
+                f"{path.name}: {name}" for name in names if name in {"rts.ladder", "rts.pipeline"}
+            )
+    assert offenders == []
+
+
+def test_every_dataset_an_arm_uses_declares_its_test_unit_and_semantics():
+    """Both are declarations a consumer reads, and an empty one is a hole rather than a default.
+
+    ``test_unit`` flattens what a test id denotes, and ``semantics`` is where the flattening is
+    qualified -- so a dataset that answered neither would make its own results uninterpretable
+    without the reader going to the source.
+    """
+    from rts import datasets
+    from rts.contract import TestUnit
+
+    corpus = [datasets.marshmallow(), datasets.bugsinpy(datasets.available_bugsinpy_projects()[0])]
+    for ds in corpus:
+        assert isinstance(ds.test_unit(), TestUnit), ds.name
+        notes = ds.semantics()
+        assert notes, f"{ds.name} declares no semantics"
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in notes.items())

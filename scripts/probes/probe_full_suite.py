@@ -1,6 +1,6 @@
 """Probe: run the FULL 1190-test suite for a sample of mutants (Gap 1 feasibility).
 
-Gap 1 in ``plan.md`` is *full-suite relabelling*: mutmut only ever runs the tests that
+Gap 1 in ``docs/plan.md`` is *full-suite relabelling*: mutmut only ever runs the tests that
 cover the mutated function (median 5 of 1190), so a fault whose real killer lies outside
 that set is recorded as "never ran" and treated as not failing. This probe replaces that
 selection step with the whole suite and reports what changes.
@@ -38,7 +38,7 @@ child with no mutant active, which is validation gate 1 (expect 1190 collected, 
 
 Usage
 -----
-    python scripts/probe_full_suite.py [N] [WORKERS] [killed|survived|all|baseline]
+    python scripts/probes/probe_full_suite.py [N] [WORKERS] [killed|survived|all|baseline]
 """
 
 from __future__ import annotations
@@ -52,7 +52,9 @@ import sys
 import time
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _workspace import WORKSPACE  # noqa: E402
+
 SUT = WORKSPACE / "sut" / "marshmallow"
 MUTANTS = SUT / "mutants"
 OLD_OUTCOMES = SUT / "mutmut-test-outcomes.jsonl"

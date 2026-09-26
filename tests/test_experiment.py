@@ -1,7 +1,7 @@
 """Tests for the experiment layer: axes, cells, availability, comparability, provenance.
 
 These use the fixture-backed dataset, so they need neither a checkout nor a real run -- which
-is the property ``refactor.md`` §7 asks of the contract, and the experiment layer inherits it.
+is the property ``docs/refactor.md`` §7 asks of the contract, and the experiment layer inherits it.
 
 The marshmallow and ladder arms are verified separately by re-running them and diffing against
 the recorded artifacts (``scripts/verify_experiment_layer.py``), because that check is slow and
@@ -418,7 +418,7 @@ def test_a_model_seed_is_not_served_by_another_seed_s_score_cache():
 
     Without it, four refits of one element reuse the first fit and report four identical
     deltas -- a plausible number from a comparison that never happened, which is the failure
-    mode ``refactor.md`` §14 records for a name-based ablation.
+    mode ``docs/refactor.md`` §14 records for a name-based ablation.
     """
     experiment = stub_experiment(
         models=Axis(ROLE_MODEL, (constant("random", models.RandomSelector()),))

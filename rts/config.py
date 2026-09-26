@@ -1,13 +1,13 @@
 """Configuration: paths, constants, and pinned choices for the RTS feasibility study.
 
-See ``plan.md`` for the study design and ``implementation.md`` for tooling details.
+See ``docs/plan.md`` for the study design and ``docs/implementation.md`` for tooling details.
 
 Note on what is *not* here. The label source (``mutmut`` vs ``full``) used to be a
 module global, on the argument that every selector, feature and evaluation must
 agree on it. The argument was right and the mechanism was wrong: agreement is now
 achieved by handing one :class:`rts.sources.MutmutSource` to every consumer of a
 run. A global could not be scoped to a test, could not be varied within a process,
-and made two datasets over two label sources impossible. See ``refactor.md`` §8,
+and made two datasets over two label sources impossible. See ``docs/refactor.md`` §8,
 which asks for it to go last and deliberately.
 """
 
@@ -28,10 +28,10 @@ TESTS_DIR = SUT / "tests"
 STATS_FILE = MUTANTS_DIR / "mutmut-stats.json"
 OUTCOMES_FILE = SUT / "mutmut-test-outcomes.jsonl"
 
-# Full-suite relabelling (see plan_next_steps.md). mutmut runs only the tests covering the
+# Full-suite relabelling (see docs/plan_next_steps.md). mutmut runs only the tests covering the
 # mutated function, so its log cannot see a fault whose killer lies outside that set. The
 # full-suite log runs all 1190 collected tests per mutant and is written by
-# ``scripts/emit_full_suite_outcomes.py``.
+# ``scripts/data/emit_full_suite_outcomes.py``.
 FULL_SUITE_OUTCOMES_FILE = SUT / "mutmut-full-suite-outcomes.jsonl"
 FULL_SUITE_TESTS_FILE = SUT / "mutmut-full-suite-tests.json"
 
@@ -44,7 +44,7 @@ LABEL_SOURCES = ("mutmut", "full")
 
 # Fixed seed for the synthetic change ordering and for every stochastic model.
 # The mutant population has no intrinsic temporal order, so history is imposed
-# rather than observed. See implementation.md.
+# rather than observed. See docs/implementation.md.
 SEED = 20260924
 
 # mutmut exit codes that mean "a test failed", i.e. the mutant was killed.

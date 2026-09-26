@@ -195,7 +195,7 @@ exists as a probe artifact; the work is wiring it in.
 
 | step | artifact | cost | status |
 |---|---|---|---|
-| W0.1 Promote `scripts/probe_full_suite.py` to emit `{mutant, nodeid, when, outcome}` JSONL | `sut/marshmallow/mutmut-full-suite-outcomes.jsonl` | ~1 h | probe done, format to change |
+| W0.1 Promote `scripts/probes/probe_full_suite.py` to emit `{mutant, nodeid, when, outcome}` JSONL | `sut/marshmallow/mutmut-full-suite-outcomes.jsonl` | ~1 h | probe done, format to change |
 | W0.2 Add the label source + node-id canonicalisation to `rts/config.py`, `rts/artifacts.py` (`--labels {mutmut,full}`) | | ~1 h | not started |
 | W0.3 Rebuild the dataset; re-derive the starved masks; re-run the CPU-only arms under both label sets | corrected §5 tables | ~10 min | not started |
 | W0.4 Check whether the SemIf side needs re-scoring for the changed fault population | reuse `--exclude-scored` | 0-3 h GPU | not started |

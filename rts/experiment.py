@@ -7,9 +7,9 @@ study arm was a hand-written driver that rebuilt the same sequence and kept the 
 as its own module constants. The sweep existed as control flow rather than as data, and "a named
 variant of one input" was implemented three times (the ladder's rungs, bundle rungs, and the
 instruction variants). Two of those drivers are now renderers over a declared arm
-(``rts/pipeline.py``, ``rts/ladder.py``); the rest are listed in ``experiment.md`` §13.
+(``rts/pipeline.py``, ``rts/ladder.py``); the rest are listed in ``docs/experiment.md`` §13.
 
-This module is that missing layer. See ``experiment.md`` for the design and its rationale.
+This module is that missing layer. See ``docs/experiment.md`` for the design and its rationale.
 
 **Five roles.** An experiment sweeps ``dataset``, ``features``, ``model``, ``population`` and
 ``split``. A new *element* in any role is cheap -- that is what most new experimental
@@ -22,7 +22,7 @@ and a label source is a dataset.
 **Cells, not a product.** A cell is one point in the product, and it is either measured or
 carries an :class:`~rts.contract.Unmeasured` naming what stopped it. Unmeasured cells are
 *reported*, never dropped: dropping is what turns "we asked and could not answer" into a
-silently halved comparison, which is the failure mode ``refactor.md`` §6 exists to prevent.
+silently halved comparison, which is the failure mode ``docs/refactor.md`` §6 exists to prevent.
 
 **Two authorities.** The *element* declares its name, cost tier and estimated seconds -- facts
 about this run's use of a thing. The *value* declares its requirements (``Selector.requirements()``,
@@ -31,7 +31,7 @@ thing itself, written where the material is read so they cannot drift from it.
 
 **Elements are materialised once per run** and shared across the cells that use them, which is
 what makes a 48-cell grid affordable: the dataset is built once. This is sound because these
-are values (``refactor.md`` §2). The one consequence is that a stateful selector's post-hoc
+are values (``docs/refactor.md`` §2). The one consequence is that a stateful selector's post-hoc
 attributes describe only its most recent call, so importances are captured at the point of
 scoring rather than read back afterwards.
 """
@@ -102,7 +102,7 @@ ROLES: tuple[str, ...] = (ROLE_DATASET, ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATI
 
 #: Roles whose variation changes *which rows exist* or which pairs are rankable. Two cells
 #: differing in one of these are not two measurements of one quantity, so a paired
-#: comparison across them is refused rather than reported (``experiment.md`` §7).
+#: comparison across them is refused rather than reported (``docs/experiment.md`` §7).
 ROW_CHANGING_ROLES = frozenset({ROLE_DATASET, ROLE_POPULATION, ROLE_SPLIT})
 
 ARTIFACT_PREFIX = "artifact:"

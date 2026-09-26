@@ -1,4 +1,4 @@
-"""Build a real-bug RTS dataset from BugsInPy (W2a in ``plan_next_steps.md``).
+"""Build a real-bug RTS dataset from BugsInPy (W2a in ``docs/plan_next_steps.md``).
 
 Why BugsInPy
 ------------
@@ -28,7 +28,7 @@ per-bug change text and failing tests.
 
 Usage
 -----
-    python scripts/build_bugsinpy_dataset.py [--projects tqdm black ...] [--limit N]
+    python scripts/data/build_bugsinpy_dataset.py [--projects tqdm black ...] [--limit N]
 """
 
 from __future__ import annotations
@@ -41,7 +41,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _workspace import WORKSPACE  # noqa: E402
+
 BUGSINPY = WORKSPACE / "sut" / "external" / "BugsInPy"
 REPOS = WORKSPACE / "sut" / "external" / "repos"
 OUT_DIR = WORKSPACE / "artifacts" / "bugsinpy"

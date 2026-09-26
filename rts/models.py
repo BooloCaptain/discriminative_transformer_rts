@@ -168,7 +168,7 @@ class LexicalSelector(Selector):
     """BM25 between the changed lines and the test source.
 
     The two shuffle flags produce a *shuffled* BM25 instead of reading the context's canonical
-    one, which is the change-shuffle ablation ``plan.md`` specifies: if recall barely drops when
+    one, which is the change-shuffle ablation ``docs/plan.md`` specifies: if recall barely drops when
     the change text is shuffled, the lexical signal is a change-independent test prior rather
     than a match between the change and the test. Expressing the probe as a selector keeps it in
     the same grid as everything else, with the same provenance, instead of in a driver's second
@@ -487,7 +487,7 @@ class SemIfSelector(CachedScores):
     """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
 
     Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is computed
-    once by ``rts.semif`` and cached. See implementation.md for the pinned configuration.
+    once by ``rts.semif`` and cached. See docs/implementation.md for the pinned configuration.
     """
 
     def __init__(self, scores_file=None):

@@ -18,16 +18,19 @@ Both outputs land in ``sut/``, which is gitignored.
 
 Usage
 -----
-    python scripts/emit_full_suite_outcomes.py [--labels artifacts/full_suite_labels.json]
+    python scripts/data/emit_full_suite_outcomes.py [--labels artifacts/full_suite_labels.json]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _workspace import WORKSPACE  # noqa: E402
+
 SUT = WORKSPACE / "sut" / "marshmallow"
 DEFAULT_IN = WORKSPACE / "artifacts" / "full_suite_labels.json"
 OUT_RECORDS = SUT / "mutmut-full-suite-outcomes.jsonl"

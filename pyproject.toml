@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+# Tests live in tests/ and import ``rts`` from the workspace root; the root conftest.py puts the
+# workspace on sys.path, so this only pins discovery and keeps the run quiet about the caches.
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "error::DeprecationWarning:rts.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # long lines are allowed where a wider line reads better than a wrapped one
+]

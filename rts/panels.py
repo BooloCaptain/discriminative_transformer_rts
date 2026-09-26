@@ -14,7 +14,7 @@ where the killer is not the file's usual suspect.
 
 Note on coverage: every SemIf score currently ranks within the ``covered``
 candidate mask (~155 tests), so this compares ordering *within* the coverage set,
-not selection from the full suite. See implementation.md.
+not selection from the full suite. See docs/implementation.md.
 
 Why this is not an experiment-layer arm
 ---------------------------------------

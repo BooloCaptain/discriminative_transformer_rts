@@ -1,6 +1,6 @@
 """Verify the migrated arms reproduce the recorded artifacts.
 
-The documented numbers are the deliverable (``refactor.md`` §8), so the arms are checked against
+The documented numbers are the deliverable (``docs/refactor.md`` §8), so the arms are checked against
 them rather than trusted. Both arms are checked the same way: run the declared experiment, *render*
 the artifact the driver writes, and compare every leaf of the payload.
 

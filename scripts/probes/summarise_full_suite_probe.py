@@ -17,7 +17,7 @@ Writes ``artifacts/full_suite_probe_summary.json`` next to the probe directory.
 
 Usage
 -----
-    python scripts/summarise_full_suite_probe.py [PROBE_DIR]
+    python scripts/probes/summarise_full_suite_probe.py [PROBE_DIR]
 """
 
 from __future__ import annotations

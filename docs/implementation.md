@@ -300,7 +300,7 @@ The starved filter targets the data-starved deployment regime: changes whose kil
 XGBoost at b0.05, leading at every budget, monotone in starvation. **That result does not
 survive.** Re-scored against the full 1187-test suite (`--candidates full`):
 
-![starved arm on the full suite, both population sizes](artifacts/figures/fig_starved_full_suite.png)
+![starved arm on the full suite, both population sizes](../artifacts/figures/fig_starved_full_suite.png)
 
 n=43, 1187 candidates per change (k = 12/60/119/238), 51,041 pairs:
 
@@ -321,7 +321,7 @@ n=43, 1187 candidates per change (k = 12/60/119/238), 51,041 pairs:
 **The best classical selector is the one with the fewest features.** A 2×2 over
 {coverage, history} with BM25 always on:
 
-![history x coverage decomposition](artifacts/figures/fig_history_coverage.png)
+![history x coverage decomposition](../artifacts/figures/fig_history_coverage.png)
 
 | model | coverage | history | BM25 | b0.05 |
 |---|---|---|---|---|
@@ -389,7 +389,7 @@ b0.05 selects ~60 tests. Recall is the discriminating metric here.
 All ten paired deltas at b0.05, one per intervention, against the baseline each was designed
 to beat:
 
-![every text-side lever fails](artifacts/figures/fig_variation_levers.png)
+![every text-side lever fails](../artifacts/figures/fig_variation_levers.png)
 
 *Nothing is positive and significant: four levers move nothing, three move it the wrong way.*
 
@@ -931,7 +931,7 @@ comparison is 0.000. Two readings, and they are not mutually exclusive:
 Either way, **the L3 win does not replicate where the labels are real**, and that is the single
 most important thing this section establishes.
 
-### 12.4 A real boundary: MicroPython (`scripts/micropython_bridge_probe.py`)
+### 12.4 A real boundary: MicroPython (`scripts/probes/micropython_bridge_probe.py`)
 
 The boundary property is **verified, not assumed**: `tests/run-tests.py` executes the
 interpreter under test with `subprocess.Popen` and `pty.openpty()`, the changed code is C in

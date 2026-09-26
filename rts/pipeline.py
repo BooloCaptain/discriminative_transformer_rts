@@ -3,7 +3,7 @@
 The sweep is *declared* in :mod:`rts.studies` (``run_study``): the datasets, the feature block,
 the selector set and its BM25 shuffle controls, the averaging populations including the sparse
 thresholds, the split, the budgets and the resample counts are all values there. This module runs
-that arm and renders the artifact whose shape the recorded numbers, ``implementation.md`` and
+that arm and renders the artifact whose shape the recorded numbers, ``docs/implementation.md`` and
 ``figures.py`` are written against. It contains no experiment logic.
 
 Three structural facts the artifact records, each of which the layer made explicit:

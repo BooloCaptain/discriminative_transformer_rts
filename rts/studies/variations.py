@@ -43,7 +43,7 @@ from .axes import (
 # What they share is the dataset, the split and the feature block, which is what lets one score
 # cache serve them all.
 #
-# Two sections are NOT here, and ``experiment.md`` §13 says why: ``p5_trained`` needs an
+# Two sections are NOT here, and ``docs/experiment.md`` §13 says why: ``p5_trained`` needs an
 # evaluation window *inside* the held-out tail plus a NaN convention for unscored pairs, and
 # ``p1_direct``'s cache is absent from the artifacts, so its numbers cannot be reproduced at all.
 

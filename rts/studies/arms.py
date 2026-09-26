@@ -239,7 +239,7 @@ def dataset(label: str = "mutmut", *, knobs: Knobs | None = None, **shared) -> D
 
     For an adapter rendering a dataset description, or a check computing a statistic, rather
     than for a sweep over it. Rebuilding is cheap and explicitly permitted: two datasets may
-    coexist in one process (``refactor.md`` §7), so a consumer does not have to reach into a
+    coexist in one process (``docs/refactor.md`` §7), so a consumer does not have to reach into a
     run's internals to get at what it measured.
     """
     element = dataset_axis((label,)).get(f"marshmallow_{label}")

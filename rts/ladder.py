@@ -1,4 +1,4 @@
-"""Render the traceability-loss ladder (W1 in ``plan_next_steps.md``).
+"""Render the traceability-loss ladder (W1 in ``docs/plan_next_steps.md``).
 
 Motivation
 ----------
@@ -20,14 +20,14 @@ What this module is, after the experiment layer
 The sweep is *declared* in :mod:`rts.studies` (``ladder_arm``): the rungs, the selector set, the
 two averaging populations, the budget grid and the resample counts are all values there. This
 module runs that arm and renders ``artifacts/ladder.json``, whose shape predates the layer and is
-kept because the recorded numbers, ``implementation.md`` §12.2 and the figures are written
+kept because the recorded numbers, ``docs/implementation.md`` §12.2 and the figures are written
 against it. It contains no experiment logic.
 
 Two things the layer expresses that the old driver had to hand-code:
 
 * **a rung is a block with a family withheld**, so withholding takes the same unmeasured path a
   genuinely absent capability takes -- a typo in a family name raises instead of quietly
-  ablating nothing, which is the bug that motivated ``refactor.md``;
+  ablating nothing, which is the bug that motivated ``docs/refactor.md``;
 * **SemIf is inapplicable to one of the two populations.** Its cache covers only the changes
   ``starved141`` selects, and ``semif.load_scores`` fills every uncached pair with a sentinel
   rather than reporting that it has no score, so evaluating it on the other population would
@@ -105,7 +105,7 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
 
     The dataset is rebuilt for exactly one thing: ``ladder_populations`` builds the two
     populations *from* the dataset, and a population is a value rather than a run statistic
-    (``refactor.md`` §7 permits two datasets to coexist, so rebuilding is cheap). Everything
+    (``docs/refactor.md`` §7 permits two datasets to coexist, so rebuilding is cheap). Everything
     else -- the dataset's shape, its declaration and the two population sizes -- comes from the
     report, so this cannot describe a dataset the run did not measure.
     """

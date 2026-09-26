@@ -10,7 +10,7 @@ pair for those 141 changes at the full 1189 pool, so the ladder needs a single f
 
 Cost: seconds at ~30 pairs/s. Usage:
 
-    python scripts/complete_semif_full_cache.py
+    python scripts/data/complete_semif_full_cache.py
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ import json
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _workspace import WORKSPACE  # noqa: E402
+
 sys.path.insert(0, str(WORKSPACE))
 
 from rts import accessors, artifacts, config, datasets, features  # noqa: E402

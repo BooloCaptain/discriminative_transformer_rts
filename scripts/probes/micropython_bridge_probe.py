@@ -31,7 +31,7 @@ hypothesis predicts and building a real label set is justified.
 
 Usage
 -----
-    python scripts/micropython_bridge_probe.py [--commits 200]
+    python scripts/probes/micropython_bridge_probe.py [--commits 200]
 """
 
 from __future__ import annotations
@@ -46,7 +46,9 @@ from pathlib import Path
 
 import numpy as np
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _workspace import WORKSPACE  # noqa: E402
+
 sys.path.insert(0, str(WORKSPACE))
 
 from rts import config, features  # noqa: E402

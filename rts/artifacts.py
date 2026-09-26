@@ -108,7 +108,7 @@ class Layout:
         if labels == "full" and not self.full_suite_tests_file.exists():
             raise SystemExit(
                 f"missing {self.full_suite_tests_file}; run "
-                "scripts/emit_full_suite_outcomes.py first"
+                "scripts/data/emit_full_suite_outcomes.py first"
             )
 
 

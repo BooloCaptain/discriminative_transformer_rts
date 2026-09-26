@@ -27,7 +27,7 @@ model object.
 render those artifacts -- ``rts/pipeline.py`` and ``rts/ladder.py`` -- are thin: they run an arm
 declared here and write it in the shape the recorded numbers are written against. The remaining
 drivers (``variations``, ``bundles``, ``bugsinpy``) still hold their own sweeps and are the next
-migration (``experiment.md`` §13).
+migration (``docs/experiment.md`` §13).
 
 Usage::
 

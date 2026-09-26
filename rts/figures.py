@@ -2,7 +2,7 @@
 
 Everything is read from ``artifacts/variations.json``, which the experiment driver
 writes incrementally, so the figures never re-run an experiment and can never drift
-from the numbers in ``implementation.md``. Same conventions as ``rts.panels``:
+from the numbers in ``docs/implementation.md``. Same conventions as ``rts.panels``:
 matplotlib only, 150 dpi, saved under ``artifacts/figures/``.
 
 Three figures:

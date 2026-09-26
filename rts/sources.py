@@ -112,7 +112,7 @@ class BugsInPySource:
         self.path = self.root / f"{project}.json"
         if not self.path.exists():
             raise FileNotFoundError(
-                f"missing {self.path}; run scripts/build_bugsinpy_dataset.py first"
+                f"missing {self.path}; run scripts/data/build_bugsinpy_dataset.py first"
             )
         self._data: dict | None = None
 

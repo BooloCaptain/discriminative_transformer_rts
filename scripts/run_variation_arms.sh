@@ -35,7 +35,7 @@ case "${1:-}" in
     done
     ;;
   p2-orientation)
-    # The Query/Document choice was a plan.md open question and was only ever
+    # The Query/Document choice was a docs/plan.md open question and was only ever
     # compared at n=10. This re-tests it at adequate n on the starved population.
     run_semif "orientation_test_query" --heldout --starved 5 \
       --orientation test_query --batch-size "$BATCH" \

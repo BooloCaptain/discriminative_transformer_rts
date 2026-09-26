@@ -149,7 +149,7 @@ def ladder_selectors() -> list[models.Selector]:
     """The ladder's selector set.
 
     A study choice, so it lives with the config rather than being read back out of the driver.
-    The two lists must stay in step until ``ladder.py`` is deleted (``experiment.md`` §12).
+    The two lists must stay in step until ``ladder.py`` is deleted (``docs/experiment.md`` §12).
     """
     return [
         models.RandomSelector(),

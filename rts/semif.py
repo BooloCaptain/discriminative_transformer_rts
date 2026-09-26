@@ -1,6 +1,6 @@
 """SemIf + Qwen reranker adapter: pair construction, cost estimation, score cache.
 
-Pinned configuration (see implementation.md)
+Pinned configuration (see docs/implementation.md)
 --------------------------------------------
 * Mode ``reranker``, not ``direct``. Direct mode softmaxes over all options in a
   single prompt, so a test's score depends on which other tests were in that
@@ -200,7 +200,7 @@ def load_scores(path: Path, ds: contract.Dataset) -> np.ndarray:
             "Populate it with:\n"
             "  python -m rts.semif --build        # writes pairs + prints cost estimate\n"
             "  python -m rts.semif --score        # runs semif-score (needs checkout + checkpoint)\n"
-            "See implementation.md for the pinned configuration."
+            "See docs/implementation.md for the pinned configuration."
         )
 
     out = np.full((ds.n_changes, ds.n_tests), -1e9, dtype=np.float32)

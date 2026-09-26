@@ -1,7 +1,7 @@
-"""Render the BugsInPy arm (W2a in ``plan_next_steps.md``) into ``artifacts/bugsinpy_results.json``.
+"""Render the BugsInPy arm (W2a in ``docs/plan_next_steps.md``) into ``artifacts/bugsinpy_results.json``.
 
 This is the arm with **real labels that are not defined by coverage**. Everything else in
-``implementation.md`` is measured on labels mutmut produced by running only the tests that cover
+``docs/implementation.md`` is measured on labels mutmut produced by running only the tests that cover
 the mutated function, which makes the coverage feature circular with respect to them. BugsInPy's
 failing tests come from the projects' own bug reports, so no feature is circular -- and the
 corpus declares neither coverage nor durations, which makes it structurally the ladder's hardest
@@ -12,7 +12,7 @@ What this module is, after the experiment layer
 The sweep is *declared* in :mod:`rts.studies.bugsinpy`: the pooled dataset, the three
 per-change-scope selectors, the per-project populations and the budget grid are values there.
 This module runs that arm and renders the artifact whose shape the recorded numbers and
-``implementation.md`` are written against. It contains no experiment logic.
+``docs/implementation.md`` are written against. It contains no experiment logic.
 
 Two things stay here because they are not cell semantics:
 
