@@ -46,7 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import accessors, config, studies, splits
+from . import config, studies
 from .contract import Unmeasured
 from .experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run
 
@@ -101,20 +101,27 @@ def _semif_comparisons(report, rung: str) -> dict:
 
 
 def run_label_source(label_source: str, verbose: bool = True) -> dict:
-    """Run the ladder for one label source and return the recorded artifact's shape."""
+    """Run the ladder for one label source and return the recorded artifact's shape.
+
+    The dataset is rebuilt for exactly one thing: ``ladder_populations`` builds the two
+    populations *from* the dataset, and a population is a value rather than a run statistic
+    (``refactor.md`` §7 permits two datasets to coexist, so rebuilding is cheap). Everything
+    else -- the dataset's shape, its declaration and the two population sizes -- comes from the
+    report, so this cannot describe a dataset the run did not measure.
+    """
     ds = studies.dataset(label_source)
-    split = splits.make_split(ds)
     declared = studies.ladder_populations(ds)
     report = run(studies.ladder_arm(label_source), save=False, verbose=verbose)
     margins = studies.semif_margins(report)
+    described = report.describe()
 
     if verbose:
         print("=" * 78)
         print(f"TRACEABILITY LADDER -- labels={label_source}")
         print("=" * 78)
         print(
-            f"  changes {ds.n_changes}  tests {ds.n_tests}  "
-            f"held-out faults {len(accessors.test_fault_idx(ds, split.test_idx))}"
+            f"  changes {described['changes']}  tests {described['tests']}  "
+            f"held-out faults {described['held_out_faults']}"
         )
         print(f"  measured {len(report.cells)} of {report.n_cells} cells")
         for entry in report.unmeasured:
@@ -122,17 +129,17 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
 
     payload: dict = {
         "labels": label_source,
-        "n_changes": ds.n_changes,
-        "n_tests": ds.n_tests,
-        "held_out_faults": int(len(accessors.test_fault_idx(ds, split.test_idx))),
+        "n_changes": described["changes"],
+        "n_tests": described["tests"],
+        "held_out_faults": described["held_out_faults"],
         "populations": {
-            k: (None if isinstance(v, Unmeasured) else len(v.rows(ds, split.test_idx)))
+            k: (None if isinstance(v, Unmeasured) else report.population_size(k)[0])
             for k, v in declared.items()
         },
         "populations_unmeasured": {
             k: v.to_dict() for k, v in declared.items() if isinstance(v, Unmeasured)
         },
-        "dataset_declaration": ds.declaration(),
+        "dataset_declaration": report.declaration(),
         "rungs": {},
     }
 

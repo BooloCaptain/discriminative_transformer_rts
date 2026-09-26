@@ -32,7 +32,7 @@ import argparse
 import json
 import time
 
-from . import config, reporting, studies, splits
+from . import config, studies
 from .experiment import ROLE_MODEL, ROLE_POPULATION
 
 #: The population the headline numbers are averaged over, and the selector every other one is
@@ -53,22 +53,18 @@ def _at_budgets(cell, budgets) -> list[dict]:
 
 
 def render(label: str, candidates: str, report, sparse_report) -> dict:
-    """The recorded artifact's shape, built from the reports."""
-    ds = studies.dataset(label)
-    split = splits.make_split(ds, seed=report.environment.knobs.seed)
+    """The recorded artifact's shape, built from the reports.
 
+    Everything the artifact says about the data comes from the report: the run recorded the
+    dataset's declaration, its description under the split it used, and the ``(file, test)``
+    pair recurrence, so the renderer does not rebuild the dataset to describe one. That also
+    removes the old check that the renderer's split matched the run's -- the description now
+    *is* the run's, so the mismatch it guarded against cannot happen.
+    """
     main = [cell for cell in report.cells if cell.population == POPULATION]
     if not main:
         raise RuntimeError(f"no cell was measured on population {POPULATION!r}")
     sample = main[0]
-    if (split.fraction, split.shuffle) != (
-        sample.split["fraction"],
-        sample.split["shuffle"],
-    ):
-        raise AssertionError(
-            "the renderer's split differs from the one the run used, so the dataset description "
-            "would not describe the measured data"
-        )
 
     ablation_names = {name for name, _ in studies.ABLATION_MODELS}
     results: dict[str, list[dict]] = {}
@@ -107,8 +103,8 @@ def render(label: str, candidates: str, report, sparse_report) -> dict:
         "seed": report.environment.knobs.seed,
         "labels": label,
         "population": POPULATION,
-        "dataset": reporting.describe(ds, split),
-        "dataset_declaration": ds.declaration(),
+        "dataset": report.describe(),
+        "dataset_declaration": report.declaration(),
         "split": {
             "fraction": sample.split["fraction"],
             "shuffle": sample.split["shuffle"],
@@ -121,7 +117,7 @@ def render(label: str, candidates: str, report, sparse_report) -> dict:
         "results": results,
         "ablations": ablations,
         "sparse_arm": sparse_arm,
-        "recurrence": reporting.recurrence(ds),
+        "recurrence": report.recurrence(),
         "paired_vs_reference": dict(sorted(comparisons.items())),
         "reference": REFERENCE,
         # A cell whose requirement is unmet is *reported* rather than skipped, so this is a map

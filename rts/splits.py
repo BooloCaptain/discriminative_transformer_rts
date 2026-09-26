@@ -35,6 +35,22 @@ class Split:
     ordering: Ordering
     warnings: tuple[Warning, ...] = ()
 
+    def __post_init__(self) -> None:
+        """A split is a *partition*, so the two halves may not overlap.
+
+        The construction sites in this package cannot violate this -- ``make_split`` slices one
+        permutation -- but a split may also be built by hand, which is what an evaluation window
+        *inside* the held-out tail needs. The overlap is the failure mode that would silently
+        train on rows that are also evaluated, so it is checked here rather than left to be
+        noticed in a number.
+        """
+        overlap = np.intersect1d(self.train_idx, self.test_idx)
+        if overlap.size:
+            raise ValueError(
+                f"a split partitions a dataset, but {overlap.size} change(s) are in both the "
+                f"train prefix and the evaluation window (e.g. {overlap[:5].tolist()})"
+            )
+
     @property
     def effective_ordering(self) -> Ordering:
         return Ordering.IMPOSED if self.shuffle else self.ordering
@@ -112,9 +128,30 @@ def make_split(
 
 
 def in_window(split: Split, rows: np.ndarray) -> bool:
-    """Whether ``rows`` are a subset of the split's evaluation window."""
+    """Whether ``rows`` (change indices) are a subset of the split's evaluation window."""
     window = set(split.test_idx.tolist())
     return all(int(r) in window for r in rows)
 
 
-__all__ = ["Split", "in_window", "make_split"]
+def require_in_window(split: Split, rows: np.ndarray, *, what: str = "rows") -> None:
+    """Raise unless ``rows`` lie inside the split's evaluation window.
+
+    The evaluation boundary's guard. A metric may only be averaged over rows the split did not
+    hold out **as training data**, and this is the one place that is checked. Every call site in
+    this package satisfies it by construction -- the layer evaluates exactly ``split.test_idx``
+    -- so it changes no number; it exists for the call sites that pass rows *directly*, which is
+    what evaluating inside the held-out tail does.
+
+    A violation is a programming error rather than a fact about the data, so it raises rather
+    than returning :class:`~rts.contract.Unmeasured`.
+    """
+    if in_window(split, rows):
+        return
+    outside = sorted(set(int(r) for r in rows) - set(split.test_idx.tolist()))
+    raise ValueError(
+        f"{what} name {len(outside)} change(s) outside the split's evaluation window "
+        f"(e.g. {outside[:5]}); a metric may only be averaged over rows the split held out"
+    )
+
+
+__all__ = ["Split", "in_window", "make_split", "require_in_window"]

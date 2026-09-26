@@ -16,9 +16,24 @@ Note on coverage: every SemIf score currently ranks within the ``covered``
 candidate mask (~155 tests), so this compares ordering *within* the coverage set,
 not selection from the full suite. See implementation.md.
 
+Why this is not an experiment-layer arm
+---------------------------------------
+A panel is a *reading*, not a sweep, and two of its properties are not cell semantics:
+
+* the deciles are cut from the **dataset** -- equal-count bins over the fault changes by the
+  failure history of their killing ``(file, test)`` pair -- so they are dataset-derived
+  populations rather than declared axes;
+* each model is evaluated on the subset of the bin it actually has scores for, a per-*row*
+  availability filter. ``Element.applies`` is per-*cell*, so the layer cannot express it, and
+  evaluating the unscored rows anyway would score them with ``semif.load_scores``'s sentinel
+  and report a number that looks like a measurement and is not.
+
+Both are deliberate. This module reads the recorded caches and the dataset and writes figures;
+it was ``rts/analysis.py``, and the rename says what it produces rather than what it is not.
+
 Usage::
 
-    python -m rts.analysis            # writes artifacts/figures/*.png and *.csv
+    python -m rts.panels               # writes artifacts/figures/*.png and *.csv
 """
 
 from __future__ import annotations

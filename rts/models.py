@@ -353,25 +353,6 @@ class XGBoostSelector(Selector):
         return model.predict_proba(X_all)[:, 1].reshape(ctx.ds.n_changes, ctx.ds.n_tests)
 
 
-class SemIfSelector(Selector):
-    """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
-
-    Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is
-    computed once by ``rts.semif`` and cached. See implementation.md for the pinned
-    configuration.
-    """
-
-    name = "semif_reranker"
-
-    def __init__(self, scores_file=None):
-        super().__init__("semif_reranker", scores_file or config.SEMIF_SCORES_FILE)
-
-    @property
-    def scores_file(self) -> Path:
-        """The cache this reads. An alias for :attr:`CachedScores.path`."""
-        return self.path
-
-
 def normalised_rank(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
     """Per-change descending rank, normalised to ``[0, 1]``; 0 is best.
 
@@ -392,6 +373,10 @@ def normalised_rank(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
 #: A score loader: ``(cache path, dataset) -> [n_changes, n_tests]``. The dataset is a
 #: parameter because a cache may need canonicalising against the pool it is read into.
 ScoreLoader = Callable[[Path, Dataset], np.ndarray]
+
+#: A score *producer*: ``(context, cache path) -> (matrix, stats)``. The context supplies the
+#: dataset, the split and the candidate mask, so a producer reads nothing from a driver.
+ScoreProducer = Callable[["Context", Path], tuple[np.ndarray, dict]]
 
 
 def load_matrix(path: Path, _ds: Dataset) -> np.ndarray:
@@ -477,6 +462,54 @@ class RankAverageSelector(Selector):
         candidates = accessors.candidates(ctx.ds, self.candidates_mode)
         norms = [normalised_rank(s.scores(ctx), candidates) for s in self.selectors]
         return -np.mean(norms, axis=0)
+
+
+class ProducedScores(Selector):
+    """Scores read from a cache, **produced on first use** if the cache is absent.
+
+    :class:`CachedScores` treats its artifact as a precondition: absent means the cell is
+    unmeasured with the path. This treats it as an *output*. That is the right shape for the
+    study's most expensive step -- scoring (change, test) pairs with a 4B reranker -- where the
+    artifact is exactly what the cell would compute, and where leaving production outside the
+    layer made a stale cache indistinguishable from a fresh one and the GPU arm invisible.
+
+    It is a *general* form rather than a SemIf one: the scorer is a callable, so the pinned
+    model, its prompt configuration and the rows to score are supplied by whichever element
+    declares the capability. That also makes the produce path testable without a GPU.
+
+    ``requirements()`` is deliberately empty. Declaring the cache would make the cell
+    unmeasured *before* it could produce it, which is the trap this class exists to avoid; the
+    element that wraps it declares ``tier="gpu"`` instead, so a run that is not spending the
+    GPU tier reports the cell as unmeasured rather than silently reading a half-built cache.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        cache: Path | str,
+        scorer: ScoreProducer,
+        loader: ScoreLoader | None = None,
+    ):
+        self.name = name
+        self.path = Path(cache)
+        self._produce = scorer
+        self._loader = loader or semif.load_scores
+        #: What the last production did -- pairs scored, throughput, whether it resumed.
+        #: Recorded on the cell so a produced number carries its cost, the same way a
+        #: measured cell carries its seconds.
+        self.last_stats: dict = {}
+
+    def requirements(self) -> tuple[str, ...]:
+        """None: the cache is this selector's output, not its precondition."""
+        return ()
+
+    def scores(self, ctx: Context) -> np.ndarray:
+        if self.path.exists():
+            self.last_stats = {"read_from": str(self.path), "produced": False}
+        else:
+            _, self.last_stats = self._produce(ctx, self.path)
+            self.last_stats["produced"] = True
+        return self._loader(self.path, ctx.ds)
 
 
 def default_selectors(include_semif: bool = True) -> list[Selector]:

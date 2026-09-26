@@ -219,15 +219,15 @@ content: the T0 bridge audit and the per-project recall breakdown. Gate: regener
 findable without reading the whole file. No behaviour change, so the verification should show 0
 differences anywhere.
 
-**5. Decide the fate of `analysis.py`.** It is a *derivative* producer rather than an experiment:
-it has no axes and no arms, it reads the recorded score caches and the dataset, and it writes the
-sparsity-sweep panels under `artifacts/figures/` (`panels_budget0.01.csv`,
-`panels_budget0.05.csv`, `panels_summary.json`) that §5.4's figures come from. So it does not
-belong on the layer -- there is nothing to sweep. The open question is whether its panels should
-be derived from the layer's reports (which carry the per-cell tables) rather than recomputed from
-the raw caches, and the honest answer is that it is cheaper to leave it alone than to decide.
-Worth a line in `experiment.md` §13 either way, because "analysis and figures read artifacts"
-deserves to be a stated boundary rather than an omission.
+**5. `analysis.py` is resolved: renamed `rts/panels.py`, off the layer.** It was a *derivative*
+producer rather than an experiment -- no axes, no arms, reads the recorded score caches and the
+dataset, writes the sparsity-sweep panels under `artifacts/figures/` (`panels_budget0.01.csv`,
+`panels_budget0.05.csv`, `panels_summary.json`) that §5.4's figures come from. The open question
+was whether to derive its panels from the layer's reports instead of the raw caches, and the
+answer is no, for a reason stronger than cost: each model is evaluated on the subset of a bin it
+has scores for, which is a per-*row* availability filter that `Element.applies` (per-*cell*)
+cannot express. Evaluating the unscored rows instead would report a sentinel as a measurement.
+The boundary "analysis and figures read artifacts" is now stated in `experiment.md` §13.
 
 **6. `p1_direct` cannot be reproduced.** Its cache (`semif_direct_starved2_covered.jsonl`) is
 absent from `artifacts/`, which is why it is the one section that is recorded but unverifiable.

@@ -595,6 +595,11 @@ class CellResult:
     population: str
     n_rows: int
     n_changes: int
+    #: The population's rows **in the evaluation window**, before the fault filter.
+    #: ``n_rows`` is what the metric actually averaged over (the fault-bearing ones); both
+    #: are recorded because a renderer that reported one as the other would misstate how
+    #: much data an arm rests on.
+    n_population_rows: int
     dataset_declaration: dict
     split: dict
     features: dict
@@ -612,6 +617,7 @@ class CellResult:
             "population": self.population,
             "n_rows": self.n_rows,
             "n_changes": self.n_changes,
+            "n_population_rows": self.n_population_rows,
             "dataset_declaration": self.dataset_declaration,
             "split": self.split,
             "features": self.features,
@@ -635,7 +641,67 @@ class RunReport:
     cells: list[CellResult] = field(default_factory=list)
     unmeasured: list[dict] = field(default_factory=list)
     comparisons: list[dict] = field(default_factory=list)
+    #: ``"{dataset element}|{split element}"`` -> ``declaration``, ``describe``, ``recurrence``.
+    #: Facts about the data the run measured, recorded once per (dataset, split) so that a
+    #: renderer does not have to rebuild the dataset to describe it. ``recurrence`` is
+    #: ``None`` for a dataset that declares no coverage, because the statistic is not
+    #: defined without it.
+    dataset_stats: dict[str, dict] = field(default_factory=dict)
+    #: Population name -> ``{"changes": rows in the window, "faults": rows averaged over}``.
+    population_sizes: dict[str, dict] = field(default_factory=dict)
     seconds: float = 0.0
+
+    # --- reading the report back ------------------------------------------
+
+    def _one(self, available, what: str):
+        """The single entry of a keyed record, or a KeyError naming what there is.
+
+        Most runs have exactly one dataset and one split, and the caller knows which. A run
+        with several has to name one -- guessing would silently describe the wrong dataset.
+        """
+        if len(available) == 1:
+            return next(iter(available.values()))
+        if not available:
+            raise KeyError(f"this report records no {what}")
+        raise KeyError(
+            f"this report records {len(available)} {what}; name one of {sorted(available)}"
+        )
+
+    def _stats(self, dataset: str | None, split: str | None) -> dict:
+        """One ``dataset/split`` record: named, or implied when the run had only one."""
+        if (dataset is None) != (split is None):
+            raise ValueError("name both the dataset and the split, or neither")
+        if dataset is None:
+            return self._one(self.dataset_stats, "dataset/split pairs")
+        key = f"{dataset}|{split}"
+        if key not in self.dataset_stats:
+            raise KeyError(
+                f"this report records no dataset/split pair {key!r}; it has "
+                f"{sorted(self.dataset_stats)}"
+            )
+        return self.dataset_stats[key]
+
+    def describe(self, dataset: str | None = None, split: str | None = None) -> dict:
+        """The dataset's shape under the split the run used (:func:`reporting.describe`)."""
+        return self._stats(dataset, split)["describe"]
+
+    def declaration(self, dataset: str | None = None, split: str | None = None) -> dict:
+        """The dataset's own declaration, which a run records once per dataset."""
+        return self._stats(dataset, split)["declaration"]
+
+    def recurrence(self, dataset: str | None = None, split: str | None = None):
+        """How often ``(file, test)`` pairs recur, or ``None`` if coverage is not declared."""
+        return self._stats(dataset, split)["recurrence"]
+
+    def population_size(self, population: str) -> tuple[int, int]:
+        """``(rows in the evaluation window, rows the metric averaged over)``.
+
+        The second is the fault-bearing subset, so it is what every recall in the report was
+        averaged over. Both come from the cells rather than from re-deriving the population,
+        so a renderer cannot report a size the run did not use.
+        """
+        entry = self.population_sizes[population]
+        return entry["changes"], entry["faults"]
 
     @property
     def n_cells(self) -> int:
@@ -664,6 +730,8 @@ class RunReport:
             "cells": [c.to_dict() for c in self.cells],
             "unmeasured": self.unmeasured,
             "comparisons": self.comparisons,
+            "dataset_stats": self.dataset_stats,
+            "population_sizes": self.population_sizes,
             "seconds": self.seconds,
         }
 
@@ -793,6 +861,10 @@ def _measure(
         seed=env.knobs.seed,
         candidates=candidates,
         population=population,
+        # The layer always evaluates exactly the split's window, so this guard holds by
+        # construction -- which is the point: it is the boundary a direct-rows caller would
+        # cross, and it is asserted rather than assumed.
+        split=split,
     )
     if not evaluation.measured:
         return (evaluation.unmeasured or Unmeasured("population", "unmeasured")), {}
@@ -804,6 +876,12 @@ def _measure(
     _, positions = evaluate.population_rows(ds, split.test_idx, population)
     if is_unmeasured(positions):
         return positions, {}
+    # The population's size in the window *before* the fault filter, which ``evaluation.n_rows``
+    # no longer records. Reported alongside it so a renderer cannot present the averaged count
+    # as the population's size.
+    population_rows = population.rows(ds, split.test_idx)
+    if is_unmeasured(population_rows):
+        return population_rows, {}
     hits = {
         probe: evaluate.per_change_hits(scores, ds, split.test_idx[positions], probe, candidates)
         for probe in probes
@@ -815,6 +893,7 @@ def _measure(
         population=evaluation.population,
         n_rows=evaluation.n_rows,
         n_changes=evaluation.n_changes,
+        n_population_rows=int(len(population_rows)),
         dataset_declaration=ds.declaration(),
         split={
             "fraction": split.fraction,
@@ -1020,6 +1099,18 @@ def run(
         audit_key = (dataset_name, cell.name(ROLE_SPLIT))
         if audit_key not in audits:
             audits[audit_key] = reporting.audit(ds, split)
+            report.dataset_stats[f"{dataset_name}|{audit_key[1]}"] = {
+                "declaration": ds.declaration(),
+                "describe": reporting.describe(ds, split),
+                # Recorded rather than recomputed by a renderer. ``None`` when the dataset
+                # declares no coverage, because the statistic is not defined without it --
+                # which is a fact about the data, not a reason to fail the run.
+                "recurrence": (
+                    reporting.recurrence(ds)
+                    if ds.has_capability("coverage")
+                    else None
+                ),
+            }
 
         result, cell_hits = _measure(
             experiment,
@@ -1061,6 +1152,12 @@ def run(
 
         report.cells.append(result)
         hits[cell.key] = cell_hits
+        # Every cell of one population reports the same two counts, so first-seen wins and the
+        # map stays a description of the population rather than of a cell.
+        report.population_sizes.setdefault(
+            result.population,
+            {"changes": result.n_population_rows, "faults": result.n_rows},
+        )
         if verbose:
             probe_note = ""
             if probes:

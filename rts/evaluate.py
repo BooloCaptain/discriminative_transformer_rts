@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from . import accessors, config, contract, populations
+from . import accessors, config, contract, populations, splits
 
 
 @dataclass
@@ -245,12 +245,21 @@ def evaluate_rows(
     seed: int = config.SEED,
     candidates: np.ndarray | None = None,
     population: "populations.Population | str" = "fault_bearing",
+    split: "splits.Split | None" = None,
 ) -> Evaluation:
     """Metric sweep for one selector, over a named averaging population.
 
     When ``candidates`` is given, the budget is a fraction of each change's own candidate
     set, so the selected count varies per change.
+
+    ``split``, when given, is the evaluation boundary: ``eval_idx`` must lie inside its window,
+    because a metric may only be averaged over rows the split held out for evaluation. The
+    layer always satisfies this, since it evaluates exactly ``split.test_idx``; the guard
+    matters for a caller that passes rows *directly*, which is what evaluating inside the
+    held-out tail does. A zero-shot arm over every change has no split and leaves it out.
     """
+    if split is not None:
+        splits.require_in_window(split, eval_idx, what="evaluation rows")
     spec, rows = population_rows(ds, eval_idx, population)
     if isinstance(rows, contract.Unmeasured):
         return Evaluation(population=spec.name, results=None, unmeasured=rows)
@@ -281,14 +290,16 @@ def evaluate(
     seed: int = config.SEED,
     candidates: np.ndarray | None = None,
     population: "populations.Population | str" = "fault_bearing",
+    split: "splits.Split | None" = None,
 ) -> list[BudgetResult]:
     """Metric sweep returning only the results list, for the many call sites that want it.
 
     Use :func:`evaluate_rows` when the population name and the measured/unmeasured
-    distinction need to travel with the numbers.
+    distinction need to travel with the numbers, or when the evaluation boundary should be
+    enforced (see its ``split`` parameter).
     """
     evaluation = evaluate_rows(
-        scores, ds, eval_idx, budgets, n_bootstrap, seed, candidates, population
+        scores, ds, eval_idx, budgets, n_bootstrap, seed, candidates, population, split
     )
     if not evaluation.measured:
         raise UnmeasuredPopulation(evaluation)

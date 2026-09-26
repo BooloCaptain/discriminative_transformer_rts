@@ -212,7 +212,7 @@ feature than as a prompt.
 
 Faults binned into equal-count deciles by how much failure history their killing
 `(file, test)` pair has (decile 1 = sparsest). Figures: `artifacts/figures/panel_A_C_budget*.png`;
-code in `rts/analysis.py`. Recall @0.05:
+code in `rts/panels.py`. Recall @0.05:
 
 | model | decile 1 | decile 10 | trend |
 |---|---|---|---|
@@ -584,7 +584,7 @@ python -m rts.artifacts / rts.dataset / rts.features      # sanity checks + stat
 python -m rts.pipeline --bootstrap 1000                   # full candidate set
 python -m rts.pipeline --bootstrap 1000 --candidates covered
 python -m rts.bundles --cpu --plot                        # change-complexity ladder
-python -m rts.analysis                                    # sparsity panels A and C
+python -m rts.panels                                    # sparsity panels A and C
 ```
 
 SemIf arms write resumable JSONL caches, so a re-run continues rather than restarts. Only one

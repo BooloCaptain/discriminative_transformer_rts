@@ -59,7 +59,7 @@ So the missing half is the *model* declaration, which `refactor.md` §9 deferred
 records as a known gap. Everything else is composition.
 
 The sweep itself lives in `pipeline.run`, `ladder.run_label_source`, `variations` (six
-sub-experiments), `bugsinpy.main`, `analysis.run` and `figures.run`. Each one re-implements
+sub-experiments), `bugsinpy.main`, `panels.run` and `figures.run`. Each one re-implements
 the same sequence — build dataset, make split, build context, enumerate selectors, loop over
 populations/rungs/variants, render a table, write a bespoke payload — and each keeps the
 study's choices as its own module constants (`pipeline.HISTORY`, `pipeline.POPULATION`,
@@ -544,7 +544,12 @@ code and artifact in step:
   bundle feature block; `studies._bundle_dataset` already shows the derived-dataset pattern as a
   three-line element, so the dataset side is cheap and the block side is the work. `bugsinpy`
   needs a dataset element for the pooled corpus and its own renderer (the bridge audit and the
-  per-project breakdown). `analysis` is a different case: it has no axes or arms at all, and
+  per-project breakdown). `analysis` is a different case, and is now **settled**: it had no axes
+  or arms, so there was nothing to sweep. It is renamed `rts/panels.py` and sits beside
+  `reporting` and `figures` as an artifact reader. Its two non-cell properties are why it is not
+  an arm, and both are stated in its docstring: the deciles are cut from the dataset, and each
+  model is evaluated on the subset of a bin it actually has scores for -- a per-*row* filter,
+  where `Element.applies` is per-*cell*.
   derives the sparsity-sweep panels from the recorded caches, so there is nothing to sweep -- it
   belongs beside `reporting` and `figures` as an artifact reader rather than on the layer.
 * **`studies.py` is now ~1150 lines** and is three catalogues in one module (the headline arms, the

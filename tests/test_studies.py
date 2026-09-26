@@ -167,3 +167,43 @@ def test_a_sparse_threshold_is_a_population_named_for_its_threshold():
     assert "coverage" in {requirement.value for requirement in population.requires()}
     # Two thresholds are two populations, and a sweep must not conflate them.
     assert populations.low_pair_recurrence(80).name != populations.low_pair_recurrence(160).name
+
+
+# --- score production -------------------------------------------------------
+
+
+def test_the_production_arm_is_unmeasured_without_the_gpu_tier(tmp_path):
+    """The declaration path, which is the whole point of tiering score production.
+
+    Production is addressable like any other arm: with the GPU tier the cell scores, without it
+    the cell is reported unmeasured with the reason. It must not score, read or write anything
+    on a CPU-only run -- and in particular it must not touch a cache it was not asked to build.
+    """
+    from rts.experiment import run
+
+    scratch = tmp_path / "scratch.jsonl"
+    report = run(studies.semif_production_arm(scratch), tiers=["cpu"], save=False, verbose=False)
+
+    assert report.cells == []
+    assert len(report.unmeasured) == 1
+    assert report.unmeasured[0]["requirement"] == "tier:gpu"
+    assert not scratch.exists()
+
+
+def test_the_production_element_names_its_prompt_configuration():
+    """Two wordings must not share a score matrix, and the score key is the element name."""
+    from pathlib import Path
+
+    default = studies.semif_scoring_model_axis(Path("x.jsonl")).names()[0]
+    execution = studies.semif_scoring_model_axis(
+        Path("x.jsonl"), instruction="execution"
+    ).names()[0]
+    mirrored = studies.semif_scoring_model_axis(Path("x.jsonl"), feature_mode="full").names()[0]
+
+    assert len({default, execution, mirrored}) == 3
+    assert default.startswith("semif_scored_")
+
+
+def test_the_production_arm_is_addressable_from_the_cli():
+    assert "semif.produce" in studies.ARMS
+    assert studies.ARMS["semif.produce"]().models.names()[0].startswith("semif_scored")

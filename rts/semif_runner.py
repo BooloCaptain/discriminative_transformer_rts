@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import accessors, config, contract, datasets, features, populations, splits
+from . import accessors, config, contract, datasets, features, populations, semif, splits
 
 INSTRUCTION = (
     "Given a code change, judge whether the test below exercises the changed "
@@ -554,6 +554,71 @@ def score_to_cache(
     print(f"[semif] wrote {len(scores)} new pairs to {out_path}")
     print(f"[semif] {stats}")
     return stats
+
+
+# --- context-driven scoring (the experiment layer's entry point) -----------
+
+
+def score_context(
+    ds: contract.Dataset,
+    rows: np.ndarray,
+    candidates: np.ndarray,
+    out_path: Path,
+    *,
+    batch_size: int = 8,
+    max_tokens: int | None = None,
+    orientation: str = "change_query",
+    instruction: str | None = None,
+    feature_mode: str | None = None,
+    placement: str = "instruct",
+    shuffle: bool = False,
+    seed: int = config.SEED,
+    resume: bool = True,
+    model=None,
+    tokenizer=None,
+) -> tuple[np.ndarray, dict]:
+    """Score ``rows`` against their candidates: write the cache, return the matrix.
+
+    The context-driven entry point, and the reason score *production* can be a cell rather
+    than a driver's invisible precondition. Everything the pair set needs comes from the
+    dataset, the rows and the candidate mask, so a
+    :class:`~rts.models.ProducedScores` selector calls this from ``scores(ctx)`` and the
+    layer sees the study's most expensive step with a tier, a cost and a cell key.
+
+    ``model``/``tokenizer`` may be injected -- a test supplies a fake, so the produce path
+    needs no GPU -- and are loaded from the pinned checkpoint otherwise.
+
+    The matrix is read **back from the cache** rather than assembled from the in-memory
+    scores, which makes "produced" and "read later" the same object by construction. The
+    completeness check is the other half of that: a partially written cache is otherwise
+    indistinguishable from a finished one, and only the sentinel values would say so.
+    """
+    if model is None or tokenizer is None:
+        model, tokenizer, _metadata = load_model()
+
+    pair_set = build_pair_set(
+        ds, rows, candidates,
+        shuffle=shuffle, seed=seed,
+        feature_mode=feature_mode, placement=placement, instruction=instruction,
+    )
+    stats = score_to_cache(
+        model, tokenizer, ds, pair_set, out_path,
+        batch_size=batch_size, max_tokens=max_tokens,
+        orientation=orientation, resume=resume,
+    )
+
+    expected = set(pair_set.index)
+    missing = expected - load_done_keys(out_path)
+    if missing:
+        raise RuntimeError(
+            f"{out_path} is missing {len(missing)} of {len(expected)} pair(s) after scoring; "
+            "a partial cache would be read as if it were complete"
+        )
+
+    matrix = semif.load_scores(Path(out_path), ds)
+    stats["pairs_expected"] = len(expected)
+    stats["pairs_in_cache"] = len(expected) - len(missing)
+    return matrix, stats
 
 
 # --- smoke test ------------------------------------------------------------

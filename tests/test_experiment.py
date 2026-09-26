@@ -537,3 +537,52 @@ def test_the_shuffle_controls_build_their_own_bm25_and_name_themselves():
         models.LexicalSelector(shuffle_changes=True, shuffle_tests=True).name
         == "bm25_both_shuffled"
     )
+
+
+# --- reading a report back --------------------------------------------------
+#
+# The report is the only input a renderer should need: it records the dataset's own
+# declaration, its description under the split the run used, and the two population sizes,
+# so a renderer that describes the data cannot accidentally describe a different dataset.
+
+
+def test_a_report_records_the_dataset_facts_a_renderer_needs():
+    report = run(stub_experiment(), save=False, verbose=False)
+
+    described = report.describe()
+    assert described["changes"] == StubDataset().n_changes
+    assert described["tests"] == len(StubDataset().test_pool)
+    # The tail is c2 (a fault) and c3 (no killing test).
+    assert described["held_out_faults"] == 1
+
+    # The declaration is the dataset's own, recorded rather than re-derived from the type.
+    assert report.declaration()["name"] == "stub"
+
+    # StubDataset declares coverage, so the pair-recurrence statistic is defined.
+    assert report.recurrence()["killing_pair_count_median"] >= 0.0
+
+
+def test_a_report_records_the_population_size_before_and_after_the_fault_filter():
+    """``changes`` is the population in the window; ``faults`` is what was averaged over."""
+    report = run(stub_experiment(), save=False, verbose=False)
+    assert report.population_size("fault_bearing") == (1, 1)
+
+
+def test_a_dataset_without_coverage_records_no_recurrence():
+    """The statistic is undefined without coverage, which is a fact rather than a failure."""
+    ds = StubDataset(coverage=False)
+    experiment = stub_experiment(
+        datasets=Axis(ROLE_DATASET, (constant("stub", ds),))
+    )
+    report = run(experiment, save=False, verbose=False)
+    assert report.recurrence() is None
+    assert report.describe()["changes"] == ds.n_changes
+
+
+def test_naming_a_dataset_that_was_not_run_is_an_error_not_a_guess():
+    report = run(stub_experiment(), save=False, verbose=False)
+    with pytest.raises(KeyError, match="records no dataset/split pair"):
+        report.describe(dataset="nope", split="nope")
+    # Half a name is ambiguous rather than a default.
+    with pytest.raises(ValueError, match="both the dataset and the split"):
+        report.describe(dataset="stub")

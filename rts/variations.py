@@ -84,20 +84,6 @@ def _group(report, population: str, references) -> dict:
     return {"results": results, "comparisons": comparisons}
 
 
-def _rows_outside_faults(
-    ds, split, spec: populations.Population
-) -> tuple[int, int]:
-    """The legacy ``changes`` / ``faults`` pair for a population.
-
-    ``changes`` counts the population's changes in the evaluation window *before* the fault
-    filter, which is not the number the metrics were averaged over -- ``faults`` is. Both are
-    recorded, and conflating them would misstate how much data an arm rests on.
-    """
-    rows = spec.rows(ds, split.test_idx)
-    faults = sum(1 for i in rows if ds.killing_tests(ds.changes[int(i)]))
-    return int(len(rows)), int(faults)
-
-
 def _table(group: dict, title: str, name_width: int = 34) -> str:
     results = group["results"]
     lines = [f"\n{title}"]
@@ -127,10 +113,6 @@ def full_starved(max_failures: int = 2) -> dict:
     ``max_failures=5`` is the 141-fault decision-grade confirmation. The second is a superset of
     the first, which is why one cache scored for it covers both.
     """
-    ds = studies.dataset("mutmut")
-    split = splits.make_split(ds)
-    report = run(studies.starved_arm(max_failures), save=False, verbose=False)
-
     population = populations.starved(max_failures)
     report = run(studies.starved_arm(max_failures), save=False, verbose=False)
 
@@ -140,7 +122,12 @@ def full_starved(max_failures: int = 2) -> dict:
         "xgboost_struct_lex",
         "xgboost_static_lex",
     )
-    changes, faults = _rows_outside_faults(ds, split, population)
+    # The two counts come from the report, so they are the ones the run itself used: ``changes``
+    # is the population's rows in the window and ``faults`` is what every recall was averaged
+    # over. They used to be re-derived from the dataset, and this function used to run the whole
+    # arm twice -- the second `report = run(...)` was a duplicated line, so the section cost
+    # double for an identical report.
+    changes, faults = report.population_size(population.name)
     group = _group(report, population.name, references)
     print(_table(
         group,
@@ -211,8 +198,7 @@ def full_starved_seeds(seeds: tuple[int, ...] = studies.SEED_SWEEP) -> dict:
             cells = "  ".join(f"b{b}={entry[f'b{b}']['delta']:+.3f}" for b in BUDGETS)
             print(f"  {tree_name} seed {seed}: SemIf minus tree  {cells}", flush=True)
 
-    ds = studies.dataset("mutmut")
-    changes, _ = _rows_outside_faults(ds, splits.make_split(ds), spec)
+    changes, _ = report.population_size(population)
     return {
         "experiment": "full_starved_seeds",
         "seeds": list(seeds),
@@ -236,14 +222,12 @@ def p2_instruction(max_failures: int = 5, *, secondary: int = 2) -> dict:
     the null being an artifact of the population: a wording that helped only in the densest part
     of the starved range would show up as a difference between the two thresholds.
     """
-    ds = studies.dataset("mutmut")
-    split = splits.make_split(ds)
     report = run(studies.instruction_arm(max_failures, secondary=secondary), save=False, verbose=False)
 
     groups: dict[str, dict] = {}
     for threshold in (max_failures, secondary):
         spec = populations.starved(threshold)
-        changes, faults = _rows_outside_faults(ds, split, spec)
+        changes, faults = report.population_size(spec.name)
         group = _group(report, spec.name, ("semif_default",))
         group["changes"] = changes
         group["faults"] = faults
@@ -287,7 +271,6 @@ def p3_embed(device: str = "cpu", force: bool = False) -> dict:
     from . import embed
 
     ds = studies.dataset("mutmut")
-    split = splits.make_split(ds)
     cache = studies.embed_cache()
     if force or not cache.exists():
         np.save(cache, embed.build_scores(ds, device=device))
@@ -332,12 +315,11 @@ def p5_redundancy() -> dict:
     scored on the starved subset, so including it here would score 323 of 464 changes as unscored
     and make it look far worse than it is.
     """
-    ds = studies.dataset("mutmut")
     report = run(studies.redundancy_arm(), save=False, verbose=False)
 
     compared = ("xgboost_static_nocov_lex", "semif_textonly")
     group = _group(report, "fault_bearing", compared)
-    changes = int(len(splits.make_split(ds).test_idx))
+    changes = int(report.describe()["test_changes"])
     print(_table(group, "P5 redundancy (covered candidates, all 464 held-out faults)"))
 
     # Parents-versus-child is the actual test, so report those pairs explicitly rather than
