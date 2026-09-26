@@ -362,6 +362,12 @@ the only way to diff the arms at all, the refreshed artifact is committed alongs
 with the three new arms and the four new top-level keys (`labels`, `population`,
 `dataset_declaration`, `warnings`) called out rather than absorbed silently.
 
+`results_covered.json` — same shape of result as `results_full.json`: every arm present in both is
+**identical**, and the regenerated report adds the same three selector arms. This is the arm where
+the `covered` mask makes `covers_function` constant, so it is the one place the feature tensor is
+deliberately degenerate; that it reproduces exactly is the check that the capability refactor did not
+quietly change what "coverage is present" means.
+
 `ladder.json` — **exact**. Zero value differences across both label sources, all four rungs, both
 populations, every selector and every SemIf margin. The only differences are three additive keys per
 label source: `dataset_declaration`, `warnings`, and `populations_unmeasured`, the last of which is
