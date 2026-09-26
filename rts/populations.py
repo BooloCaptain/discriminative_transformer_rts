@@ -251,6 +251,25 @@ def sparse_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
     return _low_pair_recurrence(accessors.material(ds), max_pair_count)
 
 
+def low_pair_recurrence(max_pair_count: int) -> Population:
+    """The sparse proxy as a declared population, for one threshold.
+
+    The module already has ``LOW_PAIR_RECURRENCE`` as a fixed threshold and ``sparse_mask`` as
+    a parameterised helper; this is the two joined, so an experiment can sweep thresholds as
+    population *elements* rather than looping outside the grid. The name carries the threshold,
+    because two thresholds are two different populations and a sweep must not conflate them.
+    """
+    return Population(
+        name=f"sparse{max_pair_count}",
+        note=(
+            f"changes whose (file, test) pairs all recur at most {max_pair_count} times; the "
+            "proxy for software evolution where a file and a test are not repeatedly paired"
+        ),
+        needs=("pairs", "coverage", "paths"),
+        predicate=lambda material: _low_pair_recurrence(material, max_pair_count),
+    )
+
+
 __all__ = [
     "FAULT_BEARING",
     "LOW_PAIR_RECURRENCE",
@@ -259,6 +278,7 @@ __all__ = [
     "PopulationRegistry",
     "STARVED",
     "STUDY",
+    "low_pair_recurrence",
     "population",
     "resolve",
     "sparse_mask",

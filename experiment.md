@@ -286,7 +286,7 @@ One uniform payload per run, rather than a bespoke dict per driver:
     n_cells, seconds,
     cells   [ key, factors, tier, estimated_seconds, measured: true,
               selector, population, n_rows, n_changes, split, dataset_declaration,
-              features (FeatureMatrix.audit), warnings, results, seconds, importances ]
+              features (FeatureMatrix.audit), warnings, audit, results, seconds, importances ]
     unmeasured [ key, factors, tier, estimated_seconds, measured: false,
                  unmeasured: true, requirement, note ]
     comparisons [ role, reference, probe_budget, group, cell, reference_cell, delta, lo, hi, p_value, n ]
@@ -334,44 +334,44 @@ field.
 
 ## 11. Verification
 
-The documented numbers are the deliverable, so the layer is checked against them rather than
-trusted. `scripts/verify_experiment_layer.py` runs the arms through the layer and compares field
-by field — exactly where the recorded artifact is unrounded, and at the artifact's own rounding
-where it is rounded (the ladder rounds recall to 4 dp, the study arm records full precision).
+The documented numbers are the deliverable, so the arms are checked against them rather than
+trusted, and both are checked the same way: run the declared experiment, **render** the artifact
+the driver writes, and compare every leaf of the payload.
 
-**The study arm is exact.** `studies.study_arm()` against `artifacts/results_full.json`: 651
-comparisons — 12 selectors × 6 budgets × 9 fields (`budget`, `k`, `recall`, `precision`,
-`f_measure`, `suite_reduction`, both interval bounds, `n_faults`), plus the split fields — with
-**0 mismatches**. That the `random` row reproduces exactly is the load-bearing part: `refactor.md`
-§12 records a rewrite that moved every random-baseline number by changing the RNG *consumption
-pattern*, so an exact random row is evidence that the layer consumes the RNG identically rather
-than merely closely.
+    study arm (mutmut, full)      1581 recorded leaves   0 mismatches
+    study arm (mutmut, covered)   1581 recorded leaves   0 mismatches
+    ladder arm (mutmut)            967 recorded leaves   0 mismatches
+    ladder arm (full)              968 recorded leaves   0 mismatches
 
-**Both ladder arms are exact at the artifact's precision.** `studies.ladder_arm(label)` against
-`artifacts/ladder.json[label]` for `mutmut` and `full`: recall at 4 dp, `k`, `n_faults` and the
-`withheld` column list for every selector in every population in every rung; the paired deltas,
-their intervals and their p-values for every baseline against SemIf; and the headline SemIf
-margins with their argmax.
+    together                     5097 comparisons        0 mismatches, 0 additions
 
-Together: **2613 comparisons, 0 mismatches**, and a non-zero exit status if that ever changes. The
-study arm contributes 651 of them and the two ladder arms the remaining 1962. Each ladder run
-measures 68 of its 72 cells in 157 s (`mutmut`) and 344 s (`full`).
+Comparing the rendered payload rather than the cells is deliberately the stronger test: it
+exercises the declarations, the sweep, the metric sweep, the paired comparisons, the dataset
+statistics and the renderer at once. A missing leaf is a failure and a differing leaf is a
+failure; an unexpected leaf is a failure too unless its path is on the addition list in
+`scripts/verify_experiment_layer.py`, so a renamed key cannot pass and a silent extra cannot
+either. The earlier version of this check compared selected fields and would have missed a
+renderer that dropped a whole section.
+
+That the `random` row reproduces exactly is the load-bearing part. `refactor.md` §12 records a
+rewrite that moved every random-baseline number by changing the RNG *consumption pattern*, so an
+exact random row is evidence that the layer consumes the RNG identically rather than merely
+closely — and the same hazard appeared again during this work. Sweeping the sparse arm's three
+budgets in the same pass as the headline arm's six moved its *interval bounds*, because a
+bootstrap stream is positional. The point estimates were unaffected. Since `budgets` is a knob by
+design, the sparse arm is a second experiment, and the two share one score cache so the corners
+cost only their metric sweeps.
 
 The four unmeasured cells in each ladder run are exactly SemIf against the population its cache
 does not cover — the `Element.applies` case from §3 — and each carries the reason in the report
-rather than being silently absent, which is what `ladder.py` did.
+rather than being silently absent, which is what the old driver did by not tabulating it.
 
 That the ladder verified is the stronger result, because it exercises what the study arm cannot:
 four feature blocks in one run (so the matrix cache is keyed correctly), two populations per rung
 (so a population is a factor and not a constant), a comparison whose reference is unavailable for
 one of its two populations, and the split between the table intervals' resample count and the
-paired test's.
-
-**Not covered here.** `results_full.json`'s `ablations`, `sparse_arm` and `recurrence` sections are
-BM25-shuffle probes and the sparse population; the layer can express both — a `LexicalSelector`
-variant and a `population_axis` entry — and they belong to the driver migration in §13 rather than
-to a first pass. `results_covered.json` is likewise declared (`ARMS["study.covered"]`) but only
-the `full` variant is verified.
+paired test's. And it is exact in the strongest sense available: regenerating
+`artifacts/ladder.json` with the migrated renderer produces a **byte-identical file**.
 
 ## 12. What was implemented
 
@@ -422,14 +422,69 @@ pattern: it calls the same `accessors.candidates` once per dataset element and t
 `evaluate.evaluate_rows` with the same arguments, so the random baseline reproduces exactly
 (§11) rather than approximately.
 
+**Second pass: the drivers.** §13 asked for the drivers to become `Experiment` values. Two have.
+`pipeline.py` and `ladder.py` now contain no experiment logic: they run a declared arm and render
+the artifact shape their recorded numbers, the `implementation.md` tables and the figures are
+written against. That shape is kept deliberately and the sweep is what moved, so no documented
+number moves. `ladder.py` went from 347 lines of sweep to 213 lines of rendering.
+
+Two things the migration needed from the layer, both capability rather than convenience:
+
+* **`run(..., scores=...)`**, which lets a caller share score matrices *between* runs. A study
+  whose arms report different budget sets cannot be one run, because `budgets` is a knob; without
+  sharing, the second arm rebuilds the dataset and retrains every model. The key is the cell's
+  context -- dataset element, dataset name, features element, model element, split element, split
+  shape, history policy, candidate mode -- so reuse is sound rather than incidental.
+* **`models.Context.seed`**, so a run-level seed override reaches the models. Before it, `--seed`
+  moved the split and the ordering but left `RandomSelector` and `XGBoostSelector` at their
+  constructor defaults: a knob that lies about what it changed. Both now take `None` to mean "the
+  run's seed", as the BM25 shuffle controls do.
+
+And two things it removed from a driver:
+
+* **the BM25 shuffle controls are model elements** (`LexicalSelector(shuffle_changes=...)`), so
+  `results` and `ablations` are two slices of one grid with one provenance instead of a second
+  loop with its own bookkeeping -- and the shuffle seed now comes from the run rather than from a
+  driver argument;
+* **`reporting.recurrence(ds)`** and **`reporting.describe(ds, split)`** are dataset statistics the
+  driver computed inline. They live with the other reporting functions now, because they are facts
+  about the data rather than about a sweep.
+
+The layer also stopped conflating two vocabularies: a cell records `warnings` (the *derivation's*
+caveats -- a family withheld, history on an imposed order) separately from `audit` (what the
+dataset and split say about trusting a number at all). The ladder artifact needs them apart, and
+merging them had made the distinction unavailable to a consumer.
+
+**The artifacts were regenerated, not just checked.** Running the migrated drivers rewrites the
+tracked artifacts, which is the end-to-end proof that the renderers work and the only way to keep
+code and artifact in step:
+
+* `artifacts/ladder.json` is **byte-identical** -- the migrated `ladder.py` writes exactly what the
+  old driver wrote.
+* `artifacts/results_full.json` and `results_covered.json` each gain **seven lines**, all of them
+  the `paired_vs_reference.bm25_both_shuffled` entry. That is the one place where the layer
+  computes more than the driver did: it pairs *every* model in the group, and the old driver
+  paired only the two shuffle controls it had computed. Dropping the third to match the old key
+  set would discard a computed number for cosmetic parity, so it is kept and called out here --
+  the same treatment `refactor.md` §12 gave the three selector arms `results_full.json` had been
+  missing. Every other leaf is unchanged, which the payload comparison in §11 shows leaf by leaf.
+
 ## 13. What remains
 
-* **Migrating the drivers.** `pipeline`, `ladder`, `variations`, `bundles`, `bugsinpy` and
-  `analysis` should become `Experiment` values once §11 passes, and `figures` should read the
-  uniform payload. `studies.py` currently restates the ladder's selector list and rung
-  handling, which is duplication that exists only until those drivers go.
-* **`results_covered.json`.** The layer's `Knobs.candidates` covers it, and the arm is declared
-  (`ARMS["study.covered"]`), but only the `full` variant is verified so far.
+* **`variations`, `bundles`, `bugsinpy` and `analysis` are not migrated.** They are the remaining
+  drivers. `variations` and `bundles` are the interesting pair, because their factors are exactly
+  the cases §2 maps onto roles: an instruction variant is a model reading a different cache, and a
+  bundle rung is a dataset derived from a base -- `studies._bundle_dataset` already shows the
+  latter as a three-line element. `bugsinpy` needs a dataset element for the pooled corpus and its
+  own renderer; `analysis` is mostly descriptive statistics over a report.
+* **`figures.py` is untouched and needs nothing.** It reads `artifacts/variations.json`, which
+  `variations` still writes. When that driver migrates, the figures follow whatever payload it
+  produces.
+* **A `RunReport` cannot be handed to a consumer directly.** The pipeline renderer rebuilds the
+  dataset to call `reporting.describe` and `reporting.recurrence`, because the report records the
+dataset's *declaration* and per-cell counts but not the dataset itself. That is a deliberate
+  choice -- a report should stay serialisable -- and rebuilding is cheap and permitted
+  (`refactor.md` §7), but a consumer that wants several statistics would rather build once.
 * **Producing score caches is still outside the layer.** A `semif_runner` GPU arm is a
   *precondition* of a model element, not a cell. Modelling production as well as consumption
   would be a second feature (a build graph over artifacts); the layer currently treats caches

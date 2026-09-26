@@ -376,6 +376,43 @@ def test_a_run_knob_override_is_recorded():
     assert [r["budget"] for r in report.cells[0].results] == [0.25]
 
 
+def test_the_run_seed_reaches_the_model_not_just_the_split():
+    """A knob that stops at the layer is a knob that lies about what it changed."""
+
+    def recall_at(seed: int) -> float:
+        report = run(
+            stub_experiment(
+                models=Axis(ROLE_MODEL, (constant("random", models.RandomSelector()),)),
+                knobs=Knobs(budgets=(PROBE,), n_bootstrap=5, seed=seed),
+            ),
+            save=False,
+            verbose=False,
+        )
+        return report.cells[0].results[0]["recall"]
+
+    assert recall_at(config.SEED) != recall_at(config.SEED + 1)
+
+
+def test_a_caller_can_share_score_matrices_between_runs():
+    """What lets one study be two runs -- different budget sets -- without retraining."""
+    experiment = stub_experiment()
+    shared: dict = {}
+
+    first = run(experiment, scores=shared, save=False, verbose=False)
+    assert first.cells[0].seconds > 0
+    assert len(shared) == 1
+
+    second = run(
+        experiment,
+        knobs=Knobs(budgets=(0.25,), n_bootstrap=5, seed=experiment.knobs.seed),
+        scores=shared,
+        save=False,
+        verbose=False,
+    )
+    assert second.cells[0].seconds == 0
+    assert [r["budget"] for r in second.cells[0].results] == [0.25]
+
+
 def test_the_environment_is_a_value_a_caller_can_inject_through():
     report = run(
         stub_experiment(),
@@ -399,3 +436,35 @@ def test_artifact_backed_selectors_declare_what_they_read():
 
     extra = models.XGBoostSelector(extra_score_files={"semif": config.SEMIF_SCORES_FILE})
     assert extra.requirements() == (f"artifact:{config.SEMIF_SCORES_FILE}",)
+
+
+def test_the_shuffle_controls_build_their_own_bm25_and_name_themselves():
+    """The change-shuffle ablation is a selector, so its name is the recorded artifact's key."""
+    ds = StubDataset()
+    matrix = features.structured(ds, history=True)
+    bm25 = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
+    ctx = models.Context(
+        ds=ds,
+        features=matrix,
+        split=splits.make_split(ds, train_fraction=0.5),
+        bm25=bm25,
+        seed=config.SEED,
+    )
+
+    canonical = models.LexicalSelector()
+    assert canonical.name == "bm25_lexical"
+    # No flags means the context's matrix, untouched -- the ablation must not perturb the arm it
+    # is a control for.
+    assert canonical.scores(ctx) is ctx.bm25
+
+    shuffled = models.LexicalSelector(shuffle_changes=True)
+    assert shuffled.name == "bm25_change_shuffled"
+    got = shuffled.scores(ctx)
+    assert got.shape == (ds.n_changes, ds.n_tests)
+    assert not np.array_equal(got, ctx.bm25)
+
+    assert models.LexicalSelector(shuffle_tests=True).name == "bm25_test_shuffled"
+    assert (
+        models.LexicalSelector(shuffle_changes=True, shuffle_tests=True).name
+        == "bm25_both_shuffled"
+    )

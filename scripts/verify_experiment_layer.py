@@ -1,26 +1,33 @@
-"""Verify the experiment layer reproduces the recorded artifacts.
+"""Verify the migrated arms reproduce the recorded artifacts.
 
-The documented numbers are the deliverable (``refactor.md`` §8), so the layer is checked
-against them rather than trusted: ``studies.study_arm()`` against
-``artifacts/results_full.json`` and ``studies.ladder_arm()`` against
-``artifacts/ladder.json``, for both label sources.
+The documented numbers are the deliverable (``refactor.md`` §8), so the arms are checked against
+them rather than trusted. Both arms are checked the same way: run the declared experiment, *render*
+the artifact the driver writes, and compare every leaf of the payload.
 
-Run it after any change to the experiment layer::
+    study arm (mutmut, full)      vs artifacts/results_full.json
+    study arm (mutmut, covered)   vs artifacts/results_covered.json
+    ladder arm (mutmut)           vs artifacts/ladder.json
+    ladder arm (full)             vs artifacts/ladder.json
 
-    python scripts/verify_experiment_layer.py            # both arms
-    python scripts/verify_experiment_layer.py study      # one arm
+Comparing the rendered payload rather than the cells is deliberately the stronger test: it
+exercises the declarations, the sweep, the metric sweep, the paired comparisons, the dataset
+statistics and the renderer at once. A missing leaf is a failure, a differing leaf is a failure,
+and an unexpected leaf is a failure unless its path is on the documented addition list below --
+so a renamed key cannot pass and a silent extra cannot either.
+
+Run it after any change to the layer or to an arm::
+
+    python scripts/verify_experiment_layer.py                    # everything
+    python scripts/verify_experiment_layer.py study              # one arm
     python scripts/verify_experiment_layer.py ladder --labels full
 
-Comparison is field by field and *exact* where the recorded artifact is unrounded, and at the
-artifact's own rounding where it is rounded (the ladder rounds recall to 4 dp, the study arm
-records full precision). A non-zero exit means the layer moved a number.
+A non-zero exit status means the layer moved a number.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -28,77 +35,68 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rts import config, studies  # noqa: E402
-from rts.experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run  # noqa: E402
+from rts import config, ladder, pipeline, studies  # noqa: E402
 
 FAILURES: list[str] = []
+ADDITIONS: list[str] = []
 CHECKS = [0]
 
-
-def check(label: str, got, want, ndigits: int | None = None) -> None:
-    CHECKS[0] += 1
-    if isinstance(got, float) and isinstance(want, float):
-        if math.isnan(got) and math.isnan(want):
-            return
-        if ndigits is not None:
-            got, want = round(got, ndigits), round(want, ndigits)
-    if got != want:
-        FAILURES.append(f"{label}: got {got!r}, recorded {want!r}")
+#: Path prefixes whose extra leaves are expected rather than a regression. One entry, and it is
+#: explained where it is produced: the layer pairs *every* model in a group, so it computes a
+#: paired delta for the both-shuffled control where the old driver computed one for the two
+#: single-shuffled controls only. Dropping it to match the old key set would discard a computed
+#: number for cosmetic parity.
+ADDITION_PREFIXES = (".paired_vs_reference.",)
 
 
 def load(name: str) -> dict:
     return json.loads((config.ARTIFACTS / name).read_text())
 
 
-def cells_by(report, role: str) -> dict:
-    out: dict[tuple, object] = {}
-    for cell in report.cells:
-        key = tuple(
-            (r, n) for r, n in cell.cell.factors if r != role
-        ) + ((role, cell.cell.name(role)),)
-        out[tuple(sorted(key))] = cell
-    return out
+def leaves(value, path: str = ""):
+    """Every leaf of a nested structure, with the path that reaches it."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from leaves(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from leaves(item, f"{path}[{index}]")
+    else:
+        yield path, value
 
 
-def find(report, **factors):
-    wanted = {r: n for r, n in factors.items()}
-    for cell in report.cells:
-        have = cell.cell.factors_dict()
-        if all(have.get(r) == n for r, n in wanted.items()):
-            return cell
-    return None
+def compare_payload(label: str, got: dict, recorded: dict) -> None:
+    have = dict(leaves(got))
+    want = dict(leaves(recorded))
+    CHECKS[0] += len(want)
+    for path in sorted(set(have) | set(want)):
+        if path not in have:
+            FAILURES.append(f"{label}{path}: missing (recorded {want[path]!r})")
+        elif path not in want:
+            if path.startswith(ADDITION_PREFIXES):
+                ADDITIONS.append(f"{label}{path} = {have[path]!r}")
+            else:
+                FAILURES.append(f"{label}{path}: unexpected (got {have[path]!r})")
+        elif have[path] != want[path]:
+            FAILURES.append(f"{label}{path}: got {have[path]!r}, recorded {want[path]!r}")
+    print(f"  {len(want)} recorded leaves compared")
 
 
-# --- the study arm ----------------------------------------------------------
+# --- the study arm ---------------------------------------------------------
 
 
 def verify_study(labels: str = "mutmut", candidates: str = "full") -> None:
+    """Run both study arms and compare the artifact the driver would write."""
     recorded = load(f"results_{candidates}.json")
-    experiment = studies.study_arm(labels, candidates=candidates)
-    report = run(experiment, save=False, verbose=True)
-
     print(f"\n--- study arm ({labels}, {candidates}) vs results_{candidates}.json ---")
-    for name, rows in recorded["results"].items():
-        cell = find(
-            report,
-            dataset=f"marshmallow_{labels}",
-            features="structured",
-            model=name,
-            population="fault_bearing",
-        )
-        if cell is None:
-            FAILURES.append(f"study: no measured cell for model {name!r}")
-            continue
-        for want, got in zip(rows, cell.results):
-            for field in ("budget", "k", "recall", "precision", "f_measure",
-                          "suite_reduction", "recall_lo", "recall_hi", "n_faults"):
-                check(f"study[{name}] b{want['budget']:.2f} {field}", got[field], want[field])
-    print(f"  {len(recorded['results'])} selectors checked, {CHECKS[0]} field comparisons so far")
-
-    # The layer records the split per cell; the recorded artifact records it once.
-    for name in ("fraction", "shuffle", "effective_ordering"):
-        cell = report.cells[0]
-        check(f"study split.{name}", cell.split[name], recorded["split"][name])
+    # ``save=False``: a check reads the artifacts under test, it does not add to them.
+    report, sparse_report = studies.run_study(
+        labels, candidates=candidates, save=False, verbose=True
+    )
+    got = pipeline.render(labels, candidates, report, sparse_report)
+    # The two arms are separate reports because their budget sets differ -- ``budgets`` is a
+    # knob -- so ``render`` is what puts them back into one artifact.
+    compare_payload(f"study[{labels},{candidates}]", got, recorded)
 
 
 # --- the ladder arm ---------------------------------------------------------
@@ -106,115 +104,30 @@ def verify_study(labels: str = "mutmut", candidates: str = "full") -> None:
 
 def verify_ladder(labels: str = "mutmut") -> None:
     recorded = load("ladder.json")[labels]
-    experiment = studies.ladder_arm(labels)
-    report = run(experiment, save=False, verbose=True)
-
     print(f"\n--- ladder arm ({labels}) vs ladder.json[{labels!r}] ---")
-    # ``ladder.json`` records the dataset's total change count; a cell records the size of the
-    # evaluation window, which is a different quantity. Compare the one both have: the number of
-    # held-out faults, which is the population size the metrics were averaged over.
-    faults_cell = find(report, features="L0_all", population="heldout530", model="coverage")
-    if faults_cell is None:
-        FAILURES.append("ladder: no measured cell for the held-out fault population")
-    else:
-        check("ladder held_out_faults", faults_cell.n_rows, recorded["held_out_faults"])
-
-    unmeasured = {
-        (u["factors"][ROLE_FEATURES], u["factors"][ROLE_POPULATION], u["factors"][ROLE_MODEL])
-        for u in report.unmeasured
-    }
-
-    for rung, want_rung in recorded["rungs"].items():
-        sample = find(report, features=rung, population="starved141", model="semif_reranker")
-        if sample is not None:
-            withheld = sorted(u["column"] for u in sample.features["unmeasured"])
-            check(f"ladder[{rung}] withheld", withheld, sorted(want_rung["withheld"]))
-
-        for population, table in want_rung["selectors"].items():
-            if "unmeasured" in table:
-                continue
-            for model, want in table.items():
-                cell = find(report, features=rung, population=population, model=model)
-                if cell is None:
-                    if (rung, population, model) in unmeasured:
-                        continue
-                    FAILURES.append(
-                        f"ladder[{rung}/{population}]: no cell for {model!r}, and it is "
-                        "not recorded as unmeasured"
-                    )
-                    continue
-                for row in cell.results:
-                    key = f"{row['budget']:.2f}"
-                    check(
-                        f"ladder[{rung}/{population}/{model}] b{key} recall",
-                        row["recall"],
-                        want["recall"][key],
-                        ndigits=4,
-                    )
-                    check(
-                        f"ladder[{rung}/{population}/{model}] b{key} k",
-                        row["k"],
-                        want["k"][key],
-                    )
-                    check(
-                        f"ladder[{rung}/{population}/{model}] b{key} n_faults",
-                        row["n_faults"],
-                        want["n_faults"],
-                    )
-
-        # Paired comparisons, recorded for starved141 only because a reference model with no
-        # scores for a population is not a reference (see studies._ladder_semif_applies).
-        want_comps = want_rung["comparisons"].get("starved141_vs_semif_b0.05", {})
-        got_comps = {
-            record["cell"]: record
-            for record in report.comparisons
-            if record.get("measured")
-            and record["group"].get(ROLE_FEATURES) == rung
-            and record["group"].get(ROLE_POPULATION) == "starved141"
-        }
-        for model, want in want_comps.items():
-            got = got_comps.get(model)
-            if got is None:
-                FAILURES.append(
-                    f"ladder[{rung}] comparison for {model!r} missing; it is recorded"
-                )
-                continue
-            check(f"ladder[{rung}][{model}] delta", got["delta"],
-                  want["delta_baseline_minus_semif"], ndigits=4)
-            check(f"ladder[{rung}][{model}] lo", got["lo"], want["lo"], ndigits=4)
-            check(f"ladder[{rung}][{model}] hi", got["hi"], want["hi"], ndigits=4)
-            check(f"ladder[{rung}][{model}] p", got["p_value"], want["p"], ndigits=5)
-
-    # The headline quantity, read back off the report rather than recorded by the kernel.
-    margins = studies.semif_margins(report)
-    for rung, want in recorded["rungs"].items():
-        got_rung = margins.get(rung, {})
-        for key, want_margin in want.get("semif_margin", {}).items():
-            got = got_rung.get(key)
-            if got is None:
-                FAILURES.append(f"ladder[{rung}] margin b{key} missing")
-                continue
-            check(f"ladder[{rung}] margin b{key}", got["semif_margin"],
-                  want_margin["semif_margin"], ndigits=4)
-            check(f"ladder[{rung}] margin b{key} best", got["best_classical"],
-                  want_margin["best_classical"])
+    compare_payload(f"ladder[{labels}]", ladder.run_label_source(labels, verbose=True), recorded)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("arms", nargs="*", default=["study", "ladder"],
-                        choices=["study", "ladder"])
-    parser.add_argument("--labels", nargs="*", default=["mutmut", "full"])
-    parser.add_argument("--candidates", default="full", choices=["full", "covered"])
+    parser.add_argument("arms", nargs="*", choices=["study", "ladder"])
+    parser.add_argument("--labels", nargs="*", choices=list(config.LABEL_SOURCES))
+    parser.add_argument("--candidates", nargs="*", choices=["full", "covered"])
     args = parser.parse_args()
 
-    if "study" in args.arms:
-        verify_study("mutmut", args.candidates)
-        print(f"  study arm total: {CHECKS[0]} comparisons")
-    if "ladder" in args.arms:
+    arms = args.arms or ["study", "ladder"]
+    labels = args.labels or ["mutmut", "full"]
+    candidates = args.candidates or ["full", "covered"]
+
+    if "study" in arms:
         before = CHECKS[0]
-        for labels in args.labels:
-            verify_ladder(labels)
+        for mode in candidates:
+            verify_study("mutmut", mode)
+        print(f"  study arms total: {CHECKS[0] - before} comparisons")
+    if "ladder" in arms:
+        before = CHECKS[0]
+        for name in labels:
+            verify_ladder(name)
         print(f"  ladder arms total: {CHECKS[0] - before} comparisons")
 
     print("\n" + "=" * 78)
@@ -223,6 +136,12 @@ def main() -> int:
         print(f"  MISMATCH {failure}")
     if len(FAILURES) > 40:
         print(f"  ... and {len(FAILURES) - 40} more")
+    if ADDITIONS:
+        print(f"\n{len(ADDITIONS)} expected addition(s) beyond the recorded artifact:")
+        for addition in ADDITIONS[:8]:
+            print(f"  ADDED {addition}")
+        if len(ADDITIONS) > 8:
+            print(f"  ... and {len(ADDITIONS) - 8} more")
     print("=" * 78)
     return 1 if FAILURES else 0
 

@@ -2,6 +2,8 @@
 Evaluate if discriminative transformer models like SemIf can compete with traditional discriminative machine learning for regression test selection. SemIf is an open source pretrained discriminative transfomer (https://github.com/TheoLeeCJ/SemIf-OpenJev). This is a pre-study feasibility test.
 
 Tooling, harness details, and measured verification results: see `implementation.md`.
+The experiment harness's own design -- how experiments are declared, swept and run -- is
+`experiment.md`.
 
 # Scope
 - Run a mutation testing framework on a Python open source library to generate synthetic changes with attached test result data to build a synthetic change history. Keep non-killed mutants and no-op mutants.

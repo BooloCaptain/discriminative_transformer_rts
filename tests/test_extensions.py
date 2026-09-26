@@ -155,10 +155,10 @@ def test_the_traceability_family_is_exactly_its_three_real_columns():
 
 def test_every_ladder_rung_withholds_exactly_the_columns_its_families_name():
     """A rung must withhold a real, non-empty set -- that is the whole ablation."""
-    from rts import ladder
+    from rts import studies
 
-    for rung, removed in ladder.RUNGS:
-        block = ladder._rung_block(removed)
+    for rung, removed in studies.RUNGS:
+        block = studies.rung_block(removed)
         expected = {
             column for family in removed for column in features.STRUCTURED.family(family)
         }
@@ -167,7 +167,7 @@ def test_every_ladder_rung_withholds_exactly_the_columns_its_families_name():
             assert expected, rung  # a rung that removes nothing is not a rung
     # The cumulative rungs are nested, and L3 is the one that must leave no
     # traceability column standing.
-    l3 = ladder._rung_block(ladder.RUNGS[-1][1])
+    l3 = studies.rung_block(studies.RUNGS[-1][1])
     assert set(l3.suppressed) == set(
         features.STRUCTURED.family("history")
         + features.STRUCTURED.family("coverage")

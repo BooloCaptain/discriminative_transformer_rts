@@ -3,11 +3,11 @@
 The harness already had three of the five things an experiment sweeps over as plain values
 with declarations -- :class:`~rts.contract.Dataset`, ``FeatureBlock`` and
 :class:`~rts.populations.Population` -- and it had no layer that composed them. Instead each
-study arm was a hand-written driver (``pipeline.run``, ``ladder.run_label_source``,
-``variations``, ``bugsinpy``, ``analysis``) that rebuilt the same sequence and kept the
-study's choices as its own module constants. The sweep existed as control flow rather than as
-data, and "a named variant of one input" was implemented three times (``ladder.RUNGS``,
-bundle rungs, ``INSTRUCTION_VARIANTS``).
+study arm was a hand-written driver that rebuilt the same sequence and kept the study's choices
+as its own module constants. The sweep existed as control flow rather than as data, and "a named
+variant of one input" was implemented three times (the ladder's rungs, bundle rungs, and the
+instruction variants). Two of those drivers are now renderers over a declared arm
+(``rts/pipeline.py``, ``rts/ladder.py``); the rest are listed in ``experiment.md`` §13.
 
 This module is that missing layer. See ``experiment.md`` for the design and its rationale.
 
@@ -64,7 +64,6 @@ from .contract import (
     Requirement,
     Unmeasured,
     Warning,
-    Warnings,
     is_unmeasured,
 )
 
@@ -588,6 +587,7 @@ class CellResult:
     split: dict
     features: dict
     warnings: tuple[dict, ...]
+    audit: tuple[dict, ...]
     results: list[dict]
     seconds: float = 0.0
     importances: dict = field(default_factory=dict)
@@ -604,6 +604,7 @@ class CellResult:
             "split": self.split,
             "features": self.features,
             "warnings": list(self.warnings),
+            "audit": list(self.audit),
             "results": self.results,
             "seconds": self.seconds,
             "importances": self.importances,
@@ -720,8 +721,8 @@ def _measure(
     bm25: np.ndarray,
     candidates: np.ndarray,
     probes: Sequence[float],
-    scores_cache: dict[tuple[str, ...], np.ndarray],
-    score_key: tuple[str, ...],
+    scores_cache: dict[tuple, np.ndarray],
+    score_key: tuple,
 ) -> tuple[CellResult | Unmeasured, dict[float, dict[int, bool]]]:
     """Measure one cell. Returns the result (or why it is unmeasured) and the probe hits."""
     ds: Dataset = values[ROLE_DATASET]
@@ -746,7 +747,9 @@ def _measure(
             {},
         )
 
-    ctx = models.Context(ds=ds, features=matrix, split=split, bm25=bm25)
+    ctx = models.Context(
+        ds=ds, features=matrix, split=split, bm25=bm25, seed=env.knobs.seed
+    )
     if score_key in scores_cache:
         # A score matrix is a function of the *context*, and the context is (dataset, features,
         # model, split). Population is deliberately not in it: a population restricts which rows
@@ -789,7 +792,7 @@ def _measure(
         probe: evaluate.per_change_hits(scores, ds, split.test_idx[positions], probe, candidates)
         for probe in probes
     }
-    collected = Warnings.from_(matrix.warnings, audit)
+    collected = matrix.warnings
     result = CellResult(
         cell=cell,
         selector=selector.name,
@@ -804,7 +807,12 @@ def _measure(
             "effective_ordering": split.effective_ordering.value,
         },
         features=matrix.audit(),
+        # Two vocabularies, kept apart: ``warnings`` are the *derivation's* caveats (a block
+        # whose history family was withheld, a history feature on an imposed order), while
+        # ``audit`` is what the dataset and split say about trusting a number at all. Merging
+        # them loses the distinction a consumer acts on.
         warnings=tuple(w.to_dict() for w in collected),
+        audit=tuple(w.to_dict() for w in audit),
         results=evaluate.results_to_dicts(evaluation.results or []),
         seconds=seconds,
         importances=importances,
@@ -878,6 +886,7 @@ def run(
     shared: Mapping[str, Any] | None = None,
     caches: Mapping[str, Path] | None = None,
     tiers: Sequence[str] | None = None,
+    scores: dict[tuple, np.ndarray] | None = None,
     save: bool = True,
     verbose: bool = True,
 ) -> RunReport:
@@ -886,6 +895,13 @@ def run(
     The parameters are the free choices a *run* makes as opposed to the ones the experiment
     declares: where to write, which knobs to use if not the declared ones, what to inject, and
     which cost tiers to spend. All of them are recorded in the report.
+
+    ``scores`` lets a caller share score matrices *between* runs, which matters when one
+    experiment is split into two because a knob differs -- the headline arm and the sparse arm
+    report different budget sets, and budgets are a knob, so they cannot be one run. Reuse is
+    sound because a score matrix is a function of the cell's context, which is what the key
+    records; it is not a function of the averaging population, which is why the sparse corners
+    cost nothing to add.
     """
     env = Environment(
         knobs=knobs or experiment.knobs,
@@ -924,9 +940,9 @@ def run(
     )
 
     built: dict[tuple[str, str], Any] = {}
-    matrices: dict[tuple[str, str, str], features.FeatureMatrix] = {}
+    matrices: dict[tuple, features.FeatureMatrix] = {}
     audits: dict[tuple[str, str], tuple[Warning, ...]] = {}
-    scores: dict[tuple[str, ...], np.ndarray] = {}
+    score_cache: dict[tuple, np.ndarray] = {} if scores is None else scores
     bm25s: dict[str, np.ndarray] = {}
     candidate_masks: dict[str, np.ndarray] = {}
     hits: dict[str, dict[float, dict[int, bool]]] = {}
@@ -968,12 +984,14 @@ def run(
         split: splits.Split = values[ROLE_SPLIT]
         dataset_name = cell.name(ROLE_DATASET)
         features_name = cell.name(ROLE_FEATURES)
-        matrix_key = (dataset_name, features_name, cell.name(ROLE_SPLIT))
+        # ``history`` is derived, not configured: the effective ordering of the run is the
+        # dataset's unless the split shuffles, and it is the cell's split that decides. It is
+        # part of the matrix key because a block with the history family withheld keeps the
+        # same column list as one without.
+        derived = split.effective_ordering is Ordering.OBSERVED
+        use_history = derived if experiment.history is None else experiment.history
+        matrix_key = (dataset_name, features_name, cell.name(ROLE_SPLIT), use_history)
         if matrix_key not in matrices:
-            # ``history`` is derived, not configured: the effective ordering of the run is the
-            # dataset's unless the split shuffles, and it is the cell's split that decides.
-            derived = split.effective_ordering is Ordering.OBSERVED
-            use_history = derived if experiment.history is None else experiment.history
             matrices[matrix_key] = features.structured(
                 ds, history=use_history, block=values[ROLE_FEATURES]
             )
@@ -998,8 +1016,19 @@ def run(
             bm25s[dataset_name],
             candidate_masks[dataset_name],
             probes,
-            scores,
-            (dataset_name, features_name, cell.name(ROLE_MODEL), cell.name(ROLE_SPLIT)),
+            score_cache,
+            (
+                dataset_name,
+                ds.name,
+                features_name,
+                cell.name(ROLE_MODEL),
+                cell.name(ROLE_SPLIT),
+                round(split.fraction, 6),
+                split.shuffle,
+                split.seed,
+                use_history,
+                env.knobs.candidates,
+            ),
         )
         if is_unmeasured(result):
             unmeasured_keys[cell.key] = result

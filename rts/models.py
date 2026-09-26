@@ -45,6 +45,10 @@ class Context:
     split: "splits.Split"
     bm25: np.ndarray  # [n_changes, n_tests]
     extras: dict = field(default_factory=dict)
+    #: The run's seed. A selector that needs randomness reads it here rather than from
+    #: ``config``, so that a run-level seed override reaches the model instead of stopping at
+    #: the experiment layer.
+    seed: int = config.SEED
 
     @property
     def X(self) -> np.ndarray:
@@ -99,11 +103,12 @@ class Selector:
 class RandomSelector(Selector):
     name = "random"
 
-    def __init__(self, seed: int = config.SEED):
+    def __init__(self, seed: int | None = None):
+        # ``None`` means "the run's seed", so an experiment's seed knob reaches the model.
         self.seed = seed
 
     def scores(self, ctx: Context) -> np.ndarray:
-        rng = np.random.default_rng(self.seed)
+        rng = np.random.default_rng(ctx.seed if self.seed is None else self.seed)
         return rng.random((ctx.ds.n_changes, ctx.ds.n_tests)).astype(np.float32)
 
 
@@ -159,12 +164,37 @@ class StructuralRuleSelector(Selector):
 
 
 class LexicalSelector(Selector):
-    """BM25 between the changed lines and the test source."""
+    """BM25 between the changed lines and the test source.
+
+    The two shuffle flags produce a *shuffled* BM25 instead of reading the context's canonical
+    one, which is the change-shuffle ablation ``plan.md`` specifies: if recall barely drops when
+    the change text is shuffled, the lexical signal is a change-independent test prior rather
+    than a match between the change and the test. Expressing the probe as a selector keeps it in
+    the same grid as everything else, with the same provenance, instead of in a driver's second
+    loop with its own bookkeeping.
+    """
 
     name = "bm25_lexical"
 
+    def __init__(self, shuffle_changes: bool = False, shuffle_tests: bool = False):
+        self.shuffle_changes = shuffle_changes
+        self.shuffle_tests = shuffle_tests
+        if shuffle_changes and shuffle_tests:
+            self.name = "bm25_both_shuffled"
+        elif shuffle_changes:
+            self.name = "bm25_change_shuffled"
+        elif shuffle_tests:
+            self.name = "bm25_test_shuffled"
+
     def scores(self, ctx: Context) -> np.ndarray:
-        return ctx.bm25
+        if not (self.shuffle_changes or self.shuffle_tests):
+            return ctx.bm25
+        return features.text.build_bm25_scores(
+            ctx.ds,
+            shuffle_changes=self.shuffle_changes,
+            shuffle_tests=self.shuffle_tests,
+            seed=ctx.seed,
+        )
 
 
 class XGBoostSelector(Selector):
@@ -196,7 +226,7 @@ class XGBoostSelector(Selector):
         n_estimators: int = 300,
         max_depth: int = 6,
         learning_rate: float = 0.15,
-        seed: int = config.SEED,
+        seed: int | None = None,
         extra_score_files: dict[str, Path] | None = None,
         candidates_mode: str | None = None,
     ):
@@ -207,6 +237,8 @@ class XGBoostSelector(Selector):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
+        # ``None`` means "the run's seed", so an experiment's seed knob reaches the model
+        # rather than stopping at ``config``. The same rule as ``RandomSelector``.
         self.seed = seed
         # P5: extra per-(change, test) score columns supplied by another model. The
         # canonical use is adding the SemIf reranker score to the structured features to
@@ -297,7 +329,7 @@ class XGBoostSelector(Selector):
             min_child_weight=5,
             tree_method="hist",
             n_jobs=-1,
-            random_state=self.seed,
+            random_state=ctx.seed if self.seed is None else self.seed,
             eval_metric="logloss",
         )
         model.fit(X_train, y_train)

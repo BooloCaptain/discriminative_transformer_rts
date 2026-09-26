@@ -1940,6 +1940,13 @@
     "per_change_max_pair_count_p50": 459.0
   },
   "paired_vs_reference": {
+    "bm25_both_shuffled": {
+      "delta": 0.00646551724137931,
+      "lo": -0.019450431034482758,
+      "hi": 0.032327586206896554,
+      "p_value": 0.648,
+      "n": 464
+    },
     "bm25_change_shuffled": {
       "delta": 0.010775862068965518,
       "lo": -0.015086206896551725,

@@ -103,6 +103,40 @@ def describe(ds: Dataset, split: Split) -> dict:
     return out
 
 
+def recurrence(ds: Dataset) -> dict:
+    """How often ``(file, test)`` pairs recur, which is what makes history features flattered.
+
+    A statistic about the *data* rather than about a sweep, which is why it lives here and not
+    in the experiment layer: it needs no scores, no split and no selector. It is recorded
+    beside every history-bearing result because a pair that recurs a median of 159 times means
+    the cumulative features were measured against a sequence that revisits a pair far more often
+    than real evolution would.
+    """
+    counts = accessors.pair_counts(ds)
+    faults = accessors.fault_idx(ds)
+    covered_by = accessors.covered(ds)
+    paths = accessors.change_paths(ds)
+    fault_pairs = np.array(
+        [
+            counts.get((paths[i], sorted(ds.killing_tests(ds.changes[i]))[0]), 0)
+            for i in faults
+        ]
+    )
+    maxpc = np.array(
+        [
+            max((counts[(paths[i], t)] for t in covered_by[i]), default=0)
+            for i in range(ds.n_changes)
+        ]
+    )
+    return {
+        "killing_pair_count_median": float(np.median(fault_pairs)),
+        "killing_pair_count_mean": float(fault_pairs.mean()),
+        "killing_pair_count_max": float(fault_pairs.max()),
+        "per_change_max_pair_count_p05": float(np.percentile(maxpc, 5)),
+        "per_change_max_pair_count_p50": float(np.percentile(maxpc, 50)),
+    }
+
+
 def describe_starved(ds: Dataset, split: Split, mask: np.ndarray) -> dict:
     """Distribution shape of a filtered subset, to show it is narrow and low."""
     run_counts, fail_counts = accessors.pair_history_counts(ds)
@@ -169,4 +203,4 @@ def split_for(ds: Dataset, **kwargs) -> Split:
     return make_split(ds, **kwargs)
 
 
-__all__ = ["audit", "describe", "describe_starved", "save", "split_for"]
+__all__ = ["audit", "describe", "describe_starved", "recurrence", "save", "split_for"]

@@ -9,28 +9,33 @@ nothing about how a sweep is executed.
 selector instances that train on use, so a fresh axis per arm keeps two runs from sharing one
 model object.
 
-**Two arms here are verification vehicles.** ``study_arm()`` reproduces
-``artifacts/results_full.json`` and ``ladder_arm()`` reproduces ``artifacts/ladder.json``
-(``experiment.md`` §11). Until they do, the hand-written drivers stay in place as the reference
-implementation -- which is also why the selector lists and rung definitions below are written
-out here rather than read back out of ``ladder.py``: they are study choices and belong with the
-study's config, and the duplication disappears when the drivers do.
+**Two arms here are verification vehicles.** ``study_arm()``/``sparse_arm()`` reproduce
+``artifacts/results_{full,covered}.json`` and ``ladder_arm()`` reproduces
+``artifacts/ladder.json``, both through ``scripts/verify_experiment_layer.py``. The drivers that
+render those artifacts -- ``rts/pipeline.py`` and ``rts/ladder.py`` -- are now thin: they run an
+arm declared here and write it in the shape the recorded numbers are written against. The
+remaining drivers (``variations``, ``bundles``, ``bugsinpy``, ``analysis``) still hold their own
+sweeps and are the next migration (``experiment.md`` §13).
 
 Usage::
 
     python -m rts.studies study
-    python -m rts.studies ladder.mutmut --tiers cpu cache
+    python -m rts.studies ladder.mutmut --tiers cpu
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
-from . import bundles, config, datasets, features, ladder, models, populations, splits
-from .contract import Unmeasured
+import numpy as np
+
+from . import bundles, config, datasets, features, models, populations, splits
+from .contract import Dataset, Unmeasured
 from .experiment import (
     ROLE_DATASET,
     ROLE_FEATURES,
@@ -38,8 +43,10 @@ from .experiment import (
     ROLE_POPULATION,
     ROLE_SPLIT,
     Axis,
+    Binding,
     Comparison,
     Element,
+    Environment,
     Experiment,
     Knobs,
     RunReport,
@@ -48,17 +55,30 @@ from .experiment import (
 )
 
 __all__ = [
+    "ABLATION_MODELS",
     "ARMS",
+    "LADDER_BUDGETS",
+    "LADDER_PROBE",
+    "LADDER_RESAMPLES",
+    "LADDER_TABLE_RESAMPLES",
+    "RUNGS",
+    "SEMIF_LADDER_CACHE",
+    "SPARSE_BUDGETS",
+    "SPARSE_THRESHOLDS",
+    "dataset",
     "dataset_axis",
     "ladder_arm",
     "ladder_feature_axis",
     "ladder_model_axis",
     "ladder_population_axis",
+    "ladder_populations",
     "ladder_selectors",
     "main",
-    "model_axis",
-    "population_axis",
+    "model_axis",    "population_axis",
+    "rung_block",
+    "run_study",
     "semif_margins",
+    "sparse_arm",
     "split_axis",
     "structured_feature_axis",
     "study_arm",
@@ -114,6 +134,99 @@ def dataset_axis(
     return Axis(ROLE_DATASET, tuple(elements), note="one dataset per label source")
 
 
+# --- the traceability ladder's declarations --------------------------------
+
+#: The ladder's own budget grid and probe budget: four points, not the study arm's six.
+LADDER_BUDGETS: tuple[float, ...] = (0.01, 0.05, 0.1, 0.2)
+LADDER_PROBE = 0.05
+#: Resamples for the rung tables and for the paired tests. Different, because a table's interval
+#: and a paired p-value are two quantities with two precision needs, and the recorded artifact
+#: used different counts for them.
+LADDER_TABLE_RESAMPLES = 1000
+LADDER_RESAMPLES = 2000
+
+#: SemIf scores over the full candidate pool, cached for the ladder's held-out subset.
+#: The ``141`` in the name is provenance only: under corrected full-suite labels the starved
+#: filter collapses, so the population is simply "the changes this cache covers".
+SEMIF_LADDER_CACHE = config.ARTIFACTS / "semif_scores_ladder141_full.jsonl"
+
+#: The rungs, cumulatively. A rung name states what is *unavailable* at that rung, which is what
+#: makes the degradation curve readable.
+RUNGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("L0_all", ()),
+    ("L1_nohistory", ("history",)),
+    ("L2_nocoverage", ("history", "coverage")),
+    ("L3_notrace", ("history", "coverage", "traceability")),
+)
+
+
+def rung_block(removed: tuple[str, ...]) -> features.FeatureBlock:
+    """The structured block with the rung's families withheld.
+
+    Withholding goes through the block's own ``without_families``, so a rung takes the same
+    unmeasured path a genuinely absent capability takes and a typo in a family name raises
+    instead of quietly ablating nothing -- which is the bug that motivated the refactor.
+    """
+    return (
+        features.STRUCTURED
+        if not removed
+        else features.STRUCTURED.without_families(*removed)
+    )
+
+
+def _cached_change_ids() -> set[str] | None:
+    """Change ids with a complete full-pool SemIf cache, or ``None`` if there is none."""
+    if not SEMIF_LADDER_CACHE.exists():
+        return None
+    ids: set[str] = set()
+    with SEMIF_LADDER_CACHE.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                ids.add(json.loads(line)["change_id"])
+    return ids
+
+
+def ladder_populations(ds: Dataset) -> dict[str, "populations.Population | Unmeasured"]:
+    """The ladder's two averaging populations, built from the dataset.
+
+    ``starved141`` is defined by which changes the SemIf cache covers, so when the cache is
+    absent it is **unavailable** rather than smaller -- reporting fewer pairs as if they were the
+    population would be a different claim. ``heldout530`` is defined by the labels alone.
+    """
+    out: dict[str, populations.Population | Unmeasured] = {}
+
+    cached = _cached_change_ids()
+    if cached is None:
+        out["starved141"] = Unmeasured(
+            requirement="artifact:semif_ladder_cache",
+            note=(
+                f"{SEMIF_LADDER_CACHE.name} is missing, so the starved141 population cannot "
+                "exist; the paired comparison has no SemIf scores to pair against"
+            ),
+        )
+    else:
+        ids = [ds.change_id(c) for c in ds.changes]
+        mask = np.array([cid in cached for cid in ids], dtype=bool)
+        out["starved141"] = populations.Population(
+            name="starved141",
+            note=(
+                "held-out changes with a complete full-pool SemIf cache; paired comparisons "
+                "happen here"
+            ),
+            needs=("labels",),
+            predicate=lambda _material, mask=mask: mask,
+        )
+
+    out["heldout530"] = populations.Population(
+        name="heldout530",
+        note="every held-out fault-bearing change",
+        needs=("labels",),
+        predicate=lambda material: material["faults"],
+    )
+    return out
+
+
 # --- feature sets -----------------------------------------------------------
 
 
@@ -134,12 +247,8 @@ def ladder_feature_axis() -> Axis:
     capability takes and a typo raises instead of quietly ablating nothing.
     """
     elements = []
-    for name, removed in ladder.RUNGS:
-        block = (
-            features.STRUCTURED
-            if not removed
-            else features.STRUCTURED.without_families(*removed)
-        )
+    for name, removed in RUNGS:
+        block = rung_block(removed)
         elements.append(
             constant(
                 name,
@@ -152,6 +261,26 @@ def ladder_feature_axis() -> Axis:
 
 
 # --- models -----------------------------------------------------------------
+
+
+#: The BM25 ablation probes from ``plan.md``: shuffle the change text, the test text, or both,
+#: and re-score the same pairs. They are *controls* rather than competitors, but they are
+#: produced by the same machinery from the same context, so they are model elements instead of a
+#: driver's second loop with its own bookkeeping.
+ABLATION_MODELS: tuple[tuple[str, dict], ...] = (
+    ("bm25_change_shuffled", {"shuffle_changes": True}),
+    ("bm25_test_shuffled", {"shuffle_tests": True}),
+    ("bm25_both_shuffled", {"shuffle_changes": True, "shuffle_tests": True}),
+)
+
+#: The sparse-arm thresholds. ``max_pair_count`` is a *population* parameter, so a threshold is a
+#: population element rather than a knob. The *budgets* are a knob, though, and the sparse arm
+#: reports three where the headline arm reports six -- so the sparse arm is a second experiment
+#: rather than a corner of the first grid. That is a real consequence of the design and it is
+#: recorded here rather than hidden: a metric grid cannot be a factor while the sweep is
+#: vectorised across budgets.
+SPARSE_THRESHOLDS: tuple[int, ...] = (80, 160)
+SPARSE_BUDGETS: tuple[float, ...] = (0.05, 0.1, 0.2)
 
 
 def _model_element(selector: models.Selector, tier: str = "cpu", note: str = "") -> Element:
@@ -169,12 +298,25 @@ def _model_element(selector: models.Selector, tier: str = "cpu", note: str = "")
     )
 
 
-def model_axis(selectors: Sequence[models.Selector] | None = None) -> Axis:
-    chosen = list(selectors) if selectors is not None else models.default_selectors()
+def model_axis(
+    selectors: Sequence[models.Selector] | None = None,
+    *,
+    ablations: bool = False,
+    include_semif: bool = True,
+) -> Axis:
+    chosen = (
+        list(selectors)
+        if selectors is not None
+        else models.default_selectors(include_semif=include_semif)
+    )
+    if ablations:
+        chosen.extend(
+            models.LexicalSelector(**kwargs) for _, kwargs in ABLATION_MODELS
+        )
     return Axis(
         ROLE_MODEL,
         tuple(_model_element(s) for s in chosen),
-        note="the study's selector set",
+        note="the study's selector set" + (", plus the BM25 shuffle controls" if ablations else ""),
     )
 
 
@@ -224,7 +366,7 @@ def ladder_model_axis(include_semif: bool = True) -> Axis:
     return axis.extend(
         Element(
             "semif_reranker",
-            lambda _binding: models.SemIfSelector(scores_file=ladder.SEMIF_LADDER_CACHE),
+            lambda _binding: models.SemIfSelector(scores_file=SEMIF_LADDER_CACHE),
             note="SemIf scores over the full pool, cached for the ladder's held-out subset",
             applies=_ladder_semif_applies,
         )
@@ -234,14 +376,33 @@ def ladder_model_axis(include_semif: bool = True) -> Axis:
 # --- populations ------------------------------------------------------------
 
 
-def population_axis(names: Sequence[str] = ("fault_bearing",)) -> Axis:
-    """Named populations from the study's registry, resolved by name at declaration time."""
+def population_axis(
+    names: Sequence[str] = (),
+    *,
+    sparse: Sequence[int] = (),
+) -> Axis:
+    """Named populations from the study's registry, plus parameterised sparse thresholds.
+
+    A sparse threshold is a population, not a knob: it changes which changes a metric is
+    averaged over, which is exactly what a population is, and putting it here makes the sparse
+    arm an ordinary corner of the grid.
+    """
+    elements = [
+        constant(name, populations.population(name), note="from populations.STUDY")
+        for name in names
+    ]
+    for threshold in sparse:
+        population = populations.low_pair_recurrence(threshold)
+        elements.append(
+            constant(
+                population.name,
+                population,
+                note=f"changes whose (file, test) pairs all recur at most {threshold} times",
+            )
+        )
     return Axis(
         ROLE_POPULATION,
-        tuple(
-            constant(name, populations.population(name), tier="cpu", note="from populations.STUDY")
-            for name in names
-        ),
+        tuple(elements),
         note="the averaging populations a metric is reported over",
     )
 
@@ -257,7 +418,7 @@ def ladder_population_axis() -> Axis:
     def element(name: str) -> Element:
         return Element(
             name,
-            lambda binding, name=name: ladder.build_populations(binding.dataset)[name],
+            lambda binding, name=name: ladder_populations(binding.dataset)[name],
             tier="cpu",
             note=f"the ladder's {name} population, or why it cannot exist",
         )
@@ -303,18 +464,22 @@ def study_arm(
     label: str = "mutmut",
     *,
     candidates: str = "full",
+    ablations: bool = True,
+    include_semif: bool = True,
     name: str | None = None,
 ) -> Experiment:
-    """The study's headline arm: every selector, one dataset, one population.
+    """The study's headline arm: every selector, one dataset, the BM25 shuffle controls.
 
     With ``candidates="full"`` and ``label="mutmut"`` this reproduces
-    ``artifacts/results_full.json``.
+    ``artifacts/results_full.json``. The shuffle controls are part of the same grid because they
+    share the dataset, the split, the feature block, the candidate pool and the budgets -- only
+    the model differs, and that is the role they are.
     """
     return Experiment(
         name=name or f"study.{label}.{candidates}",
         datasets=dataset_axis((label,)),
         features=structured_feature_axis(),
-        models=model_axis(),
+        models=model_axis(ablations=ablations, include_semif=include_semif),
         populations=population_axis(("fault_bearing",)),
         splits=split_axis(),
         knobs=Knobs(
@@ -338,6 +503,95 @@ def study_arm(
     )
 
 
+def sparse_arm(
+    label: str = "mutmut",
+    *,
+    thresholds: Sequence[int] = SPARSE_THRESHOLDS,
+    budgets: Sequence[float] = SPARSE_BUDGETS,
+    candidates: str = "full",
+    include_semif: bool = True,
+    name: str | None = None,
+) -> Experiment:
+    """The sparse arm: the same selectors over the rarely-recurring corners of the data.
+
+    Its own experiment rather than a population of :func:`study_arm`, because it reports three
+    budgets where the headline arm reports six and ``budgets`` is a knob. The selectors are the
+    headline set without the shuffle controls, matching what the recorded artifact tabulates.
+    """
+    return Experiment(
+        name=name or f"sparse.{label}.{candidates}",
+        datasets=dataset_axis((label,)),
+        features=structured_feature_axis(),
+        models=model_axis(models.default_selectors(include_semif=include_semif)),
+        populations=population_axis((), sparse=thresholds),
+        splits=split_axis(),
+        knobs=Knobs(
+            seed=config.SEED,
+            budgets=tuple(budgets),
+            n_bootstrap=config.DEFAULT_BOOTSTRAP,
+            candidates=candidates,
+        ),
+        history=True,
+        note="the sparse arm: (file, test) pairs that rarely recur",
+    )
+
+
+def run_study(
+    label: str = "mutmut",
+    *,
+    candidates: str = "full",
+    ablations: bool = True,
+    include_semif: bool = True,
+    sparse: Sequence[int] = SPARSE_THRESHOLDS,
+    out_dir: Path | str | None = None,
+    knobs_overrides: dict | None = None,
+    save: bool = True,
+    verbose: bool = True,
+) -> tuple[RunReport, RunReport | None]:
+    """Run the headline arm and, unless ``sparse`` is empty, the sparse arm.
+
+    Two experiments, one score cache: the second run's contexts differ from the first's only in
+    which rows the metric averages, so it reuses every score matrix and only re-sweeps the
+    metrics. Returns ``(headline, sparse_or_None)``.
+
+    ``knobs_overrides`` applies to both arms' declared knobs *individually*, so an override can
+    change the seed or the resample count without disturbing the budgets that make the two arms
+    different.
+    """
+    scores: dict = {}
+
+    def effective(experiment: Experiment) -> Knobs:
+        if not knobs_overrides:
+            return experiment.knobs
+        return replace(experiment.knobs, **knobs_overrides)
+
+    headline_experiment = study_arm(
+        label, candidates=candidates, ablations=ablations, include_semif=include_semif
+    )
+    headline = run(
+        headline_experiment,
+        out_dir=out_dir,
+        knobs=effective(headline_experiment),
+        scores=scores,
+        save=save,
+        verbose=verbose,
+    )
+    if not sparse:
+        return headline, None
+    sparse_experiment = sparse_arm(
+        label, thresholds=sparse, candidates=candidates, include_semif=include_semif
+    )
+    secondary = run(
+        sparse_experiment,
+        out_dir=out_dir,
+        knobs=effective(sparse_experiment),
+        scores=scores,
+        save=False,
+        verbose=verbose,
+    )
+    return headline, secondary
+
+
 def ladder_arm(label: str = "mutmut", *, name: str | None = None) -> Experiment:
     """The traceability ladder: four rungs, two populations, paired against SemIf.
 
@@ -354,22 +608,37 @@ def ladder_arm(label: str = "mutmut", *, name: str | None = None) -> Experiment:
         splits=split_axis(),
         knobs=Knobs(
             seed=config.SEED,
-            budgets=ladder.BUDGETS,
-            n_bootstrap=1000,
-            n_bootstrap_paired=ladder.N_BOOTSTRAP,
+            budgets=LADDER_BUDGETS,
+            n_bootstrap=LADDER_TABLE_RESAMPLES,
+            n_bootstrap_paired=LADDER_RESAMPLES,
             candidates="full",
         ),
         comparisons=(
             Comparison(
                 ROLE_MODEL,
                 "semif_reranker",
-                ladder.PROBE,
+                LADDER_PROBE,
                 note="baselines minus SemIf: a negative delta means SemIf is ahead",
             ),
         ),
         history=True,
         note="the traceability ladder: families removed one rung at a time",
     )
+
+
+def dataset(label: str = "mutmut", *, knobs: Knobs | None = None, **shared) -> Dataset:
+    """The built dataset for a label source, for a caller that needs the data itself.
+
+    For an adapter rendering a dataset description, or a check computing a statistic, rather
+    than for a sweep over it. Rebuilding is cheap and explicitly permitted: two datasets may
+    coexist in one process (``refactor.md`` §7), so a consumer does not have to reach into a
+    run's internals to get at what it measured.
+    """
+    element = dataset_axis((label,)).get(f"marshmallow_{label}")
+    value = element.build(Binding(env=Environment(knobs=knobs or Knobs(), shared=dict(shared))))
+    if not isinstance(value, Dataset):
+        raise TypeError(f"dataset element {element.name!r} did not build a Dataset: {value!r}")
+    return value
 
 
 # --- reading a report back --------------------------------------------------
