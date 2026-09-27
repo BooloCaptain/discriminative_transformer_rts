@@ -580,7 +580,7 @@ equivalence.
 
 ```
 cd /home/noaha/discriminative_transformer_rts
-python -m rts.artifacts / rts.dataset / rts.features      # sanity checks + stats
+python -m rts.artifacts                               # sanity checks + stats
 python -m rts.pipeline --bootstrap 1000                   # full candidate set
 python -m rts.pipeline --bootstrap 1000 --candidates covered
 python -m rts.bundles --cpu --plot                        # change-complexity ladder
@@ -1016,7 +1016,7 @@ which needs MicroPython built and its bug commits labelled.
 Sections 1-12 describe the study. This section records a structural change to the harness that does
 not alter any of their numbers, and the one place where reproducing those numbers required care.
 
-**What changed.** The harness now has one dataset contract, in `rts/dataset.py`. A dataset supplies
+**What changed.** The harness now has one dataset contract, in `rts/contract.py`. A dataset supplies
 seven primitives (`name`, `changes`, `files`, `diff_text`, `killing_tests`, `ran_tests`, `test_pool`,
 `test_source`) and three declarations (`capabilities`, `ordering`, `test_unit`/`semantics`). Every
 statistic computed from them — the 15 structured feature columns, cumulative history, candidate sets,

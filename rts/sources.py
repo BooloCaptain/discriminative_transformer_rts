@@ -40,9 +40,9 @@ class MutmutSource:
     """
 
     def __init__(self, labels: str = "mutmut", sut: Path | None = None):
-        if labels not in artifacts.LABEL_SOURCES:
+        if labels not in config.LABEL_SOURCES:
             raise ValueError(
-                f"unknown label source: {labels!r}; expected one of {artifacts.LABEL_SOURCES}"
+                f"unknown label source: {labels!r}; expected one of {config.LABEL_SOURCES}"
             )
         self.labels = labels
         self.sut = Path(sut) if sut is not None else config.SUT

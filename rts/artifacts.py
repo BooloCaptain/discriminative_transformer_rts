@@ -50,8 +50,6 @@ _TS_PARAMS = (
     re.compile(r"\[\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}\]"),
 )
 
-LABEL_SOURCES = ("mutmut", "full")
-
 
 def canonical_nodeid(nodeid: str) -> str:
     """Collapse wall-clock parametrization ids to ``[<TS>]``."""
@@ -251,7 +249,7 @@ class MutmutArtifacts:
         self, labels: str = "mutmut", require_outcomes: bool = True
     ) -> ChangeSet:
         """Reconstruct every mutant as a :class:`Change`."""
-        if labels not in LABEL_SOURCES:
+        if labels not in config.LABEL_SOURCES:
             raise ValueError(f"unknown label source: {labels!r}")
         self.layout.require(labels)
 

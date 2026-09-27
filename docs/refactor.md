@@ -301,7 +301,8 @@ metric on the same dataset, but where that boundary sits is a choice.
 Status: implemented on branch `refactor/dataset-contract`. This section records how the design
 above was realised, and every place where implementing it changed the design.
 
-**Modules.** The contract lives in `rts/dataset.py`: `TestUnit`, `Ordering`, `Capabilities`,
+**Modules.** The contract lives in `rts/dataset.py` -- decomposed by §14, which supersedes this
+paragraph; the contract is now `rts/contract.py`: `TestUnit`, `Ordering`, `Capabilities`,
 `Unmeasured`, `Warning`/`Warnings`, `Split`, `Population`, the `Dataset` ABC, the derived-feature
 functions, the composition helpers (`pool`, `PooledDataset`, `namespace`) and the `describe`/`save`
 boundaries. Sources are in `rts/sources.py` (`MutmutSource`, `BugsInPySource`); concrete datasets in
