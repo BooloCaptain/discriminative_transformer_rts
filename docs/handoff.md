@@ -190,7 +190,7 @@ sample of fields compared.
 | `rts/render/bugsinpy.py` | renders `bugsinpy_results.json` from a declared arm, byte-identically |
 | `rts/render/panels.py` | the sparsity panels; off the layer on purpose (see §13 of `experiment.md`) |
 | `rts/studies/` | the declarations: axes, arms, the ladder, the variations, the readings, and the BugsInPy arm |
-| `rts/experiment.py` | the layer itself |
+| `rts/experiment/` | the layer itself (declaration / report / run) |
 
 ### The remaining work, in priority order
 

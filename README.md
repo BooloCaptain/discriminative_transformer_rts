@@ -35,7 +35,10 @@ rts/              the harness
     direct_runner.py  the direct-mode scorer
     embed.py          the code-embedding baseline
   evaluate.py       the metric sweep and the paired bootstrap
-  experiment.py     the layer: axes, elements, cells, and a run
+  experiment/       the layer: axes, elements, cells, and a run
+    declaration.py    what an experiment is, as a value (roles, axes, elements, cells)
+    report.py         what a run records (the measured cell, and the report)
+    run.py            measuring it: requirements, the cell loop, the comparison
   studies/          the study's choices, as values (axes, arms, readings)
   render/           what runs an arm or reads an artifact
     pipeline.py       renders results_{full,covered}.json

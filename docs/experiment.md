@@ -401,10 +401,20 @@ whole rendered artifacts rather than against the arms that already work:
 
 | module | responsibility |
 |---|---|
-| `rts/experiment.py` | `Axis`, `Element`, `Knobs`, `Environment`, `Binding`, `Cell`, `Comparison`, `Experiment`, `run`, `RunReport` |
+| `rts/experiment/` | declaration (`Axis`, `Element`, `Knobs`, `Environment`, `Binding`, `Cell`, `Comparison`, `Experiment`), report (`CellResult`, `RunReport`), and run (`run` and the measurement it drives) |
 | `rts/studies/` | the study's choices as values: `axes`, `arms`, `ladder`, `variations`, `readings`, `bugsinpy` |
 | `scripts/verify_experiment_layer.py` | the reproduction check of §11 |
-| `tests/test_experiment.py` | 20 tests, all over the stub dataset |
+| `tests/test_experiment.py` | 31 tests, all over the stub dataset |
+
+The layer was later split from one 1227-line module into the three named above, so that "what
+an experiment *is*" (``declaration``), "what a run records" (``report``) and "how it is
+measured" (``run``) are separate files, with the package docstring still carrying the
+five-role design. It is a partition rather than a rewrite: every top-level statement moved
+verbatim, including its decorators and the comments above it, and the package re-exports the
+same public names -- so ``rts.experiment.run``, ``ROLE_MODEL`` and the rest are the same
+objects as before. The paragraph below describes the *first* pass only; later passes changed
+more of the existing modules (the drivers in §13, and the restructure that moved the dataset
+and model halves into ``rts/data/`` and ``rts/model/``).
 
 `rts/model/selectors.py` gained one method — `Selector.requirements()` — which is the whole of the
 model-half declaration §1 identified as missing. The only other change to an existing module is
