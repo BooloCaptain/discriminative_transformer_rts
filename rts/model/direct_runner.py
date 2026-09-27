@@ -51,8 +51,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config
-from .data import accessors, contract, datasets, populations, splits
+from .. import config
+from ..data import accessors, contract, datasets, populations, splits
 from .semif_runner import PairSet, build_pair_set, load_done_keys
 
 # The criterion for pairwise direct mode. Deliberately the same content as the

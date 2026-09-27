@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from rts import config, models, studies
+from rts import config, studies
 from rts.data import populations
 from rts.experiment import (
     ROLE_DATASET,
@@ -27,6 +27,7 @@ from rts.experiment import (
     Binding,
     Environment,
 )
+from rts.model import selectors
 
 
 def _recorded(name: str) -> dict:
@@ -48,7 +49,7 @@ def test_the_shuffle_controls_are_the_recorded_ablation_keys():
     assert {name for name, _ in studies.ABLATION_MODELS} == recorded
     # And each entry's flags are what produce its name, so the two cannot drift apart.
     for name, kwargs in studies.ABLATION_MODELS:
-        assert models.LexicalSelector(**kwargs).name == name
+        assert selectors.LexicalSelector(**kwargs).name == name
 
 
 def test_the_population_of_the_headline_arm_is_the_recorded_one():

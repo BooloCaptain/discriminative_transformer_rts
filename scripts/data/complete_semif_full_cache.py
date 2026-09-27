@@ -84,7 +84,7 @@ def main() -> None:
             )
 
     if missing:
-        from rts import semif_runner
+        from rts.model import semif_runner
 
         model, tokenizer, _meta = semif_runner.load_model(device="auto")
         change_texts = [features.derived.change_query_text(ds, c) for c in ds.changes]

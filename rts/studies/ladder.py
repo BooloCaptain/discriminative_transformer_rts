@@ -15,7 +15,7 @@ import json
 
 import numpy as np
 
-from .. import config, features, models
+from .. import config, features
 from ..data import populations
 from ..data.contract import Dataset, Unmeasured
 from ..experiment import (
@@ -29,6 +29,7 @@ from ..experiment import (
     Knobs,
     constant,
 )
+from ..model import selectors
 from .axes import dataset_axis, model_axis, split_axis
 
 # --- the traceability ladder's declarations --------------------------------
@@ -146,21 +147,21 @@ def ladder_feature_axis() -> Axis:
     return Axis(ROLE_FEATURES, tuple(elements), note="the traceability ladder's rungs")
 
 
-def ladder_selectors() -> list[models.Selector]:
+def ladder_selectors() -> list[selectors.Selector]:
     """The ladder's selector set.
 
     A study choice, so it lives with the config rather than being read back out of the driver.
     The two lists must stay in step until ``ladder.py`` is deleted (``docs/experiment.md`` §12).
     """
     return [
-        models.RandomSelector(),
-        models.RecencySelector(),
-        models.FailureRateSelector(),
-        models.CoverageSelector(),
-        models.StructuralRuleSelector(),
-        models.LexicalSelector(),
-        models.XGBoostSelector(include_lexical=True),
-        models.XGBoostSelector(include_lexical=False),
+        selectors.RandomSelector(),
+        selectors.RecencySelector(),
+        selectors.FailureRateSelector(),
+        selectors.CoverageSelector(),
+        selectors.StructuralRuleSelector(),
+        selectors.LexicalSelector(),
+        selectors.XGBoostSelector(include_lexical=True),
+        selectors.XGBoostSelector(include_lexical=False),
     ]
 
 
@@ -192,7 +193,7 @@ def ladder_model_axis(include_semif: bool = True) -> Axis:
     return axis.extend(
         Element(
             "semif_reranker",
-            lambda _binding: models.SemIfSelector(scores_file=SEMIF_LADDER_CACHE),
+            lambda _binding: selectors.SemIfSelector(scores_file=SEMIF_LADDER_CACHE),
             note="SemIf scores over the full pool, cached for the ladder's held-out subset",
             applies=_ladder_semif_applies,
         )

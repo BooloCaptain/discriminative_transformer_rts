@@ -1,6 +1,6 @@
 """Tests for score production: a cache that is a cell's *output* rather than its precondition.
 
-The point of ``models.ProducedScores`` and ``semif_runner.score_context`` is that the study's
+The point of ``selectors.ProducedScores`` and ``semif_runner.score_context`` is that the study's
 most expensive step becomes a cell, so what is pinned here is the produce-or-read rule, the
 distinction from ``CachedScores``, and the completeness check that stops a half-written cache
 from being read as a finished one. No GPU and no model: the producer is injected, which is the
@@ -14,14 +14,15 @@ import json
 import numpy as np
 import pytest
 
-from rts import features, models, semif, semif_runner, studies
+from rts import features, studies
 from rts.data import accessors, splits
 from rts.experiment import Binding, Environment
+from rts.model import selectors, semif, semif_runner
 from tests.stub_dataset import StubDataset
 
 
-def stub_context(ds: StubDataset) -> models.Context:
-    return models.Context(
+def stub_context(ds: StubDataset) -> selectors.Context:
+    return selectors.Context(
         ds=ds,
         features=features.structured(ds, history=True),
         split=splits.make_split(ds, train_fraction=0.5),
@@ -34,8 +35,8 @@ def stub_context(ds: StubDataset) -> models.Context:
 
 def test_a_produced_cache_is_not_a_declared_requirement():
     """The whole reason the class exists: declaring it would make the cell unmeasured first."""
-    assert models.CachedScores("semif", "x.jsonl").requirements() == ("artifact:x.jsonl",)
-    assert models.ProducedScores("semif", "x.jsonl", lambda ctx, out: (None, {})).requirements() == ()
+    assert selectors.CachedScores("semif", "x.jsonl").requirements() == ("artifact:x.jsonl",)
+    assert selectors.ProducedScores("semif", "x.jsonl", lambda ctx, out: (None, {})).requirements() == ()
 
 
 def test_produced_scores_read_an_existing_cache_without_producing(tmp_path):
@@ -47,7 +48,7 @@ def test_produced_scores_read_an_existing_cache_without_producing(tmp_path):
         produced.append(out)
         return np.ones((4, 3)), {}
 
-    selector = models.ProducedScores("m", path, produce, loader=models.load_matrix)
+    selector = selectors.ProducedScores("m", path, produce, loader=selectors.load_matrix)
     ds = StubDataset()
     got = selector.scores(stub_context(ds))
 
@@ -64,7 +65,7 @@ def test_produced_scores_produce_and_cache_when_the_cache_is_absent(tmp_path):
         np.save(out, matrix)
         return matrix, {"pairs": 12}
 
-    selector = models.ProducedScores("m", path, produce, loader=models.load_matrix)
+    selector = selectors.ProducedScores("m", path, produce, loader=selectors.load_matrix)
     ds = StubDataset()
     got = selector.scores(stub_context(ds))
 
@@ -91,8 +92,8 @@ def test_a_produced_cache_can_be_refused_by_a_verifier(tmp_path):
         seen.append(cache)
         raise RuntimeError(f"{cache.name} is not this cell's cache")
 
-    selector = models.ProducedScores(
-        "m", path, lambda ctx, out: (None, {}), loader=models.load_matrix, verifier=refuse
+    selector = selectors.ProducedScores(
+        "m", path, lambda ctx, out: (None, {}), loader=selectors.load_matrix, verifier=refuse
     )
     with pytest.raises(RuntimeError, match="not this cell's cache"):
         selector.scores(stub_context(StubDataset()))
@@ -103,8 +104,8 @@ def test_a_produced_cache_without_a_verifier_is_read_as_before(tmp_path):
     """No verifier means the file is trusted, which is the class's documented contract."""
     path = tmp_path / "matrix.npy"
     np.save(path, np.zeros((4, 3), dtype=np.float32))
-    selector = models.ProducedScores(
-        "m", path, lambda ctx, out: (None, {}), loader=models.load_matrix
+    selector = selectors.ProducedScores(
+        "m", path, lambda ctx, out: (None, {}), loader=selectors.load_matrix
     )
     assert np.array_equal(
         selector.scores(stub_context(StubDataset())), np.zeros((4, 3), dtype=np.float32)

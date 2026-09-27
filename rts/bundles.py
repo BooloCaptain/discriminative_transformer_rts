@@ -522,7 +522,7 @@ def score_semif(
     SemIf is zero-shot, so only the held-out bundles need scoring. The candidate
     pool matches the CPU ladder so the arms are comparable.
     """
-    from . import semif_runner as sr
+    from .model import semif_runner as sr
 
     ds = datasets.marshmallow()
     n_b = len(make_bundles(ds, 0, seed))

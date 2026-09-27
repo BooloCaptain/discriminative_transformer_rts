@@ -43,8 +43,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, evaluate, features, models, semif
+from . import config, evaluate, features
 from .data import accessors, contract, datasets, populations, reporting, splits
+from .model import selectors, semif
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10
@@ -354,14 +355,14 @@ def run(n_bins: int = N_BINS) -> dict:
               f"(median {m['failures_median']:.0f})")
 
     bm25 = features.text.build_bm25_scores(ds)
-    ctx = models.Context(
+    ctx = selectors.Context(
         ds=ds,
         features=features.structured(ds, history=True),
         split=split,
         bm25=bm25,
     )
     classical = {
-        s.name: s.scores(ctx) for s in models.default_selectors(include_semif=False)
+        s.name: s.scores(ctx) for s in selectors.default_selectors(include_semif=False)
     }
 
     semif_arms = {

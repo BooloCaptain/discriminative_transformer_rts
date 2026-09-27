@@ -166,7 +166,7 @@ def score_semif(
     hours, so a production *cell* would need the same tier story ``semif.produce`` has; that is
     a deliberate next step, not an oversight.
     """
-    from . import semif_runner
+    from .model import semif_runner
 
     done: set[tuple[str, int]] = set()
     if SEMIF_CACHE.exists():

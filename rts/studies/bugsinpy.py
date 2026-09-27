@@ -31,7 +31,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .. import config, models
+from .. import config
 from ..data import composition, datasets, populations
 from ..data.contract import Dataset
 from ..experiment import (
@@ -47,6 +47,7 @@ from ..experiment import (
     constant,
     run,
 )
+from ..model import selectors
 from .axes import _model_element, split_axis, structured_feature_axis
 
 #: The arm's SemIf cache. Keyed by ``(project/bug_id, column-in-that-bug's-pool)`` rather than
@@ -128,11 +129,11 @@ def model_axis() -> Axis:
         ROLE_MODEL,
         (
             _model_element(
-                models.PerPoolRandomSelector(candidates_mode="own"),
+                selectors.PerPoolRandomSelector(candidates_mode="own"),
                 note="uniform, drawn per bug over that bug's own pool",
             ),
             _model_element(
-                models.PerPoolLexicalSelector(candidates_mode="own", query="diff"),
+                selectors.PerPoolLexicalSelector(candidates_mode="own", query="diff"),
                 note=(
                     "BM25 fitted per bug over its own pool; the query is the raw diff, which "
                     "is what this arm's recorded numbers used"
@@ -140,7 +141,7 @@ def model_axis() -> Axis:
             ),
             Element(
                 "semif_reranker",
-                lambda _binding: models.CachedScores(
+                lambda _binding: selectors.CachedScores(
                     "semif_reranker", SEMIF_CACHE, loader=load_scores
                 ),
                 tier="cpu",

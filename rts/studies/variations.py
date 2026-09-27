@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
-from .. import config, models
+from .. import config
 from ..data import populations
 from ..experiment import (
     ROLE_MODEL,
@@ -28,6 +28,7 @@ from ..experiment import (
     Knobs,
     constant,
 )
+from ..model import selectors
 from .axes import (
     _model_element,
     dataset_axis,
@@ -84,7 +85,7 @@ def instruction_names() -> tuple[str, ...]:
     *different* wording beats the question the other arms were measured against, so the control
     has to be that one rather than a re-scored copy of it.
     """
-    from ..semif_runner import INSTRUCTION_VARIANTS
+    from ..model.semif_runner import INSTRUCTION_VARIANTS
 
     return ("default", *(n for n in sorted(INSTRUCTION_VARIANTS) if n != "default"))
 
@@ -118,7 +119,7 @@ def _cached(
     """
     return Element(
         name,
-        lambda binding, name=name, path=path, loader=loader: models.CachedScores(
+        lambda binding, name=name, path=path, loader=loader: selectors.CachedScores(
             name, path, loader=loader
         ),
         tier=tier,
@@ -126,9 +127,9 @@ def _cached(
     )
 
 
-def _rank_average(name: str, parents: Sequence[models.Selector], candidates_mode: str) -> models.Selector:
+def _rank_average(name: str, parents: Sequence[selectors.Selector], candidates_mode: str) -> selectors.Selector:
     """A fitted-free rank average of parents that are already declared."""
-    return models.RankAverageSelector(name, parents, candidates_mode=candidates_mode)
+    return selectors.RankAverageSelector(name, parents, candidates_mode=candidates_mode)
 
 
 def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
@@ -155,19 +156,19 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
     ``tests/test_studies.py`` asserts the invariant for every arm.
     """
 
-    def static_nocov_lex() -> models.XGBoostSelector:
-        return models.XGBoostSelector(
+    def static_nocov_lex() -> selectors.XGBoostSelector:
+        return selectors.XGBoostSelector(
             exclude_history=True, exclude_coverage=True, include_lexical=True,
             candidates_mode="full",
         )
 
-    def semif_scores() -> models.CachedScores:
-        return models.CachedScores("semif_textonly_full", starved_cache(max_failures))
+    def semif_scores() -> selectors.CachedScores:
+        return selectors.CachedScores("semif_textonly_full", starved_cache(max_failures))
 
     if seeds:
         elements: list[Element] = [
             _model_element(
-                models.XGBoostSelector(
+                selectors.XGBoostSelector(
                     include_lexical=True, candidates_mode="full", seed=seed
                 ),
                 note=f"xgboost_struct_lex refit under model seed {seed}",
@@ -176,7 +177,7 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
         ]
         elements.extend(
             _model_element(
-                models.XGBoostSelector(
+                selectors.XGBoostSelector(
                     exclude_history=True,
                     include_lexical=True,
                     candidates_mode="full",
@@ -189,29 +190,29 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
         elements.append(_model_element(semif_scores()))
         return Axis(ROLE_MODEL, tuple(elements), note="the seed sweep's refit subset")
 
-    struct = models.XGBoostSelector(candidates_mode="full")
+    struct = selectors.XGBoostSelector(candidates_mode="full")
     return Axis(
         ROLE_MODEL,
         (
-            _model_element(models.RandomSelector()),
-            _model_element(models.RecencySelector()),
-            _model_element(models.FailureRateSelector()),
-            _model_element(models.CoverageSelector()),
-            _model_element(models.StructuralRuleSelector()),
-            _model_element(models.LexicalSelector()),
+            _model_element(selectors.RandomSelector()),
+            _model_element(selectors.RecencySelector()),
+            _model_element(selectors.FailureRateSelector()),
+            _model_element(selectors.CoverageSelector()),
+            _model_element(selectors.StructuralRuleSelector()),
+            _model_element(selectors.LexicalSelector()),
             _model_element(static_nocov_lex()),
             _model_element(
-                models.XGBoostSelector(
+                selectors.XGBoostSelector(
                     exclude_history=True, include_lexical=True, candidates_mode="full"
                 )
             ),
             _model_element(
-                models.XGBoostSelector(
+                selectors.XGBoostSelector(
                     exclude_coverage=True, include_lexical=True, candidates_mode="full"
                 )
             ),
             _model_element(struct),
-            _model_element(models.XGBoostSelector(include_lexical=True, candidates_mode="full")),
+            _model_element(selectors.XGBoostSelector(include_lexical=True, candidates_mode="full")),
             _model_element(semif_scores()),
             _model_element(
                 _rank_average(
@@ -228,9 +229,9 @@ def starved_model_axis(max_failures: int, *, seeds: Sequence[int] = ()) -> Axis:
 def instruction_model_axis(max_failures: int) -> Axis:
     """BM25, the strongest cheap tree, and one SemIf element per wording variant."""
     elements = [
-        _model_element(models.LexicalSelector()),
+        _model_element(selectors.LexicalSelector()),
         _model_element(
-            models.XGBoostSelector(
+            selectors.XGBoostSelector(
                 exclude_history=True, exclude_coverage=True, include_lexical=True,
                 candidates_mode="covered",
             )
@@ -246,16 +247,16 @@ def instruction_model_axis(max_failures: int) -> Axis:
 def embed_model_axis(candidates: str) -> Axis:
     """The embedding baseline's parents: the code encoder against BM25 and two cheap rules."""
     elements = [
-        _model_element(models.LexicalSelector()),
-        _model_element(models.CoverageSelector()),
-        _model_element(models.StructuralRuleSelector()),
-        _cached("embed_codebert", embed_cache(), loader=models.load_matrix),
+        _model_element(selectors.LexicalSelector()),
+        _model_element(selectors.CoverageSelector()),
+        _model_element(selectors.StructuralRuleSelector()),
+        _cached("embed_codebert", embed_cache(), loader=selectors.load_matrix),
     ]
     if candidates == "covered":
         elements.insert(1, _cached("semif_textonly", Path(config.SEMIF_SCORES_FILE)))
         elements.append(
             _model_element(
-                models.XGBoostSelector(
+                selectors.XGBoostSelector(
                     exclude_history=True, exclude_coverage=True, include_lexical=True,
                     candidates_mode="covered",
                 )
@@ -278,27 +279,27 @@ def redundancy_model_axis() -> Axis:
     that make it matter.
     """
 
-    def static_nocov_lex() -> models.XGBoostSelector:
-        return models.XGBoostSelector(
+    def static_nocov_lex() -> selectors.XGBoostSelector:
+        return selectors.XGBoostSelector(
             exclude_history=True, exclude_coverage=True, include_lexical=True,
             candidates_mode="covered",
         )
 
-    def struct() -> models.XGBoostSelector:
-        return models.XGBoostSelector(candidates_mode="covered")
+    def struct() -> selectors.XGBoostSelector:
+        return selectors.XGBoostSelector(candidates_mode="covered")
 
-    def semif() -> models.CachedScores:
-        return models.CachedScores("semif_textonly", Path(config.SEMIF_SCORES_FILE))
+    def semif() -> selectors.CachedScores:
+        return selectors.CachedScores("semif_textonly", Path(config.SEMIF_SCORES_FILE))
 
     return Axis(
         ROLE_MODEL,
         (
-            _model_element(models.RandomSelector()),
-            _model_element(models.RecencySelector()),
-            _model_element(models.FailureRateSelector()),
-            _model_element(models.CoverageSelector()),
-            _model_element(models.StructuralRuleSelector()),
-            _model_element(models.LexicalSelector()),
+            _model_element(selectors.RandomSelector()),
+            _model_element(selectors.RecencySelector()),
+            _model_element(selectors.FailureRateSelector()),
+            _model_element(selectors.CoverageSelector()),
+            _model_element(selectors.StructuralRuleSelector()),
+            _model_element(selectors.LexicalSelector()),
             _model_element(static_nocov_lex()),
             _model_element(struct()),
             _model_element(semif()),

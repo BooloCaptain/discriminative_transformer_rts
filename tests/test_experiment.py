@@ -18,7 +18,7 @@ import json
 import numpy as np
 import pytest
 
-from rts import config, features, models
+from rts import config, features
 from rts.data import populations, splits
 from rts.data.contract import Ordering, Unmeasured
 from rts.experiment import (
@@ -38,6 +38,7 @@ from rts.experiment import (
     run,
     unavailable,
 )
+from rts.model import selectors
 from tests.stub_dataset import StubDataset
 
 PROBE = 0.5
@@ -55,7 +56,7 @@ def stub_experiment(**overrides) -> Experiment:
         name="stub",
         datasets=Axis(ROLE_DATASET, (constant("stub", StubDataset()),)),
         features=Axis(ROLE_FEATURES, (constant("structured", features.STRUCTURED),)),
-        models=Axis(ROLE_MODEL, (constant("coverage", models.CoverageSelector()),)),
+        models=Axis(ROLE_MODEL, (constant("coverage", selectors.CoverageSelector()),)),
         populations=Axis(
             ROLE_POPULATION, (constant("fault_bearing", populations.FAULT_BEARING),)
         ),
@@ -74,8 +75,8 @@ def test_a_cell_is_one_point_in_the_product_and_its_key_names_the_factors():
         models=Axis(
             ROLE_MODEL,
             (
-                constant("a", models.CoverageSelector()),
-                constant("b", models.FailureRateSelector()),
+                constant("a", selectors.CoverageSelector()),
+                constant("b", selectors.FailureRateSelector()),
             ),
         )
     )
@@ -94,7 +95,7 @@ def test_an_axis_rejects_duplicate_element_names():
 
 def test_an_element_with_an_unknown_tier_is_rejected_when_planning():
     experiment = stub_experiment(
-        models=Axis(ROLE_MODEL, (constant("a", models.CoverageSelector(), tier="quantum"),))
+        models=Axis(ROLE_MODEL, (constant("a", selectors.CoverageSelector(), tier="quantum"),))
     )
     with pytest.raises(ValueError, match="not in tier_order"):
         experiment.cells()
@@ -104,7 +105,7 @@ def test_a_shared_option_that_is_inapplicable_leaves_an_unmeasured_cell():
     """``Axis.map`` is what a dimension-level option is, and inapplicability is a finding."""
     axis = Axis(
         ROLE_MODEL,
-        (constant("coverage", models.CoverageSelector()), constant("rate", models.FailureRateSelector())),
+        (constant("coverage", selectors.CoverageSelector()), constant("rate", selectors.FailureRateSelector())),
     )
 
     def exclude_history(element):
@@ -125,7 +126,7 @@ def test_a_shared_option_that_is_inapplicable_leaves_an_unmeasured_cell():
 
 
 def test_a_missing_artifact_makes_the_cell_unmeasured_rather_than_raising():
-    class Cached(models.Selector):
+    class Cached(selectors.Selector):
         name = "cached"
 
         def requirements(self):
@@ -146,7 +147,7 @@ def test_a_missing_artifact_makes_the_cell_unmeasured_rather_than_raising():
 
 
 def test_an_unrecognised_requirement_spelling_raises():
-    class Typo(models.Selector):
+    class Typo(selectors.Selector):
         name = "typo"
 
         def requirements(self):
@@ -191,7 +192,7 @@ def test_applicability_may_depend_on_another_role():
                 (
                     Element(
                         "partial",
-                        lambda b: models.CoverageSelector(),
+                        lambda b: selectors.CoverageSelector(),
                         applies=only_with_coverage_population,
                     ),
                 ),
@@ -272,8 +273,8 @@ def test_paired_deltas_are_computed_over_the_populations_rows():
         models=Axis(
             ROLE_MODEL,
             (
-                constant("coverage", models.CoverageSelector()),
-                constant("rate", models.FailureRateSelector()),
+                constant("coverage", selectors.CoverageSelector()),
+                constant("rate", selectors.FailureRateSelector()),
             ),
         ),
         comparisons=(Comparison(ROLE_MODEL, "coverage", PROBE),),
@@ -293,8 +294,8 @@ def test_a_tier_filter_reports_the_cells_it_did_not_spend():
         models=Axis(
             ROLE_MODEL,
             (
-                constant("cpu_model", models.CoverageSelector()),
-                constant("gpu_model", models.RandomSelector(), tier="gpu"),
+                constant("cpu_model", selectors.CoverageSelector()),
+                constant("gpu_model", selectors.RandomSelector(), tier="gpu"),
             ),
         )
     )
@@ -308,7 +309,7 @@ def test_scores_are_reused_across_populations_that_share_a_context():
     """A population restricts which rows a metric averages; it does not change the scores."""
     calls: list[str] = []
 
-    class Counting(models.Selector):
+    class Counting(selectors.Selector):
         name = "counting"
 
         def scores(self, ctx):
@@ -345,7 +346,7 @@ def test_an_element_is_materialised_once_per_run_and_shared_across_cells():
         datasets=Axis(ROLE_DATASET, (Element("counted", counting_dataset),)),
         models=Axis(
             ROLE_MODEL,
-            tuple(constant(f"m{i}", models.CoverageSelector()) for i in range(4)),
+            tuple(constant(f"m{i}", selectors.CoverageSelector()) for i in range(4)),
         ),
     )
     report = run(experiment, save=False, verbose=False)
@@ -383,7 +384,7 @@ def test_the_run_seed_reaches_the_model_not_just_the_split():
     def recall_at(seed: int) -> float:
         report = run(
             stub_experiment(
-                models=Axis(ROLE_MODEL, (constant("random", models.RandomSelector()),)),
+                models=Axis(ROLE_MODEL, (constant("random", selectors.RandomSelector()),)),
                 knobs=Knobs(budgets=(PROBE,), n_bootstrap=5, seed=seed),
             ),
             save=False,
@@ -422,7 +423,7 @@ def test_a_model_seed_is_not_served_by_another_seed_s_score_cache():
     mode ``docs/refactor.md`` §14 records for a name-based ablation.
     """
     experiment = stub_experiment(
-        models=Axis(ROLE_MODEL, (constant("random", models.RandomSelector()),))
+        models=Axis(ROLE_MODEL, (constant("random", selectors.RandomSelector()),))
     )
     shared: dict = {}
 
@@ -467,44 +468,44 @@ def test_a_cached_score_selector_declares_its_cache_and_needs_the_right_loader(t
     np.save(path, matrix)
 
     ds = StubDataset()
-    ctx = models.Context(
+    ctx = selectors.Context(
         ds=ds,
         features=features.structured(ds, history=True),
         split=splits.make_split(ds, train_fraction=0.5),
         bm25=np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32),
     )
 
-    binary = models.CachedScores("embed", path, loader=models.load_matrix)
+    binary = selectors.CachedScores("embed", path, loader=selectors.load_matrix)
     assert binary.requirements() == (f"artifact:{path}",)
     assert np.array_equal(binary.scores(ctx), matrix)
 
     # The default loader reads scored pairs, so a numpy file is a decode error rather than a
     # silently wrong matrix -- which is how the embedding arm first failed.
     with pytest.raises(UnicodeDecodeError):
-        models.CachedScores("embed", path).scores(ctx)
+        selectors.CachedScores("embed", path).scores(ctx)
 
 
 def test_a_rank_average_is_fitted_free_and_declares_its_parents_caches():
     from rts import config as cfg
 
-    parent = models.CachedScores("semif_textonly", cfg.SEMIF_SCORES_FILE)
-    combined = models.RankAverageSelector(
-        "rankaverage_xgb_semif", (models.LexicalSelector(), parent), candidates_mode="covered"
+    parent = selectors.CachedScores("semif_textonly", cfg.SEMIF_SCORES_FILE)
+    combined = selectors.RankAverageSelector(
+        "rankaverage_xgb_semif", (selectors.LexicalSelector(), parent), candidates_mode="covered"
     )
     assert combined.requirements() == (f"artifact:{cfg.SEMIF_SCORES_FILE}",)
     assert combined.candidates_mode == "covered"
     with pytest.raises(ValueError, match="two or more parents"):
-        models.RankAverageSelector("solo", (models.LexicalSelector(),))
+        selectors.RankAverageSelector("solo", (selectors.LexicalSelector(),))
 
 
 def test_artifact_backed_selectors_declare_what_they_read():
-    assert models.CoverageSelector().requirements() == ()
-    assert models.RandomSelector().requirements() == ()
+    assert selectors.CoverageSelector().requirements() == ()
+    assert selectors.RandomSelector().requirements() == ()
 
-    semif = models.SemIfSelector()
+    semif = selectors.SemIfSelector()
     assert semif.requirements() == (f"artifact:{config.SEMIF_SCORES_FILE}",)
 
-    extra = models.XGBoostSelector(extra_score_files={"semif": config.SEMIF_SCORES_FILE})
+    extra = selectors.XGBoostSelector(extra_score_files={"semif": config.SEMIF_SCORES_FILE})
     assert extra.requirements() == (f"artifact:{config.SEMIF_SCORES_FILE}",)
 
 
@@ -513,7 +514,7 @@ def test_the_shuffle_controls_build_their_own_bm25_and_name_themselves():
     ds = StubDataset()
     matrix = features.structured(ds, history=True)
     bm25 = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
-    ctx = models.Context(
+    ctx = selectors.Context(
         ds=ds,
         features=matrix,
         split=splits.make_split(ds, train_fraction=0.5),
@@ -521,21 +522,21 @@ def test_the_shuffle_controls_build_their_own_bm25_and_name_themselves():
         seed=config.SEED,
     )
 
-    canonical = models.LexicalSelector()
+    canonical = selectors.LexicalSelector()
     assert canonical.name == "bm25_lexical"
     # No flags means the context's matrix, untouched -- the ablation must not perturb the arm it
     # is a control for.
     assert canonical.scores(ctx) is ctx.bm25
 
-    shuffled = models.LexicalSelector(shuffle_changes=True)
+    shuffled = selectors.LexicalSelector(shuffle_changes=True)
     assert shuffled.name == "bm25_change_shuffled"
     got = shuffled.scores(ctx)
     assert got.shape == (ds.n_changes, ds.n_tests)
     assert not np.array_equal(got, ctx.bm25)
 
-    assert models.LexicalSelector(shuffle_tests=True).name == "bm25_test_shuffled"
+    assert selectors.LexicalSelector(shuffle_tests=True).name == "bm25_test_shuffled"
     assert (
-        models.LexicalSelector(shuffle_changes=True, shuffle_tests=True).name
+        selectors.LexicalSelector(shuffle_changes=True, shuffle_tests=True).name
         == "bm25_both_shuffled"
     )
 

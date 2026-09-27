@@ -31,8 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, features
-from .data import accessors, contract, datasets, splits
+from .. import config, features
+from ..data import accessors, contract, datasets, splits
 
 
 def load_embedding_model(
@@ -118,7 +118,7 @@ def build_scores(
 
 
 def run(batch_size: int = 16, max_length: int = 512, device: str = "auto") -> np.ndarray:
-    from . import evaluate
+    from .. import evaluate
 
     ds = datasets.marshmallow()
     split = splits.make_split(ds)

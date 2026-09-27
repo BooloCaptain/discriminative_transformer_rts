@@ -35,8 +35,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, features
-from .data import accessors, contract
+from .. import config, features
+from ..data import accessors, contract
 
 # Measured on a 3090 with no prefix reuse (prefix reuse is a direct-mode feature).
 DECISIONS_PER_SECOND = 1.86
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--labels", default="mutmut", choices=list(config.LABEL_SOURCES))
     args = parser.parse_args()
 
-    from .data import datasets
+    from ..data import datasets
 
     ds = datasets.marshmallow(labels=args.labels)
     rows_n = np.arange(ds.n_changes)

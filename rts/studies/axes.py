@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from .. import bundles, config, features, models
+from .. import bundles, config, features
 from ..data import datasets, populations, splits
 from ..experiment import (
     ROLE_DATASET,
@@ -24,6 +24,10 @@ from ..experiment import (
     Element,
     constant,
 )
+
+# Imported by name: ``model_axis`` has a parameter called ``selectors``, so a module binding
+# of the same name would be shadowed by it inside that function.
+from ..model.selectors import LexicalSelector, ProducedScores, Selector, default_selectors
 
 # --- datasets ---------------------------------------------------------------
 
@@ -98,7 +102,7 @@ ABLATION_MODELS: tuple[tuple[str, dict], ...] = (
     ("bm25_both_shuffled", {"shuffle_changes": True, "shuffle_tests": True}),
 )
 
-def _model_element(selector: models.Selector, tier: str = "cpu", note: str = "") -> Element:
+def _model_element(selector: Selector, tier: str = "cpu", note: str = "") -> Element:
     """An element for a selector.
 
     ``tier`` is the caller's, not the selector's: it says whether *measuring* this element
@@ -114,7 +118,7 @@ def _model_element(selector: models.Selector, tier: str = "cpu", note: str = "")
 
 
 def model_axis(
-    selectors: Sequence[models.Selector] | None = None,
+    selectors: Sequence[Selector] | None = None,
     *,
     ablations: bool = False,
     include_semif: bool = True,
@@ -122,11 +126,11 @@ def model_axis(
     chosen = (
         list(selectors)
         if selectors is not None
-        else models.default_selectors(include_semif=include_semif)
+        else default_selectors(include_semif=include_semif)
     )
     if ablations:
         chosen.extend(
-            models.LexicalSelector(**kwargs) for _, kwargs in ABLATION_MODELS
+            LexicalSelector(**kwargs) for _, kwargs in ABLATION_MODELS
         )
     return Axis(
         ROLE_MODEL,
@@ -168,8 +172,8 @@ def semif_scoring_model_axis(
     name = "_".join(parts)
 
     def produce(ctx, path):
-        from .. import semif_runner
         from ..data import accessors
+        from ..model import semif_runner
 
         return semif_runner.score_context(
             ctx.ds,
@@ -190,8 +194,8 @@ def semif_scoring_model_axis(
         cell's. The pair set is the same one ``score_context`` builds, so a complete cache for
         this context passes and any other raises instead of yielding a number.
         """
-        from .. import semif_runner
         from ..data import accessors
+        from ..model import semif_runner
 
         missing = semif_runner.missing_pairs(
             ctx.ds,
@@ -215,7 +219,7 @@ def semif_scoring_model_axis(
         (
             Element(
                 name,
-                lambda _binding: models.ProducedScores(
+                lambda _binding: ProducedScores(
                     name, cache, produce, verifier=verify
                 ),
                 tier="gpu",

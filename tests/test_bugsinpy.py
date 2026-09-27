@@ -14,11 +14,12 @@ import json
 import numpy as np
 import pytest
 
-from rts import bugsinpy, config, models, studies
+from rts import bugsinpy, config, studies
 from rts.data import accessors
 
 # Aliased so pytest does not try to collect the enum as a test class.
 from rts.data.contract import TestUnit as Unit
+from rts.model import selectors
 
 
 @pytest.fixture(scope="module")
@@ -188,10 +189,10 @@ def test_the_cache_loader_resolves_columns_through_each_bugs_pool(corpus):
 
 
 def _context(pooled):
-    from rts import models
     from rts.data import splits
+    from rts.model import selectors
 
-    return models.Context(
+    return selectors.Context(
         ds=pooled,
         features=None,
         split=splits.make_split(pooled, train_fraction=0.0),
@@ -204,7 +205,7 @@ def test_a_per_pool_random_baseline_only_ranks_within_a_pool(corpus):
     """Outside a change's pool the score is the sentinel, so a bug cannot be credited with a
     test from another project -- which is what makes the baseline comparable across projects."""
     _, pooled, pool = corpus
-    scores = models.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
+    scores = selectors.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
     inside = scores[pool]
     assert ((inside >= 0.0) & (inside < 1.0)).all()
     assert (scores[~pool] < -1e8).all()
@@ -213,9 +214,9 @@ def test_a_per_pool_random_baseline_only_ranks_within_a_pool(corpus):
 def test_a_per_pool_random_baseline_is_reproducible(corpus):
     """The draw sequence is part of a recorded baseline, so it may not be re-derived per row."""
     _, pooled, _ = corpus
-    selector = models.PerPoolRandomSelector(candidates_mode="own")
+    selector = selectors.PerPoolRandomSelector(candidates_mode="own")
     first = selector.scores(_context(pooled))
-    second = models.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
+    second = selectors.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
     assert np.array_equal(first, second)
 
 
@@ -223,12 +224,12 @@ def test_the_bm25_query_choice_is_recorded_rather_than_assumed(corpus):
     """The raw diff and the extracted change lines are different queries, and this arm's
     recorded numbers used the raw diff. The parameter is what makes that reviewable."""
     _, pooled, _ = corpus
-    diff = models.PerPoolLexicalSelector(candidates_mode="own", query="diff").scores(
+    diff = selectors.PerPoolLexicalSelector(candidates_mode="own", query="diff").scores(
         _context(pooled)
     )
-    change = models.PerPoolLexicalSelector(candidates_mode="own", query="change").scores(
+    change = selectors.PerPoolLexicalSelector(candidates_mode="own", query="change").scores(
         _context(pooled)
     )
     assert not np.array_equal(diff, change)
     with pytest.raises(ValueError, match="query must be"):
-        models.PerPoolLexicalSelector(query="whatever")
+        selectors.PerPoolLexicalSelector(query="whatever")

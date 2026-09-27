@@ -32,8 +32,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, features, semif
-from .data import accessors, contract, datasets, populations, splits
+from .. import config, features
+from ..data import accessors, contract, datasets, populations, splits
+from . import semif
 
 INSTRUCTION = (
     "Given a code change, judge whether the test below exercises the changed "
@@ -681,7 +682,7 @@ def pilot(
     Produces recall numbers directly comparable to the other selectors, plus real
     throughput so the full-run cost can be extrapolated instead of guessed.
     """
-    from . import evaluate
+    from .. import evaluate
 
     ds = datasets.marshmallow(order_seed=seed)
     split = splits.make_split(ds)

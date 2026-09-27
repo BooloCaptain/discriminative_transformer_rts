@@ -48,7 +48,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from . import config, evaluate, features, models
+from . import config, evaluate, features
 from .data import accessors, populations, reporting, splits
 from .data.contract import (
     Dataset,
@@ -58,6 +58,7 @@ from .data.contract import (
     Warning,
     is_unmeasured,
 )
+from .model import selectors
 
 __all__ = [
     "ARTIFACT_PREFIX",
@@ -564,7 +565,7 @@ def unresolved(
     return None
 
 
-def _model_requirement(selector: models.Selector, ds: Dataset, env: Environment) -> Unmeasured | None:
+def _model_requirement(selector: selectors.Selector, ds: Dataset, env: Environment) -> Unmeasured | None:
     requirements = getattr(selector, "requirements", None)
     if requirements is None:
         return None
@@ -823,7 +824,7 @@ def _measure(
     values: Mapping[str, Any],
     matrix: features.FeatureMatrix,
     audit: Sequence[Warning],
-    selector: models.Selector,
+    selector: selectors.Selector,
     bm25: np.ndarray,
     candidates: np.ndarray,
     probes: Sequence[float],
@@ -853,7 +854,7 @@ def _measure(
             {},
         )
 
-    ctx = models.Context(
+    ctx = selectors.Context(
         ds=ds,
         features=matrix,
         split=split,

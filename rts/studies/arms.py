@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from .. import config, models
+from .. import config
 from ..data.contract import Dataset
 from ..experiment import (
     ROLE_MODEL,
@@ -28,6 +28,7 @@ from ..experiment import (
     RunReport,
     run,
 )
+from ..model import selectors
 from .axes import (
     dataset_axis,
     model_axis,
@@ -112,7 +113,7 @@ def sparse_arm(
         name=name or f"sparse.{label}.{candidates}",
         datasets=dataset_axis((label,)),
         features=structured_feature_axis(),
-        models=model_axis(models.default_selectors(include_semif=include_semif)),
+        models=model_axis(selectors.default_selectors(include_semif=include_semif)),
         populations=population_axis((), sparse=thresholds),
         splits=split_axis(),
         knobs=Knobs(

@@ -34,9 +34,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, evaluate, features, models, semif, studies
+from . import config, evaluate, features, studies
 from .data import accessors, contract, datasets, populations, splits
 from .experiment import ROLE_MODEL, ROLE_POPULATION, run
+from .model import selectors, semif
 
 BUDGETS = studies.VARIATION_BUDGETS
 PROBE = studies.VARIATION_PROBE
@@ -266,7 +267,7 @@ def p3_embed(device: str = "cpu", force: bool = False) -> dict:
     cheaply. The matrix itself is produced by ``rts.embed``; if it is absent the layer reports the
     cells that read it as unmeasured, so this only needs to build it when asked.
     """
-    from . import embed
+    from .model import embed
 
     ds = studies.dataset("mutmut")
     cache = studies.embed_cache()
@@ -369,11 +370,11 @@ def p5_redundancy() -> dict:
 # ===========================================================================
 
 
-def build_context(ds: contract.Dataset) -> models.Context:
+def build_context(ds: contract.Dataset) -> selectors.Context:
     matrix = features.structured(ds, history=STRUCTURED_HISTORY)
     split = splits.make_split(ds)
     bm25 = features.text.build_bm25_scores(ds)
-    return models.Context(ds=ds, features=matrix, split=split, bm25=bm25)
+    return selectors.Context(ds=ds, features=matrix, split=split, bm25=bm25)
 
 
 def eval_group(
@@ -419,16 +420,16 @@ def eval_group(
     return {"results": results, "comparisons": comparisons}
 
 
-def _selectors(ds: contract.Dataset, ctx: models.Context, candidates_mode: str) -> dict[str, np.ndarray]:
+def _selectors(ds: contract.Dataset, ctx: selectors.Context, candidates_mode: str) -> dict[str, np.ndarray]:
     """The classical reference arms, all trained on the same candidate pairs."""
     return {
-        "random": models.RandomSelector().scores(ctx),
-        "recency": models.RecencySelector().scores(ctx),
-        "failure_rate": models.FailureRateSelector().scores(ctx),
-        "coverage": models.CoverageSelector().scores(ctx),
-        "structural_rule": models.StructuralRuleSelector().scores(ctx),
+        "random": selectors.RandomSelector().scores(ctx),
+        "recency": selectors.RecencySelector().scores(ctx),
+        "failure_rate": selectors.FailureRateSelector().scores(ctx),
+        "coverage": selectors.CoverageSelector().scores(ctx),
+        "structural_rule": selectors.StructuralRuleSelector().scores(ctx),
         "bm25_lexical": ctx.bm25,
-        "xgboost_static_nocov_lex": models.XGBoostSelector(
+        "xgboost_static_nocov_lex": selectors.XGBoostSelector(
             exclude_history=True, exclude_coverage=True, include_lexical=True,
             candidates_mode=candidates_mode,
         ).scores(ctx),
@@ -436,7 +437,7 @@ def _selectors(ds: contract.Dataset, ctx: models.Context, candidates_mode: str) 
 
 
 def _fit_predict(
-    ctx: models.Context,
+    ctx: selectors.Context,
     train_rows: np.ndarray,
     candidates: np.ndarray,
     feat_idx: list[int],
@@ -505,7 +506,7 @@ def p5_trained(eval_fraction: float = 0.3) -> dict:
     families = {
         "static_nocov_lex": [
             i for i, name in enumerate(ctx.names)
-            if name not in set(models.HISTORY_FEATURES) | set(models.COVERAGE_FEATURES)
+            if name not in set(selectors.HISTORY_FEATURES) | set(selectors.COVERAGE_FEATURES)
         ],
         "struct_lex": list(range(len(ctx.names))),
     }
@@ -584,7 +585,7 @@ def p1_direct(max_failures: int | None = 2) -> dict:
     if not cache.exists():
         raise FileNotFoundError(f"missing {cache}; run rts.direct_runner first")
 
-    from .semif_runner import load_done_keys
+    from .model.semif_runner import load_done_keys
 
     done = load_done_keys(cache)
     complete = [
