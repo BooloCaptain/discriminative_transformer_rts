@@ -14,12 +14,13 @@ import json
 import numpy as np
 import pytest
 
-from rts import bugsinpy, config, studies
+from rts import config, studies
 from rts.data import accessors
 
 # Aliased so pytest does not try to collect the enum as a test class.
 from rts.data.contract import TestUnit as Unit
 from rts.model import selectors
+from rts.render import bugsinpy
 
 
 @pytest.fixture(scope="module")

@@ -180,8 +180,8 @@ def score_to_cache_direct(
 ) -> dict:
     """Score pairs with direct mode, flushing per batch so the run is resumable.
 
-    Writes the same record shape as ``rts.semif_runner.score_to_cache`` so
-    ``rts.semif.load_scores`` consumes either arm without changes.
+    Writes the same record shape as ``rts.model.semif_runner.score_to_cache`` so
+    ``rts.model.semif.load_scores`` consumes either arm without changes.
     """
     import torch
 

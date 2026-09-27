@@ -139,7 +139,7 @@ and optional feature-family exclusions.
 
 **SemIf**: `Qwen/Qwen3-Reranker-4B` @ `22e683669bc0f0bd69640a1354a6d0aebcfeede5`, reranker
 mode (each (change, test) pair scored independently, so scores share one global scale).
-`rts/semif_runner.py` builds the prompt from the model's native template and imports SemIf's
+`rts/model/semif_runner.py` builds the prompt from the model's native template and imports SemIf's
 `PREFIX`/`SUFFIX`/`_answer_ids` so the contract matches the reference implementation. Readout
 is the raw yes/no log-odds; the repo's normalization destroys cross-change comparability, so
 it is not used. `orientation=change_query` (change as Query, test as Document) — chosen after
@@ -212,7 +212,7 @@ feature than as a prompt.
 
 Faults binned into equal-count deciles by how much failure history their killing
 `(file, test)` pair has (decile 1 = sparsest). Figures: `artifacts/figures/panel_A_C_budget*.png`;
-code in `rts/panels.py`. Recall @0.05:
+code in `rts/render/panels.py`. Recall @0.05:
 
 | model | decile 1 | decile 10 | trend |
 |---|---|---|---|
@@ -580,32 +580,32 @@ equivalence.
 
 ```
 cd /home/noaha/discriminative_transformer_rts
-python -m rts.artifacts                               # sanity checks + stats
-python -m rts.pipeline --bootstrap 1000                   # full candidate set
-python -m rts.pipeline --bootstrap 1000 --candidates covered
+python -m rts.data.mutmut                               # sanity checks + stats
+python -m rts.render.pipeline --bootstrap 1000                   # full candidate set
+python -m rts.render.pipeline --bootstrap 1000 --candidates covered
 python -m rts.bundles --cpu --plot                        # change-complexity ladder
-python -m rts.panels                                    # sparsity panels A and C
+python -m rts.render.panels                                    # sparsity panels A and C
 ```
 
 SemIf arms write resumable JSONL caches, so a re-run continues rather than restarts. Only one
 4B model fits in 17 GB, so arms run sequentially; `scripts/run_variation_arms.sh` queues them.
 
 ```
-python -m rts.semif_runner --heldout                                    # text-only
-python -m rts.semif_runner --heldout --candidates full --starved 2 \
+python -m rts.model.semif_runner --heldout                                    # text-only
+python -m rts.model.semif_runner --heldout --candidates full --starved 2 \
   --out artifacts/semif_scores_starved2_full.jsonl                      # the correction
-python -m rts.semif_runner --heldout --candidates full --starved 5 \
+python -m rts.model.semif_runner --heldout --candidates full --starved 5 \
   --exclude-scored artifacts/semif_scores_starved2_full.jsonl \
   --out artifacts/semif_scores_starved5_extra_full.jsonl                # n=141, 98 new changes
-python -m rts.semif_runner --heldout --starved 5 --instruction execution \
+python -m rts.model.semif_runner --heldout --starved 5 --instruction execution \
   --out artifacts/semif_scores_instr_execution_starved5.jsonl           # P2, ×4 wordings
-python -m rts.embed --device cpu                                        # P3
-python -m rts.direct_runner --starved 2 --out artifacts/semif_direct_starved2_covered.jsonl  # P1
+python -m rts.model.embed --device cpu                                        # P3
+python -m rts.model.direct_runner --starved 2 --out artifacts/semif_direct_starved2_covered.jsonl  # P1
 ```
 
 ```
-python -m rts.variations --only full_starved full_starved5 full_starved_seeds p5 p5_trained p2 p3 p1
-python -m rts.figures        # reads variations.json, writes artifacts/figures/*.png
+python -m rts.render.variations --only full_starved full_starved5 full_starved_seeds p5 p5_trained p2 p3 p1
+python -m rts.render.figures        # reads variations.json, writes artifacts/figures/*.png
 ```
 
 ## 10. Limitations and risks
@@ -704,7 +704,7 @@ selection. With honest labels the same thresholds give **2** held-out faults at 
 population; the ladder below uses the 141 changes that the old filter selected, for cache
 reuse, and names them for provenance rather than as "starved".
 
-### 12.2 The traceability-loss ladder (`rts.ladder`)
+### 12.2 The traceability-loss ladder (`rts.render.ladder`)
 
 Feature families are removed cumulatively by zeroing their columns, so a removed feature carries
 no information — which is the target condition — while one code path serves both the learned and
@@ -874,7 +874,7 @@ This is the first regime in the study where SemIf leads, and it is the regime wi
 features — which is the hypothesis. The caveat is structural and stated in §12.5: the ladder
 removes *features*, not the label structure.
 
-### 12.3 Real bugs: BugsInPy (`rts.bugsinpy`)
+### 12.3 Real bugs: BugsInPy (`rts.render.bugsinpy`)
 
 71 usable bugs across 8 projects (tqdm, cookiecutter, httpie, PySnooper, sanic, thefuck, black,
 tornado), with **real failing tests** taken from each bug's `run_test.sh` and the real
@@ -1016,7 +1016,7 @@ which needs MicroPython built and its bug commits labelled.
 Sections 1-12 describe the study. This section records a structural change to the harness that does
 not alter any of their numbers, and the one place where reproducing those numbers required care.
 
-**What changed.** The harness now has one dataset contract, in `rts/contract.py`. A dataset supplies
+**What changed.** The harness now has one dataset contract, in `rts/data/contract.py`. A dataset supplies
 seven primitives (`name`, `changes`, `files`, `diff_text`, `killing_tests`, `ran_tests`, `test_pool`,
 `test_source`) and three declarations (`capabilities`, `ordering`, `test_unit`/`semantics`). Every
 statistic computed from them — the 15 structured feature columns, cumulative history, candidate sets,
@@ -1067,17 +1067,21 @@ feature assembly, the population vocabulary and evaluation configuration. It has
 decomposed; the design record, the defects that motivated each split, and the proposal that was
 declined are in `refactor.md` §14. What matters for reading this document:
 
-- `rts/contract.py` is the interface — what a dataset supplies and declares, and nothing computed
+- `rts/data/contract.py` is the interface — what a dataset supplies and declares, and nothing computed
   from it.
-- Everything derived lives in `rts/accessors.py` (accessors and the one material catalogue),
-  `rts/features/` (derived features, and the two declared feature blocks), and `rts/populations.py`.
-- `rts/splits.py` owns the train/test split. It is a **value**, and `reporting.describe` requires one,
+- Everything derived lives in `rts/data/accessors.py` (accessors and the one material catalogue),
+  `rts/features/` (derived features, and the two declared feature blocks), and `rts/data/populations.py`.
+- `rts/data/splits.py` owns the train/test split. It is a **value**, and `reporting.describe` requires one,
   because a dataset cannot know which of its changes were held out. `results_full.json` therefore
   carries an explicit `split` block.
 - Warnings are returned by the computation that produced them (`FeatureMatrix.warnings`, or
   `reporting.audit`), not stored on the dataset.
+- Since the review, the harness is organised by half: `rts/data/` (above), `rts/model/` (the
+  selectors and the pinned scorers), `rts/render/` (the drivers and the artifact readers), and
+  three top-level modules -- `evaluate`, `experiment` and `config`. `rts/bundles.py` is the last
+  driver still outside `rts/render/`, because the declarations need its rung definitions.
 
 `rts/dataset.py` and `rts/features.py` no longer exist. The head of the reproduction chain is
-`rts/datasets.py`, and the pipeline and ladder are unchanged in what they compute: the decomposition
+`rts/data/datasets.py`, and the pipeline and ladder are unchanged in what they compute: the decomposition
 was verified by diffing `results_full.json`, `results_covered.json`, `ladder.json` and
 `bugsinpy_results.json` against the pre-decomposition versions, with zero value differences.

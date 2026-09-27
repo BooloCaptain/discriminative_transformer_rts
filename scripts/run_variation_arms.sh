@@ -22,7 +22,7 @@ mkdir -p artifacts/logs
 run_semif() {  # name, args...
   local name="$1"; shift
   echo "=== arm: $name ==="
-  "$PY" -u -m rts.semif_runner "$@" > "artifacts/logs/${name}.log" 2>&1
+  "$PY" -u -m rts.model.semif_runner "$@" > "artifacts/logs/${name}.log" 2>&1
   echo "=== arm done: $name ""$(tail -1 "artifacts/logs/${name}.log")"
 }
 
@@ -44,20 +44,20 @@ case "${1:-}" in
   p1)
     # Direct mode is ~1.3 pairs/s (Qwen3.5-4B falls back to reference kernels), so the
     # full held-out grid is a ~16 h job. The starved population is the affordable arm.
-    "$PY" -u -m rts.direct_runner --starved 2 --batch-size "$BATCH" \
+    "$PY" -u -m rts.model.direct_runner --starved 2 --batch-size "$BATCH" \
       --out "artifacts/semif_direct_starved2_covered.jsonl" \
       > artifacts/logs/direct_starved2.log 2>&1
     echo "=== arm done: direct_starved2"
     ;;
   p1-full)
     # ~72k pairs, ~16 h at the measured direct-mode throughput. Listed as outstanding.
-    "$PY" -u -m rts.direct_runner --batch-size "$BATCH" \
+    "$PY" -u -m rts.model.direct_runner --batch-size "$BATCH" \
       --out "artifacts/semif_direct_heldout_covered.jsonl" \
       > artifacts/logs/direct_heldout.log 2>&1
     echo "=== arm done: direct_heldout"
     ;;
   p3-arm)
-    echo "p3 (embeddings) runs on CPU: python -m rts.embed --device cpu" >&2
+    echo "p3 (embeddings) runs on CPU: python -m rts.model.embed --device cpu" >&2
     exit 2
     ;;
   starved5-full)

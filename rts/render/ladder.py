@@ -37,8 +37,8 @@ Two things the layer expresses that the old driver had to hand-code:
 
 Usage
 -----
-    python -m rts.ladder                 # both label sources
-    python -m rts.ladder --labels full
+    python -m rts.render.ladder                 # both label sources
+    python -m rts.render.ladder --labels full
 """
 
 from __future__ import annotations
@@ -46,9 +46,9 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import config, studies
-from .data.contract import Unmeasured
-from .experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run
+from .. import config, studies
+from ..data.contract import Unmeasured
+from ..experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run
 
 #: The key the recorded artifact files the paired comparison under. Its name states which
 #: population the pairing happened on, which is what makes the delta interpretable.

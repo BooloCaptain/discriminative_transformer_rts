@@ -18,7 +18,7 @@ and gets a loud failure if the column was renamed, instead of silently reading t
 neighbouring column.
 
 Gating is derived, not asserted. A group names the *material* it reads
-(``needs=("coverage",)``); :func:`rts.contract.requirements_for` maps that onto
+(``needs=("coverage",)``); :func:`rts.data.contract.requirements_for` maps that onto
 requirements, and the block treats a group whose requirements the dataset cannot meet as
 **unmeasured** -- zeroed at the model-input boundary, which is the one place a lossy
 coercion is legitimate, with the reason recorded and returned. Nothing hand-writes a

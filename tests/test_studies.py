@@ -260,10 +260,14 @@ def test_the_production_arm_is_addressable_from_the_cli():
 
 
 def test_no_studies_submodule_imports_a_driver():
-    """The declarations must not import a driver, or a driver importing them closes a cycle.
+    """The declarations must not import a renderer, or a renderer importing them closes a
+    cycle.
 
-    ``rts.ladder`` is the live risk: it imports ``rts.studies``, so a submodule importing it back
-    would make the import order decide whether the package loads at all.
+    ``rts.render.ladder`` is the live risk: it imports ``rts.studies``, so a submodule
+    importing it back would make the import order decide whether the package loads at all.
+    ``bundles`` is the one driver still outside ``rts.render``, and ``axes.py`` does import
+    it -- for its rung definitions, which is exactly the knot its migration unties, so this
+    check is scoped to the renderers rather than to "anything driver-shaped".
     """
     import ast
     from pathlib import Path
@@ -273,18 +277,23 @@ def test_no_studies_submodule_imports_a_driver():
     root = Path(package.__file__).parent
     offenders: list[str] = []
     for path in sorted(root.glob("*.py")):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
+        for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                imported = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
-                names = [f"{node.module or ''}.{a.name}" for a in node.names]
-                if node.level == 2 and node.module in {"ladder", "pipeline", "variations", "bugsinpy"}:
-                    names.append(f"rts.{node.module}")
+                if node.level == 2:
+                    base = f"rts.{node.module}" if node.module else "rts"
+                elif node.level == 1:
+                    base = f"rts.studies.{node.module}" if node.module else "rts.studies"
+                else:
+                    base = node.module or ""
+                imported = [base, *(f"{base}.{alias.name}" for alias in node.names)]
             else:
                 continue
             offenders.extend(
-                f"{path.name}: {name}" for name in names if name in {"rts.ladder", "rts.pipeline"}
+                f"{path.name}: {name}"
+                for name in imported
+                if name == "rts.render" or name.startswith("rts.render.")
             )
     assert offenders == []
 

@@ -20,10 +20,10 @@ Three structural facts the artifact records, each of which the layer made explic
 
 Usage::
 
-    python -m rts.pipeline
-    python -m rts.pipeline --candidates covered
-    python -m rts.pipeline --labels full
-    python -m rts.pipeline --skip-ablations --no-semif
+    python -m rts.render.pipeline
+    python -m rts.render.pipeline --candidates covered
+    python -m rts.render.pipeline --labels full
+    python -m rts.render.pipeline --skip-ablations --no-semif
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ import argparse
 import json
 import time
 
-from . import config, studies
-from .experiment import ROLE_MODEL, ROLE_POPULATION
+from .. import config, studies
+from ..experiment import ROLE_MODEL, ROLE_POPULATION
 
 #: The population the headline numbers are averaged over, and the selector every other one is
 #: paired against at the probe budget.

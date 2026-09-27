@@ -11,9 +11,9 @@ a guarantee that could be lost by an innocuous edit. It is now a plain dataclass
 pooling two projects that both contain a bug numbered ``3`` cannot confuse them.
 
 **Meaning.** Namespacing fixes collisions, not semantics. Pooling datasets whose
-:meth:`~rts.contract.Dataset.test_unit` differs is defensible only when the difference is
+:meth:`~rts.data.contract.Dataset.test_unit` differs is defensible only when the difference is
 immaterial, so the pool *reports* the disagreement rather than refusing it, and
-:func:`rts.reporting.audit` turns it into a warning.
+:func:`rts.data.reporting.audit` turns it into a warning.
 """
 
 from __future__ import annotations

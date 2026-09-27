@@ -48,9 +48,9 @@ sparsity sweep, complexity ladder, coherent bundles, embedding baseline, direct-
 four SemIf reranker arms over all 530 held-out changes plus four diagnostic controls; the
 full-suite starved arm at n=43 and n=141; a history×coverage decomposition and a four-seed
 robustness check; five instruction wordings; and figures for the correction, the mechanism and
-the levers. New machinery: `rts/semif_runner.py` (instruction variants, full/starved/train-prefix
-arms, `--exclude-scored`), `rts/direct_runner.py`, `rts/embed.py`, `rts/variations.py`,
-`rts/figures.py`, `scripts/run_variation_arms.sh`.
+the levers. New machinery: `rts/model/semif_runner.py` (instruction variants, full/starved/train-prefix
+arms, `--exclude-scored`), `rts/model/direct_runner.py`, `rts/model/embed.py`, `rts/render/variations.py`,
+`rts/render/figures.py`, `scripts/run_variation_arms.sh`.
 
 ### Next steps, in priority order
 
@@ -184,11 +184,11 @@ sample of fields compared.
 
 | module | state |
 |---|---|
-| `rts/pipeline.py` | renders `results_{full,covered}.json` from a declared arm |
-| `rts/ladder.py` | renders `ladder.json` from a declared arm |
-| `rts/variations.py` | six of seven sections rendered; `p5_trained` and `p1_direct` keep their original code |
-| `rts/bugsinpy.py` | renders `bugsinpy_results.json` from a declared arm, byte-identically |
-| `rts/panels.py` | the sparsity panels; off the layer on purpose (see §13 of `experiment.md`) |
+| `rts/render/pipeline.py` | renders `results_{full,covered}.json` from a declared arm |
+| `rts/render/ladder.py` | renders `ladder.json` from a declared arm |
+| `rts/render/variations.py` | six of seven sections rendered; `p5_trained` and `p1_direct` keep their original code |
+| `rts/render/bugsinpy.py` | renders `bugsinpy_results.json` from a declared arm, byte-identically |
+| `rts/render/panels.py` | the sparsity panels; off the layer on purpose (see §13 of `experiment.md`) |
 | `rts/studies/` | the declarations: axes, arms, the ladder, the variations, the readings, and the BugsInPy arm |
 | `rts/experiment.py` | the layer itself |
 
@@ -224,7 +224,7 @@ Five items that were on this list are done, and each has a test or a gate behind
 just a claim:
 
 * **`bugsinpy`** -- the real-label arm is declared in `rts/studies/bugsinpy.py` and rendered
-  **byte-identically** by `rts/bugsinpy.py` (194 leaves, 0 mismatches; the artifact file does not
+  **byte-identically** by `rts/render/bugsinpy.py` (194 leaves, 0 mismatches; the artifact file does not
   change when regenerated). It needed three capabilities, each added to the *value* rather than to
   the layer: a per-change candidate pool (`Dataset.own_candidate_pool`, which reproduces the old
   inline `candidate_matrix` exactly), per-change-scope selectors (`PerPoolRandomSelector`,
@@ -238,7 +238,7 @@ just a claim:
   anchor-based partition that asserts the pieces rebuild the original file **byte for byte**, so a
   mis-anchored cut cannot silently drop a function -- the failure mode a 1164-line hand split
   invites. A `__main__.py` carries the CLI, which a package needs for `python -m rts.studies`.
-* **`analysis.py` is renamed `rts/panels.py` and stays off the layer, on purpose.** The question
+* **`analysis.py` is renamed `rts/render/panels.py` and stays off the layer, on purpose.** The question
   was whether to derive its panels from the layer's reports instead of the raw caches, and the
   answer is no for a reason stronger than cost: each model is evaluated on the subset of a bin it
   has scores for, which is a per-*row* availability filter that `Element.applies` (per-*cell*)
@@ -259,7 +259,7 @@ just a claim:
   `python -m rts.studies semif.produce` is the study's most expensive step made addressable like
   any other arm: with `--tiers gpu` it scores and writes, without it the cell is reported
   unmeasured. The **BugsInPy cache is the exception** and is still produced by
-  `python -m rts.bugsinpy --stage semif`, because it writes a record format nothing else reads.
+  `python -m rts.render.bugsinpy --stage semif`, because it writes a record format nothing else reads.
 - **`RunReport` has consumers now. DONE.** A run records, once per (dataset, split), the dataset's
   declaration, its description under the split it used and the pair-recurrence statistic, plus
   each population's size before and after the fault filter. `pipeline.render` and

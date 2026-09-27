@@ -5,7 +5,7 @@ over the contract, defined once and applicable to any dataset. Three things foll
 the first pass got all three wrong:
 
 **Requirements are derived, not asserted.** A population names the material its
-predicate reads; the requirements come from :data:`rts.accessors.MATERIAL`. The old
+predicate reads; the requirements come from :data:`rts.data.accessors.MATERIAL`. The old
 version hand-wrote a ``requires`` set beside a predicate and nothing checked the two
 agreed. Declaring too little raised a capability error from inside the predicate instead
 of returning :class:`Unmeasured`; declaring too much reported a working population

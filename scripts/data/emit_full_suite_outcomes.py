@@ -1,4 +1,4 @@
-"""Emit the full-suite relabelling in the format ``rts.artifacts`` already consumes.
+"""Emit the full-suite relabelling in the format ``rts.data.mutmut`` already consumes.
 
 Input:  ``artifacts/full_suite_labels.json`` -- the compact probe artifact, which stores
         per mutant the *indices* of the tests that failed plus the canonical test list.

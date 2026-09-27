@@ -3,7 +3,7 @@
 Reporting is separated from the contract for a specific reason. The first pass put
 ``describe`` and ``save`` on the dataset, which meant they had to *choose* a train/test
 split to report -- so evaluation configuration was published as dataset metadata and
-ended up inside the recorded artifacts. Both now take a :class:`~rts.splits.Split`
+ended up inside the recorded artifacts. Both now take a :class:`~rts.data.splits.Split`
 explicitly, because a dataset cannot know which of its changes were held out: that is
 not a fact about the data.
 

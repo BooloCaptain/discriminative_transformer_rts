@@ -2,7 +2,7 @@
 
 Everything is read from ``artifacts/variations.json``, which the experiment driver
 writes incrementally, so the figures never re-run an experiment and can never drift
-from the numbers in ``docs/implementation.md``. Same conventions as ``rts.panels``:
+from the numbers in ``docs/implementation.md``. Same conventions as ``rts.render.panels``:
 matplotlib only, 150 dpi, saved under ``artifacts/figures/``.
 
 Three figures:
@@ -29,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from . import config
+from .. import config
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 
@@ -51,7 +51,7 @@ SEMIF_LABEL = "semif_textonly (SemIf, 4B reranker)"
 def _load() -> dict:
     path = config.ARTIFACTS / "variations.json"
     if not path.exists():
-        raise FileNotFoundError(f"{path} not found; run rts.variations first")
+        raise FileNotFoundError(f"{path} not found; run rts.render.variations first")
     return json.loads(path.read_text())
 
 

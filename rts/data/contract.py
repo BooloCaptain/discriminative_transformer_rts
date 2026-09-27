@@ -2,8 +2,8 @@
 
 This module answers one question: *what must a dataset supply, and what does it
 declare about what it supplies?* It deliberately does **not** answer what can be
-computed from those supplies. Every derived quantity lives in :mod:`rts.accessors`,
-:mod:`rts.features` or :mod:`rts.populations`, because those are harness functions
+computed from those supplies. Every derived quantity lives in :mod:`rts.data.accessors`,
+:mod:`rts.features` or :mod:`rts.data.populations`, because those are harness functions
 that must not know which dataset they are reading.
 
 **Primitives** are dataset-specific, because their *extraction* is.
@@ -109,7 +109,7 @@ class Policy(str, Enum):
     EFFECTIVE_ORDER = "ordering.effective"
 
 
-#: Material a computation may be handed is catalogued in :mod:`rts.accessors`, not here.
+#: Material a computation may be handed is catalogued in :mod:`rts.data.accessors`, not here.
 #: The contract defines the *vocabulary* (a capability is a requirement of the same
 #: name) and what a dataset declares; which named material a computation reads, and what
 #: that implies, is a harness concern. Keeping one catalogue in one place is what stops
@@ -245,7 +245,7 @@ class Dataset(ABC):
     A dataset is a plain value: constructing one has no side effects, two may coexist
     in a process, and reading from one has no side effect on any other. The only
     mutable state is a private memo table, which exists so that the derived accessors
-    in :mod:`rts.accessors` can share one caching mechanism instead of each
+    in :mod:`rts.data.accessors` can share one caching mechanism instead of each
     re-implementing it.
     """
 

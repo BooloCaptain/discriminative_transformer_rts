@@ -2,10 +2,10 @@
 
 The ladder removes feature families one rung at a time and asks whether SemIf crosses the
 classical baselines as traceability is withdrawn. Its declarations live here rather than in
-:mod:`rts.ladder` because the driver is a renderer: it runs this arm and writes the recorded
+:mod:`rts.render.ladder` because the driver is a renderer: it runs this arm and writes the recorded
 artifact's shape.
 
-``rts.ladder`` must not be imported from here. The driver imports this package, so a submodule
+``rts.render.ladder`` must not be imported from here. The driver imports this package, so a submodule
 importing it back would close a cycle.
 """
 
@@ -128,7 +128,7 @@ def ladder_populations(ds: Dataset) -> dict[str, "populations.Population | Unmea
 def ladder_feature_axis() -> Axis:
     """The ladder's rungs, as blocks with families withheld.
 
-    The rung *definition* is a study choice and stays in ``rts.ladder``; what the layer does is
+    The rung *definition* is a study choice and stays in ``rts.render.ladder``; what the layer does is
     turn each one into an element. Withholding a family goes through the block's own
     ``without_families``, so a rung takes the same unmeasured path a genuinely absent
     capability takes and a typo raises instead of quietly ablating nothing.

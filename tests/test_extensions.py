@@ -188,7 +188,7 @@ def _long_named_tests(material) -> np.ndarray:
 
 LONG_NAMES = populations.Population(
     name="long_test_names",
-    note="a population added here, not in rts/populations.py",
+    note="a population added here, not in rts/data/populations.py",
     needs=("killing",),
     predicate=_long_named_tests,
 )
@@ -306,7 +306,7 @@ def test_a_populations_declaration_is_reportable():
         "name": "long_test_names",
         "needs": ["killing"],
         "requires": ["labels"],
-        "note": "a population added here, not in rts/populations.py",
+        "note": "a population added here, not in rts/data/populations.py",
     }
     assert len(populations.STUDY.describe()) == 4
     assert any(w.code == "dataset.multi_file_changes_flattened" for w in reporting.audit(

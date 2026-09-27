@@ -406,7 +406,7 @@ whole rendered artifacts rather than against the arms that already work:
 | `scripts/verify_experiment_layer.py` | the reproduction check of §11 |
 | `tests/test_experiment.py` | 20 tests, all over the stub dataset |
 
-`rts/models.py` gained one method — `Selector.requirements()` — which is the whole of the
+`rts/model/selectors.py` gained one method — `Selector.requirements()` — which is the whole of the
 model-half declaration §1 identified as missing. The only other change to an existing module is
 removing a parameter from `ladder.build_populations` that its body never read.
 
@@ -532,7 +532,7 @@ code and artifact in step:
 
 * **`variations` is six-sevenths migrated.** The starved arms, the seed refit, the instruction
   sweep, the embedding baseline and the redundancy test are declared in `rts/studies` and rendered
-  by `rts/variations.py`. Two sections are not:
+  by `rts/render/variations.py`. Two sections are not:
   * **`p5_trained`** needs an evaluation window *inside* the held-out tail -- a `Split` whose train
     and test are both drawn from the tail -- plus a NaN convention for unscored pairs in
     `XGBoostSelector`'s extra columns. Both are small; both change what an existing concept means,
@@ -543,7 +543,7 @@ code and artifact in step:
     an unmeasured cell with the path instead of raising. The code is kept as the record of what
     ran.
 * **`bugsinpy` is migrated; `bundles` is not.** The real-label arm is declared in
-  `rts/studies/bugsinpy.py` and rendered byte-identically by `rts/bugsinpy.py`. It needed three
+  `rts/studies/bugsinpy.py` and rendered byte-identically by `rts/render/bugsinpy.py`. It needed three
   capabilities, each added to a *value* rather than to the layer: a per-change candidate pool
   (`Dataset.own_candidate_pool`), per-change-scope selectors (a BM25 fitted per change over that
   change's own documents, and a per-change random draw), and a cache loader keyed by position
@@ -578,7 +578,7 @@ code and artifact in step:
   the selector whose `requirements()` is empty on purpose: declaring the cache would make the
   cell unmeasured before it could produce it. `python -m rts.studies semif.produce --tiers gpu`
   scores and writes; without the GPU tier the cell is reported unmeasured. The BugsInPy cache is
-  the exception and is still produced by `python -m rts.bugsinpy --stage semif`: it uses a record
+  the exception and is still produced by `python -m rts.render.bugsinpy --stage semif`: it uses a record
   format nothing else reads, so it would need its own production element.
 * **`test_unit`/semantics across a pooled dataset** are declared and now **policed**: the BugsInPy
   pool's constituents agree on `test_unit`, and a test asserts both that and that the pool emits

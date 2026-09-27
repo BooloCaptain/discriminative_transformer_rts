@@ -85,10 +85,10 @@ class Selector:
         requirement makes the cell *unmeasured* rather than raising from inside ``scores``.
 
         Two spellings are understood: ``"artifact:<path>"`` for a file the selector reads
-        (a score cache), and a :class:`rts.contract.Requirement` value (``"coverage"``,
+        (a score cache), and a :class:`rts.data.contract.Requirement` value (``"coverage"``,
         ``"durations"``, ...) for material that comes from the dataset. An unrecognised
         spelling raises where it is resolved, for the same reason
-        :meth:`rts.contract.Dataset.has_capability` does.
+        :meth:`rts.data.contract.Dataset.has_capability` does.
         """
         return ()
 
@@ -489,7 +489,7 @@ class SemIfSelector(CachedScores):
     """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
 
     Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is computed
-    once by ``rts.semif`` and cached. See docs/implementation.md for the pinned configuration.
+    once by ``rts.model.semif`` and cached. See docs/implementation.md for the pinned configuration.
     """
 
     def __init__(self, scores_file=None):
@@ -565,7 +565,7 @@ class ProducedScores(Selector):
     refuse such a file -- it is handed the context and the path and raises if the cache cannot
     serve it. Without one the file is trusted, which is the documented contract rather than a
     guarantee, and it is why the SemIf production element supplies
-    :func:`rts.semif_runner.missing_pairs`.
+    :func:`rts.model.semif_runner.missing_pairs`.
 
     A verifier *raises* rather than producing an unmeasured cell, and that is deliberate: the
     element declared that it can produce this cache, so a file at the path that cannot serve

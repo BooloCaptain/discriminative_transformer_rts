@@ -200,8 +200,8 @@ def load_scores(path: Path, ds: contract.Dataset) -> np.ndarray:
         raise FileNotFoundError(
             f"SemIf score cache not found: {path}\n"
             "Populate it with:\n"
-            "  python -m rts.semif --build        # writes pairs + prints cost estimate\n"
-            "  python -m rts.semif --score        # runs semif-score (needs checkout + checkpoint)\n"
+            "  python -m rts.model.semif --build        # writes pairs + prints cost estimate\n"
+            "  python -m rts.model.semif --score        # runs semif-score (needs checkout + checkpoint)\n"
             "See docs/implementation.md for the pinned configuration."
         )
 

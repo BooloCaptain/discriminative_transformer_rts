@@ -27,7 +27,12 @@ from ..experiment import (
 
 # Imported by name: ``model_axis`` has a parameter called ``selectors``, so a module binding
 # of the same name would be shadowed by it inside that function.
-from ..model.selectors import LexicalSelector, ProducedScores, Selector, default_selectors
+from ..model.selectors import (
+    LexicalSelector,
+    ProducedScores,
+    Selector,
+    default_selectors,
+)
 
 # --- datasets ---------------------------------------------------------------
 

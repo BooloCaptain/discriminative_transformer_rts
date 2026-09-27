@@ -143,7 +143,7 @@ def require_in_window(split: Split, rows: np.ndarray, *, what: str = "rows") -> 
     what evaluating inside the held-out tail does.
 
     A violation is a programming error rather than a fact about the data, so it raises rather
-    than returning :class:`~rts.contract.Unmeasured`.
+    than returning :class:`~rts.data.contract.Unmeasured`.
     """
     if in_window(split, rows):
         return

@@ -33,7 +33,7 @@ it was ``rts/analysis.py``, and the rename says what it produces rather than wha
 
 Usage::
 
-    python -m rts.panels               # writes artifacts/figures/*.png and *.csv
+    python -m rts.render.panels               # writes artifacts/figures/*.png and *.csv
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, evaluate, features
-from .data import accessors, contract, datasets, populations, reporting, splits
-from .model import selectors, semif
+from .. import config, evaluate, features
+from ..data import accessors, contract, datasets, populations, reporting, splits
+from ..model import selectors, semif
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10

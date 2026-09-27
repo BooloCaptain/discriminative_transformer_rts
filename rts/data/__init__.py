@@ -20,8 +20,8 @@ different type:
 * :mod:`.test_source` -- test-function source text by pytest node id, cached per checkout.
 * :mod:`.reporting` -- describing a dataset, and auditing what a consumer should know.
 
-Two names were one letter apart and are not any more: ``rts.source`` and ``rts.sources`` are
+Two names were one letter apart and are not any more: ``rts.data.test_source`` and ``rts.data.sources`` are
 now :mod:`.test_source` and :mod:`.sources`. The module that reads mutmut's files is
-:mod:`.mutmut` rather than ``rts.artifacts``, which read like the recorded ``artifacts/``
+:mod:`.mutmut` rather than ``rts.data.mutmut``, which read like the recorded ``artifacts/``
 directory it never touches.
 """

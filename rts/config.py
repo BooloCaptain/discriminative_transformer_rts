@@ -5,7 +5,7 @@ See ``docs/plan.md`` for the study design and ``docs/implementation.md`` for too
 Note on what is *not* here. The label source (``mutmut`` vs ``full``) used to be a
 module global, on the argument that every selector, feature and evaluation must
 agree on it. The argument was right and the mechanism was wrong: agreement is now
-achieved by handing one :class:`rts.sources.MutmutSource` to every consumer of a
+achieved by handing one :class:`rts.data.sources.MutmutSource` to every consumer of a
 run. A global could not be scoped to a test, could not be varied within a process,
 and made two datasets over two label sources impossible. See ``docs/refactor.md`` §8,
 which asks for it to go last and deliberately.

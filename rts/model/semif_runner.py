@@ -628,7 +628,7 @@ def score_context(
     The context-driven entry point, and the reason score *production* can be a cell rather
     than a driver's invisible precondition. Everything the pair set needs comes from the
     dataset, the rows and the candidate mask, so a
-    :class:`~rts.models.ProducedScores` selector calls this from ``scores(ctx)`` and the
+    :class:`~rts.model.selectors.ProducedScores` selector calls this from ``scores(ctx)`` and the
     layer sees the study's most expensive step with a tier, a cost and a cell key.
 
     ``model``/``tokenizer`` may be injected -- a test supplies a fake, so the produce path
@@ -782,7 +782,7 @@ def score_heldout(
 
     SemIf is zero-shot, so the training window is never needed: scoring only the
     held-out changes keeps all 464 faults and costs a fifth of the full grid.
-    Writes the cache in the format ``rts.semif.load_scores`` consumes.
+    Writes the cache in the format ``rts.model.semif.load_scores`` consumes.
 
     ``include_features`` selects the fairness arm: with it, the prompt carries the
     same 15 structured features XGBoost receives. Without it the prompt is

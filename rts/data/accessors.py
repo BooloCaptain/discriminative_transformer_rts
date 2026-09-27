@@ -1,6 +1,6 @@
 """Derived accessors: harness functions over the dataset contract.
 
-These were methods on :class:`rts.contract.Dataset` in the first pass, which is why
+These were methods on :class:`rts.data.contract.Dataset` in the first pass, which is why
 that class grew to twenty-odd members and why one file had to hold everything.
 They are free functions because almost all of them have between zero and four
 consumers: keeping them on the contract made the interface look far larger than the
@@ -13,7 +13,7 @@ dataset supplies rather than a statistic computed from it.
 Three defects the move to free functions fixes:
 
 * **Nine hand-written copies of the memo idiom** are now one call to
-  :meth:`rts.contract.Dataset.cached`. A subclass that omitted them all, as
+  :meth:`rts.data.contract.Dataset.cached`. A subclass that omitted them all, as
   ``PooledDataset`` did, no longer silently loses every cache -- ``n_changes`` rebuilt
   the entire change list just to take a length.
 * **Mutable internals were handed out by reference.** ``labels``, ``runs`` and
@@ -88,7 +88,7 @@ def change_paths(ds: Dataset) -> tuple[str, ...]:
     ``files`` is plural because a change may touch several; this is the flattened view
     those features read. It does not warn -- which change was flattened is a fact about
     the data, reported by :func:`multi_file_changes` and recorded by
-    :func:`rts.reporting.audit`, rather than a side effect of reading.
+    :func:`rts.data.reporting.audit`, rather than a side effect of reading.
     """
     def build() -> tuple[str, ...]:
         out = []
@@ -137,7 +137,7 @@ def test_fault_idx(ds: Dataset, rows: np.ndarray) -> np.ndarray:
 
 
 def change_index(ds: Dataset) -> dict[str, int]:
-    """Change id -> row. The key is :meth:`rts.contract.Dataset.change_id`."""
+    """Change id -> row. The key is :meth:`rts.data.contract.Dataset.change_id`."""
     return ds.cached("change_index", lambda: {ds.change_id(c): i for i, c in enumerate(ds.changes)})
 
 

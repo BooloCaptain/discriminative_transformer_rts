@@ -15,21 +15,36 @@ verdict are in [`docs/handoff.md`](docs/handoff.md).
 
 ```
 rts/              the harness
-  contract.py       the dataset contract: primitives and declarations
-  accessors.py      derived quantities over the contract, and the material catalogue
-  splits.py         the train/test split, and the evaluation-window boundary
+  config.py         paths, pinned choices, seeds
+  data/             the dataset half: the contract, and where a dataset comes from
+    contract.py       primitives, declarations, and the values they speak in
+    accessors.py      derived quantities over the contract, and the material catalogue
+    splits.py         the train/test split, and the evaluation-window boundary
+    populations.py    named subsets of the evaluation window
+    composition.py    namespacing, pooling, derived datasets
+    datasets.py       the concrete datasets
+    sources.py        the raw material for one SUT or revision
+    mutmut.py         mutmut's raw artifacts, and the changes they become
+    test_source.py    test-function source text by pytest node id
+    reporting.py      describe, audit, recurrence
   features/         the declared feature blocks (structured, bundle, text)
-  models.py         selectors: rules, BM25, XGBoost, cached scores, per-change scope
+  model/            the model half: what turns a change and a test into a score
+    selectors.py      selectors: rules, BM25, XGBoost, cached and produced scores
+    semif.py          the pinned reranker adapter, and its cache format
+    semif_runner.py   the pairwise scorer (what spends GPU time)
+    direct_runner.py  the direct-mode scorer
+    embed.py          the code-embedding baseline
   evaluate.py       the metric sweep and the paired bootstrap
   experiment.py     the layer: axes, elements, cells, and a run
   studies/          the study's choices, as values (axes, arms, readings)
-  pipeline.py       renders results_{full,covered}.json
-  ladder.py         renders ladder.json (the traceability-loss ladder)
-  variations.py     renders variations.json (the six variation sections)
-  bugsinpy.py       renders bugsinpy_results.json (real labels, no coverage)
-  bundles.py        the change-complexity ladder
-  panels.py         the sparsity panels (an artifact reader, not a sweep)
-  figures.py        the variation figures (an artifact reader)
+  render/           what runs an arm or reads an artifact
+    pipeline.py       renders results_{full,covered}.json
+    ladder.py         renders ladder.json (the traceability-loss ladder)
+    variations.py     renders variations.json (the six variation sections)
+    bugsinpy.py       renders bugsinpy_results.json (real labels, no coverage)
+    panels.py         the sparsity panels (an artifact reader, not a sweep)
+    figures.py        the variation figures (an artifact reader)
+  bundles.py        the change-complexity ladder -- the last driver outside rts.render
 scripts/          entry points, probes and one-off builders (see scripts/README.md)
 tests/            the unit and semantics suite
 artifacts/        the recorded results — the *specification*, not a cache
@@ -54,7 +69,7 @@ or the movement is a finding to argue and record — never absorbed.
 Run a sweep, or one arm of it:
 
 ```
-python -m rts.pipeline                                # the headline arm
+python -m rts.render.pipeline                                # the headline arm
 python -m rts.studies ladder.mutmut --tiers cpu        # a declared arm, as a value
 python -m rts.studies semif.produce --tiers gpu        # produce a score cache as a cell
 ```

@@ -21,9 +21,9 @@ Two sections are **not** migrated, and both keep their original implementation b
 
 Usage::
 
-    python -m rts.variations                  # every section whose inputs are present
-    python -m rts.variations --only p2
-    python -m rts.variations --no-save
+    python -m rts.render.variations                  # every section whose inputs are present
+    python -m rts.render.variations --only p2
+    python -m rts.render.variations --no-save
 """
 
 from __future__ import annotations
@@ -34,10 +34,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, evaluate, features, studies
-from .data import accessors, contract, datasets, populations, splits
-from .experiment import ROLE_MODEL, ROLE_POPULATION, run
-from .model import selectors, semif
+from .. import config, evaluate, features, studies
+from ..data import accessors, contract, datasets, populations, splits
+from ..experiment import ROLE_MODEL, ROLE_POPULATION, run
+from ..model import selectors, semif
 
 BUDGETS = studies.VARIATION_BUDGETS
 PROBE = studies.VARIATION_PROBE
@@ -264,10 +264,10 @@ def p3_embed(device: str = "cpu", force: bool = False) -> dict:
 
     Two arms, because ``candidates`` is a knob and the full-pool comparison is the one where a
     semantic ranker could pay off -- the covered mask is the crutch that lets structure win
-    cheaply. The matrix itself is produced by ``rts.embed``; if it is absent the layer reports the
+    cheaply. The matrix itself is produced by ``rts.model.embed``; if it is absent the layer reports the
     cells that read it as unmeasured, so this only needs to build it when asked.
     """
-    from .model import embed
+    from ..model import embed
 
     ds = studies.dataset("mutmut")
     cache = studies.embed_cache()
@@ -583,9 +583,9 @@ def p1_direct(max_failures: int | None = 2) -> dict:
         else f"semif_direct_starved{max_failures}_covered.jsonl"
     )
     if not cache.exists():
-        raise FileNotFoundError(f"missing {cache}; run rts.direct_runner first")
+        raise FileNotFoundError(f"missing {cache}; run rts.model.direct_runner first")
 
-    from .model.semif_runner import load_done_keys
+    from ..model.semif_runner import load_done_keys
 
     done = load_done_keys(cache)
     complete = [

@@ -302,11 +302,11 @@ Status: implemented on branch `refactor/dataset-contract`. This section records 
 above was realised, and every place where implementing it changed the design.
 
 **Modules.** The contract lives in `rts/dataset.py` -- decomposed by §14, which supersedes this
-paragraph; the contract is now `rts/contract.py`: `TestUnit`, `Ordering`, `Capabilities`,
+paragraph; the contract is now `rts/data/contract.py`: `TestUnit`, `Ordering`, `Capabilities`,
 `Unmeasured`, `Warning`/`Warnings`, `Split`, `Population`, the `Dataset` ABC, the derived-feature
 functions, the composition helpers (`pool`, `PooledDataset`, `namespace`) and the `describe`/`save`
-boundaries. Sources are in `rts/sources.py` (`MutmutSource`, `BugsInPySource`); concrete datasets in
-`rts/datasets.py` (`MarshmallowDataset`, `BugsInPyDataset`, `BundleDataset`, `DerivedDataset`).
+boundaries. Sources are in `rts/data/sources.py` (`MutmutSource`, `BugsInPySource`); concrete datasets in
+`rts/data/datasets.py` (`MarshmallowDataset`, `BugsInPyDataset`, `BundleDataset`, `DerivedDataset`).
 
 **Derived features are inherited, not implemented per dataset.** `Dataset` supplies `labels`,
 `ran`, `change_paths`, `covered`, `test_index`, `fault_idx`, `candidates`, `pair_counts`,
@@ -413,7 +413,7 @@ Known gaps, stated rather than implied:
 * **Durations are declared but not otherwise policed.** §2.3's comparability caveat (a duration is a
   property of the machine as much as of the test) is recorded in `MarshmallowDataset.semantics` and
   nowhere enforced.
-* `rts.variations`, `rts.analysis`, `rts.bundles` and `rts.semif_runner` were migrated for
+* `rts.render.variations`, `rts.analysis`, `rts.bundles` and `rts.model.semif_runner` were migrated for
   construction and primitives only; their experiment logic, and therefore their numbers, were left
   alone. None of them is re-verified here beyond importing, because each needs a GPU arm or a
   multi-hour cache to re-run in full.
@@ -433,18 +433,22 @@ where a proposal was declined, why.
 
 | module | lines | responsibility |
 |---|---|---|
-| `contract.py` | 465 | primitives, declarations, `Capability`/`Requirement`/`Policy`, `Unmeasured`, `Warnings` |
-| `accessors.py` | 393 | derived accessors as free functions, and the single `MATERIAL` catalogue |
-| `splits.py` | 120 | `Split` and `make_split` — evaluation configuration |
+| `data/contract.py` | 465 | primitives, declarations, `Capability`/`Requirement`/`Policy`, `Unmeasured`, `Warnings` |
+| `data/accessors.py` | 393 | derived accessors as free functions, and the single `MATERIAL` catalogue |
+| `data/splits.py` | 120 | `Split` and `make_split` — evaluation configuration |
 | `features/block.py` | 375 | `FeatureBlock`, `FeatureGroup`, `FeatureMatrix` |
 | `features/derived.py` | 269 | one function per quantity, pure over its input |
 | `features/structured.py` | 184 | the 15-column block, declared as data |
 | `features/bundle.py` | 181 | the bundle block, declared as data |
 | `features/text.py` | 173 | tokenizer and BM25 |
-| `populations.py` | 266 | populations, predicates, registry value |
-| `composition.py` | 236 | namespacing, pooling, derived datasets |
-| `reporting.py` | 174 | audit, describe, save |
-| `datasets.py` | 522 | the concrete datasets |
+| `data/populations.py` | 266 | populations, predicates, registry value |
+| `data/composition.py` | 236 | namespacing, pooling, derived datasets |
+| `data/reporting.py` | 174 | audit, describe, save |
+| `data/datasets.py` | 522 | the concrete datasets |
+
+The table names the modules as they stand after the later move into packages (see the
+review): the dataset half is `rts/data/`, the model half `rts/model/`, and the drivers
+`rts/render/`.
 
 `rts/dataset.py` and `rts/features.py` are gone; the one-letter `dataset`/`datasets` hazard the first
 pass introduced is gone with them.

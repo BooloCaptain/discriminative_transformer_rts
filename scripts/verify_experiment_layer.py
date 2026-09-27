@@ -35,7 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rts import bugsinpy, config, ladder, pipeline, studies, variations  # noqa: E402
+from rts import config, studies
+from rts.render import bugsinpy, ladder, pipeline, variations
 
 #: The variation sections the layer produces. ``p5_trained`` and ``p1`` are not migrated -- the
 #: first needs an evaluation window inside the held-out tail, the second's cache is absent -- so

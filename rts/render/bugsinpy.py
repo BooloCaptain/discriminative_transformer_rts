@@ -26,9 +26,9 @@ Two things stay here because they are not cell semantics:
 
 Usage::
 
-    python -m rts.bugsinpy                 # run the arm and write the artifact
-    python -m rts.bugsinpy --stage audit    # the T0 gate alone
-    python -m rts.bugsinpy --stage semif    # score the pairs (GPU, resumable)
+    python -m rts.render.bugsinpy                 # run the arm and write the artifact
+    python -m rts.render.bugsinpy --stage audit    # the T0 gate alone
+    python -m rts.render.bugsinpy --stage semif    # score the pairs (GPU, resumable)
 """
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config, evaluate, features
-from .data import accessors, composition, contract
-from .data import datasets as dataset_module
-from .studies import bugsinpy as declarations
+from .. import config, evaluate, features
+from ..data import accessors, composition, contract
+from ..data import datasets as dataset_module
+from ..studies import bugsinpy as declarations
 
 SEMIF_CACHE = declarations.SEMIF_CACHE
 BUDGETS = declarations.BUGSINPY_BUDGETS
@@ -166,7 +166,7 @@ def score_semif(
     hours, so a production *cell* would need the same tier story ``semif.produce`` has; that is
     a deliberate next step, not an oversight.
     """
-    from .model import semif_runner
+    from ..model import semif_runner
 
     done: set[tuple[str, int]] = set()
     if SEMIF_CACHE.exists():
