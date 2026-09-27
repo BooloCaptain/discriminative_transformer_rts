@@ -30,7 +30,7 @@ from rts.data.contract import (
     TestUnit,
     Unmeasured,
 )
-from tests.stub_dataset import DURATIONS, TEST_IDS, StubDataset
+from tests.stub_dataset import TEST_IDS, StubDataset
 
 # ``TestUnit`` starts with "Test", so pytest would otherwise try to collect the enum.
 TestUnit.__test__ = False  # type: ignore[attr-defined]

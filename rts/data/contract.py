@@ -38,9 +38,10 @@ record would then describe how someone called a function rather than what the da
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Iterable, Mapping, Sequence, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 
@@ -210,7 +211,7 @@ class Warnings:
                 self._items.append(warning)
 
     @classmethod
-    def from_(cls, *sources: Iterable[Warning]) -> "Warnings":
+    def from_(cls, *sources: Iterable[Warning]) -> Warnings:
         """Merge several warning collections into one."""
         out = cls()
         for source in sources:

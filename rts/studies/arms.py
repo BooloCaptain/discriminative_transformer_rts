@@ -13,6 +13,7 @@ pay only for their metric sweeps.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 

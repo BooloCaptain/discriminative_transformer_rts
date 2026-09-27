@@ -61,6 +61,7 @@ by regenerating and comparing **leaf by leaf**:
 python scripts/verify_experiment_layer.py            # every migrated arm
 python scripts/verify_experiment_layer.py bugsinpy    # one arm
 python -m pytest tests/ -q                            # the unit suite
+python -m ruff check rts/ tests/ scripts/ conftest.py  # the lint config (pip install ruff)
 ```
 
 A recorded artifact is the specification: if a change moves a number, either the change is wrong

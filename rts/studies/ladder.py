@@ -85,7 +85,7 @@ def _cached_change_ids() -> set[str] | None:
     return ids
 
 
-def ladder_populations(ds: Dataset) -> dict[str, "populations.Population | Unmeasured"]:
+def ladder_populations(ds: Dataset) -> dict[str, populations.Population | Unmeasured]:
     """The ladder's two averaging populations, built from the dataset.
 
     ``starved141`` is defined by which changes the SemIf cache covers, so when the cache is

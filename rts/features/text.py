@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -51,7 +51,7 @@ class BM25Scorer:
         self.idf: dict[str, float] = {}
         self.postings: dict[str, list[tuple[int, float]]] = {}
 
-    def fit(self, docs: list[str]) -> "BM25Scorer":
+    def fit(self, docs: list[str]) -> BM25Scorer:
         self.n_docs = len(docs)
         self.postings = defaultdict(list)
         lengths = np.zeros(self.n_docs, dtype=np.float32)

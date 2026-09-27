@@ -262,7 +262,7 @@ if __name__ == "__main__":
     print(f"changes         : {len(rows_n)}")
     print(f"pairs           : {cost['pairs']:,}")
     print(f"estimated cost  : {cost['hours']:.1f} h ({cost['days']:.1f} d) at {DECISIONS_PER_SECOND}/s")
-    print(f"mean tokens/pair: n/a until scored (report it after a pilot)")
+    print("mean tokens/pair: n/a until scored (report it after a pilot)")
 
     if args.build or args.score:
         tag = ("shuffled" if args.shuffle else "real") + args.suffix

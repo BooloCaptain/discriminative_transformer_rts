@@ -8,7 +8,7 @@ them. ``semif_margins`` is the ladder's headline quantity and the only reader he
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Sequence
+from collections.abc import Sequence
 
 from ..experiment import ROLE_FEATURES, ROLE_MODEL, RunReport
 

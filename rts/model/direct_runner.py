@@ -276,7 +276,7 @@ def score_arm(
         suffix = "starved" if starved_max_failures is not None else "heldout"
         out_path = config.ARTIFACTS / f"semif_direct_{suffix}_{candidates_mode}.jsonl"
 
-    print(f"arm             : direct_pairwise (Qwen3.5-4B)")
+    print("arm             : direct_pairwise (Qwen3.5-4B)")
     print(f"candidates      : {candidates_mode}")
     print(f"starved <=      : {starved_max_failures}")
     print(f"changes         : {len(rows)}")

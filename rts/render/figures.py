@@ -27,7 +27,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
 
 from .. import config
 
@@ -154,7 +153,7 @@ def fig_history_coverage(data: dict) -> Path | None:
 
     fig, ax = plt.subplots(figsize=(9.0, 5.6))
     bars = ax.bar(range(len(values)), values, color=colours, width=0.62)
-    for i, (bar, value) in enumerate(zip(bars, values)):
+    for bar, value in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2, value + 0.012, f"{value:.3f}",
                 ha="center", fontsize=9, fontweight="bold")
     if semif is not None:
@@ -231,7 +230,7 @@ def fig_variation_levers(data: dict) -> Path | None:
     # Reverse so the first row reads at the top.
     rows = rows[::-1]
     fig, ax = plt.subplots(figsize=(11.0, 0.52 * len(rows) + 3.2))
-    for i, (_, label, delta, lo, hi, p, colour) in enumerate(rows):
+    for i, (_, _label, delta, lo, hi, p, colour) in enumerate(rows):
         sig = p < 0.05
         ax.plot([lo, hi], [i, i], color=colour, linewidth=2.0,
                 alpha=1.0 if sig else 0.45)

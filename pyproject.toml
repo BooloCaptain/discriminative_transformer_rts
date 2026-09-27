@@ -15,4 +15,13 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
     "E501",  # long lines are allowed where a wider line reads better than a wrapped one
+    # Deferred, not unwanted: each needs a per-site judgement that a blanket fix would skip,
+    # so the rule is off rather than half-applied. Revisit them one site at a time.
+    #   B905  zip strictness. ``strict=True`` raises when the lengths differ: usually the right
+    #         answer, but 17 call sites have to be read individually, and several are only
+    #         exercised by an arm that needs a GPU or a multi-hour cache.
+    "B905",
+    #   UP042 StrEnum. It changes ``str(enum)`` from "Requirement.LABELS" to "LABELS", and these
+    #         enums' string forms travel into recorded warnings and artifacts.
+    "UP042",
 ]

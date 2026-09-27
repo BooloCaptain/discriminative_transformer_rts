@@ -15,7 +15,7 @@ from rts import features
 from rts.data import accessors, contract, populations, reporting, splits
 from rts.data.contract import Capability, Requirement, Unmeasured
 from rts.features.block import FeatureBlock, FeatureColumn, FeatureGroup
-from tests.stub_dataset import TEST_IDS, StubDataset
+from tests.stub_dataset import StubDataset
 
 # --- adding a feature ------------------------------------------------------
 
@@ -200,7 +200,6 @@ MINE = populations.PopulationRegistry(
 
 
 def test_a_new_population_is_a_value_the_caller_supplies():
-    ds = StubDataset()
     assert "long_test_names" not in populations.STUDY.names()
     assert LONG_NAMES in MINE.populations
     assert MINE.get("long_test_names") is LONG_NAMES

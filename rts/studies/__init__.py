@@ -119,6 +119,7 @@ __all__ = [
     "VARIATION_TABLE_RESAMPLES",
     "dataset",
     "dataset_axis",
+    "bugsinpy",
     "bugsinpy_arm",
     "embed_arm",
     "embed_cache",

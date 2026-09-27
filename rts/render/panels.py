@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import config, evaluate, features
-from ..data import accessors, contract, datasets, populations, reporting, splits
+from ..data import accessors, contract, datasets, splits
 from ..model import selectors, semif
 
 BUDGETS = (0.01, 0.05)

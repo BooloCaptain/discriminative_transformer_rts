@@ -42,9 +42,10 @@ import itertools
 import json
 import time
 from collections import defaultdict
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -300,7 +301,7 @@ class Axis:
     def has(self, name: str) -> bool:
         return any(e.name == name for e in self.elements)
 
-    def select(self, *names: str) -> "Axis":
+    def select(self, *names: str) -> Axis:
         """This axis restricted to ``names``, in the axis's own order."""
         wanted = set(names)
         unknown = wanted - set(self.names())
@@ -308,7 +309,7 @@ class Axis:
             raise KeyError(f"axis {self.role!r} has no element(s) {sorted(unknown)}")
         return Axis(self.role, tuple(e for e in self.elements if e.name in wanted), self.note)
 
-    def without(self, *names: str) -> "Axis":
+    def without(self, *names: str) -> Axis:
         """This axis with ``names`` removed."""
         dropped = set(names)
         unknown = dropped - set(self.names())
@@ -316,10 +317,10 @@ class Axis:
             raise KeyError(f"axis {self.role!r} has no element(s) {sorted(unknown)}")
         return Axis(self.role, tuple(e for e in self.elements if e.name not in dropped), self.note)
 
-    def extend(self, *elements: Element) -> "Axis":
+    def extend(self, *elements: Element) -> Axis:
         return Axis(self.role, self.elements + tuple(elements), self.note)
 
-    def map(self, fn: Callable[[Element], Element | Unmeasured]) -> "Axis":
+    def map(self, fn: Callable[[Element], Element | Unmeasured]) -> Axis:
         """Apply a shared dimension-level option to every element.
 
         ``fn`` returns the element as it should be with the option applied, or an

@@ -220,8 +220,8 @@ def per_change_hit_matrix(
 def population_rows(
     ds: contract.Dataset,
     eval_idx: np.ndarray,
-    population: "populations.Population | str",
-) -> tuple["populations.Population", np.ndarray | contract.Unmeasured]:
+    population: populations.Population | str,
+) -> tuple[populations.Population, np.ndarray | contract.Unmeasured]:
     """Row indices into ``eval_idx`` to average over, or why they cannot exist."""
     spec = populations.resolve(population)
     mask = spec.mask(ds)
@@ -245,8 +245,8 @@ def evaluate_rows(
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP,
     seed: int = config.SEED,
     candidates: np.ndarray | None = None,
-    population: "populations.Population | str" = "fault_bearing",
-    split: "splits.Split | None" = None,
+    population: populations.Population | str = "fault_bearing",
+    split: splits.Split | None = None,
 ) -> Evaluation:
     """Metric sweep for one selector, over a named averaging population.
 
@@ -290,8 +290,8 @@ def evaluate(
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP,
     seed: int = config.SEED,
     candidates: np.ndarray | None = None,
-    population: "populations.Population | str" = "fault_bearing",
-    split: "splits.Split | None" = None,
+    population: populations.Population | str = "fault_bearing",
+    split: splits.Split | None = None,
 ) -> list[BudgetResult]:
     """Metric sweep returning only the results list, for the many call sites that want it.
 

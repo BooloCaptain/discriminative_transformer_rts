@@ -29,8 +29,9 @@ own set is :data:`STUDY`, and it lives here rather than in the contract because
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -208,7 +209,7 @@ class PopulationRegistry:
                 return population
         raise KeyError(f"unknown population {name!r}; known: {list(self.names())}")
 
-    def __add__(self, other: "PopulationRegistry") -> "PopulationRegistry":
+    def __add__(self, other: PopulationRegistry) -> PopulationRegistry:
         seen = {p.name for p in self.populations}
         return PopulationRegistry(
             self.populations
@@ -231,7 +232,7 @@ def population(name: str, registry: PopulationRegistry | None = None) -> Populat
     return (registry or STUDY).get(name)
 
 
-def resolve(spec: "Population | str", registry: PopulationRegistry | None = None) -> Population:
+def resolve(spec: Population | str, registry: PopulationRegistry | None = None) -> Population:
     """Accept either a population or a name, for APIs that take both."""
     return spec if isinstance(spec, Population) else population(spec, registry)
 

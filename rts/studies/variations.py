@@ -12,9 +12,9 @@ absent from the artifacts, so its numbers cannot be reproduced at all.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Sequence
 
 from .. import config
 from ..data import populations

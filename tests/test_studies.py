@@ -115,7 +115,7 @@ def test_the_ladder_declares_the_rungs_it_renders():
         "L2_nocoverage",
         "L3_notrace",
     ]
-    for rung, removed in studies.RUNGS:
+    for rung, _removed in studies.RUNGS:
         assert rung in studies.ladder_arm().features.names()
 
 

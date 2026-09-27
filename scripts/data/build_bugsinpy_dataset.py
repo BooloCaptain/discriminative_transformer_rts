@@ -158,7 +158,9 @@ def enumerate_tests(repo: Path) -> dict[str, str]:
             continue
         lines = source.splitlines()
 
-        def walk(body, prefix: str) -> None:
+        # ``rel`` and ``lines`` are bound as defaults: ``walk`` is defined inside the loop, so
+        # without this it would close over names the next iteration rebinds (B023).
+        def walk(body, prefix: str, rel: str = rel, lines: list[str] = lines) -> None:
             for node in body:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     if node.name.startswith("test"):
@@ -228,7 +230,7 @@ def build_project(project: str, limit: int | None) -> dict:
                 "failing": failing,
                 "pool": sorted(pool),
                 "changed_files": sorted(
-                    {l.split(" b/")[-1] for l in text.splitlines() if l.startswith("diff --git")}
+                    {line.split(" b/")[-1] for line in text.splitlines() if line.startswith("diff --git")}
                 ),
             }
         )

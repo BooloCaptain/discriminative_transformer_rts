@@ -18,7 +18,7 @@ and gets a loud failure if the column was renamed, instead of silently reading t
 neighbouring column.
 
 Gating is derived, not asserted. A group names the *material* it reads
-(``needs=("coverage",)``); :func:`rts.data.contract.requirements_for` maps that onto
+(``needs=("coverage",)``); :func:`rts.data.accessors.requirements_for` maps that onto
 requirements, and the block treats a group whose requirements the dataset cannot meet as
 **unmeasured** -- zeroed at the model-input boundary, which is the one place a lossy
 coercion is legitimate, with the reason recorded and returned. Nothing hand-writes a
@@ -27,13 +27,14 @@ requirement set that could drift from the code reading it.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
 from ..data import accessors
-from ..data.accessors import MATERIAL, requirements_for
+from ..data.accessors import MATERIAL
 from ..data.contract import Dataset, Requirement, Unmeasured, Warning, Warnings
 
 
@@ -240,7 +241,7 @@ class FeatureBlock:
 
     # --- derivation -------------------------------------------------------
 
-    def without(self, *names: str) -> "FeatureBlock":
+    def without(self, *names: str) -> FeatureBlock:
         """A block in which ``names`` are withheld. The slots are preserved."""
         unknown = [n for n in names if n not in self.columns]
         if unknown:
@@ -252,7 +253,7 @@ class FeatureBlock:
             note=self.note,
         )
 
-    def without_families(self, *families: str) -> "FeatureBlock":
+    def without_families(self, *families: str) -> FeatureBlock:
         """A block in which every column of ``families`` is withheld."""
         names: list[str] = []
         for family in families:
@@ -261,7 +262,7 @@ class FeatureBlock:
             raise KeyError(f"block {self.name!r} has no family among {families}")
         return self.without(*names)
 
-    def only(self, names: Sequence[str]) -> "FeatureBlock":
+    def only(self, names: Sequence[str]) -> FeatureBlock:
         """A block holding only ``names``, in the declared order.
 
         A group may be *partially* kept, so its ``produce`` is wrapped to project the

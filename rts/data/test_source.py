@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 from .. import config
@@ -53,7 +53,7 @@ def _iter_functions(tree: ast.AST):
     yield from walk(tree.body, "")
 
 
-@lru_cache(maxsize=None)
+@cache
 def _functions_in(sut: Path, file_rel: str) -> dict[str, ast.AST]:
     path = sut / file_rel
     if not path.exists():
@@ -72,7 +72,7 @@ def _source_of(sut: Path, file_rel: str, node: ast.AST) -> str:
     return "\n".join(lines[start - 1 : end])
 
 
-@lru_cache(maxsize=None)
+@cache
 def _test_info(nodeid: str, sut: Path) -> TestInfo | None:
     stripped = _strip_params(nodeid)
     file_rel, _, name = stripped.partition("::")

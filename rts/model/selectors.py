@@ -15,15 +15,15 @@ that produced the number rather than being printed and forgotten.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Sequence
 
 import numpy as np
 
 from .. import config, features
-from ..data import accessors, contract, splits
-from ..data.contract import Dataset, Unmeasured, Warning
+from ..data import accessors, splits
+from ..data.contract import Dataset, Warning
 from . import semif
 
 # Feature families, taken from the block's own declaration so there is one definition of
@@ -45,7 +45,7 @@ class Context:
 
     ds: Dataset
     features: features.FeatureMatrix
-    split: "splits.Split"
+    split: splits.Split
     bm25: np.ndarray  # [n_changes, n_tests]
     extras: dict = field(default_factory=dict)
     #: The run's seed. A selector that needs randomness reads it here rather than from

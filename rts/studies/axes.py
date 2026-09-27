@@ -9,8 +9,8 @@ per arm keeps two runs from sharing one model object.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .. import bundles, config, features
 from ..data import datasets, populations, splits
@@ -243,7 +243,7 @@ def semif_scoring_model_axis(
 
 
 def population_axis(
-    names: Sequence["populations.Population | str"] = (),
+    names: Sequence[populations.Population | str] = (),
     *,
     sparse: Sequence[int] = (),
 ) -> Axis:

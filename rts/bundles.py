@@ -463,13 +463,16 @@ def plot_ladder(
 
     ax = axes[1]
     rng = np.random.default_rng(seed)
-    for name, vals in curves.items():
+    for name, _vals in curves.items():
         if name == "random":
             continue
         deltas, los, his = [], [], []
-        for k, rung in enumerate(rungs):
+        for rung in rungs:
             if rung == rungs[0]:
-                deltas.append(0.0); los.append(0.0); his.append(0.0); continue
+                deltas.append(0.0)
+                los.append(0.0)
+                his.append(0.0)
+                continue
             d = hits[rung][name] - hits[rungs[0]][name]
             idx = rng.integers(0, d.size, size=(2000, d.size))
             means = d[idx].mean(axis=1)

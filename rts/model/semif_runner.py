@@ -390,7 +390,6 @@ def score_pairs(
         "pairs_per_second": len(pairs) / max(wall, 1e-9),
         "mirror": bool(feature_blocks),
         "bucketed": bool(bucket_by_length),
-        "orientation": orientation,
         "instruction": instruction or INSTRUCTION,
     }
     return scores, stats
