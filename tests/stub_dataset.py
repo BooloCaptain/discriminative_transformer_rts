@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rts.contract import Capability, Dataset, Ordering, TestUnit
+from rts.data.contract import Capability, Dataset, Ordering, TestUnit
 
 TEST_IDS = (
     "tests/test_alpha.py::test_one",

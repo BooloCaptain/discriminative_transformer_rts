@@ -11,11 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rts import accessors, contract, features, populations, reporting, splits
-from rts.contract import Capability, Requirement, Unmeasured
+from rts import features
+from rts.data import accessors, contract, populations, reporting, splits
+from rts.data.contract import Capability, Requirement, Unmeasured
 from rts.features.block import FeatureBlock, FeatureColumn, FeatureGroup
 from tests.stub_dataset import TEST_IDS, StubDataset
-
 
 # --- adding a feature ------------------------------------------------------
 

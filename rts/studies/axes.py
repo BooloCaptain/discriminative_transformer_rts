@@ -12,7 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from .. import bundles, config, datasets, features, models, populations, splits
+from .. import bundles, config, features, models
+from ..data import datasets, populations, splits
 from ..experiment import (
     ROLE_DATASET,
     ROLE_FEATURES,
@@ -167,7 +168,8 @@ def semif_scoring_model_axis(
     name = "_".join(parts)
 
     def produce(ctx, path):
-        from .. import accessors, semif_runner
+        from .. import semif_runner
+        from ..data import accessors
 
         return semif_runner.score_context(
             ctx.ds,
@@ -188,7 +190,8 @@ def semif_scoring_model_axis(
         cell's. The pair set is the same one ``score_context`` builds, so a complete cache for
         this context passes and any other raises instead of yielding a number.
         """
-        from .. import accessors, semif_runner
+        from .. import semif_runner
+        from ..data import accessors
 
         missing = semif_runner.missing_pairs(
             ctx.ds,

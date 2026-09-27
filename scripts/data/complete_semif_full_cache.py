@@ -24,7 +24,8 @@ from _workspace import WORKSPACE  # noqa: E402
 
 sys.path.insert(0, str(WORKSPACE))
 
-from rts import accessors, artifacts, config, datasets, features  # noqa: E402
+from rts import config, features
+from rts.data import accessors, datasets, mutmut
 
 SOURCES = [
     config.ARTIFACTS / "semif_scores_starved5_full.jsonl",
@@ -44,7 +45,7 @@ def main() -> None:
                 if not line:
                     continue
                 rec = json.loads(line)
-                existing[(rec["change_id"], artifacts.canonical_nodeid(rec["test_nodeid"]))] = rec["score"]
+                existing[(rec["change_id"], mutmut.canonical_nodeid(rec["test_nodeid"]))] = rec["score"]
 
     change_ids = sorted({cid for cid, _ in existing})
     print(f"[complete] {len(existing):,} cached pairs over {len(change_ids)} changes")

@@ -382,7 +382,7 @@ class Dataset(ABC):
     @property
     def order_seed(self) -> int:
         """Seed used to materialise the canonical order of an imposed dataset."""
-        from . import config
+        from .. import config
 
         return config.SEED
 

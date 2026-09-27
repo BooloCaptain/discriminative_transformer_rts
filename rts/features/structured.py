@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from ..contract import Dataset, Ordering, Policy, Warnings
+from ..data.contract import Dataset, Ordering, Policy, Warnings
 from . import derived
 from .block import FeatureBlock, FeatureColumn, FeatureGroup, FeatureMatrix
 

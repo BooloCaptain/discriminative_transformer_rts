@@ -43,19 +43,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import (
-    accessors,
-    config,
-    contract,
-    datasets,
-    evaluate,
-    features,
-    models,
-    populations,
-    reporting,
-    semif,
-    splits,
-)
+from . import config, evaluate, features, models, semif
+from .data import accessors, contract, datasets, populations, reporting, splits
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10

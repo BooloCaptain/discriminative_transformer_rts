@@ -32,7 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import accessors, config, contract, datasets, features, populations, semif, splits
+from . import config, features, semif
+from .data import accessors, contract, datasets, populations, splits
 
 INSTRUCTION = (
     "Given a code change, judge whether the test below exercises the changed "

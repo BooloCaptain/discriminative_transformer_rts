@@ -47,7 +47,7 @@ import argparse
 import json
 
 from . import config, studies
-from .contract import Unmeasured
+from .data.contract import Unmeasured
 from .experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run
 
 #: The key the recorded artifact files the paired comparison under. Its name states which

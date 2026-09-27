@@ -31,13 +31,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from .contract import (
-    Capability,
-    CapabilityMissing,
-    Dataset,
-    Requirement,
-    TestId,
-)
+from .contract import Capability, CapabilityMissing, Dataset, Requirement, TestId
 
 # --- labels and runs -------------------------------------------------------
 

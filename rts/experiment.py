@@ -48,17 +48,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from . import (
-    accessors,
-    config,
-    evaluate,
-    features,
-    models,
-    populations,
-    reporting,
-    splits,
-)
-from .contract import (
+from . import config, evaluate, features, models
+from .data import accessors, populations, reporting, splits
+from .data.contract import (
     Dataset,
     Ordering,
     Requirement,

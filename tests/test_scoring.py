@@ -14,7 +14,8 @@ import json
 import numpy as np
 import pytest
 
-from rts import accessors, features, models, semif, semif_runner, splits, studies
+from rts import features, models, semif, semif_runner, studies
+from rts.data import accessors, splits
 from rts.experiment import Binding, Environment
 from tests.stub_dataset import StubDataset
 

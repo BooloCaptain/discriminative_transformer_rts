@@ -29,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from . import config  # noqa: E402
+from . import config
 
 BUDGETS = (0.01, 0.05, 0.1, 0.2)
 

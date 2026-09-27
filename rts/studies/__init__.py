@@ -50,11 +50,6 @@ from .arms import (
     sparse_arm,
     study_arm,
 )
-from .bugsinpy import (
-    BUGSINPY_BUDGETS,
-    bugsinpy_arm,
-    run_bugsinpy,
-)
 from .axes import (
     ABLATION_MODELS,
     dataset_axis,
@@ -64,6 +59,7 @@ from .axes import (
     split_axis,
     structured_feature_axis,
 )
+from .bugsinpy import BUGSINPY_BUDGETS, bugsinpy_arm, run_bugsinpy
 from .ladder import (
     LADDER_BUDGETS,
     LADDER_PROBE,

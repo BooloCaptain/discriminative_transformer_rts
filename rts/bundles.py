@@ -43,8 +43,9 @@ import json
 
 import numpy as np
 
-from . import accessors, config, contract, datasets, evaluate, features
-from .datasets import Bundle
+from . import config, evaluate, features
+from .data import accessors, contract, datasets
+from .data.datasets import Bundle
 
 # Rung construction is a study choice, so the rung definitions stay here; the *shape* of
 # a bundled dataset lives on the contract (datasets.BundleDataset), because bundling is

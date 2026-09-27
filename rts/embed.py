@@ -31,7 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import accessors, config, contract, datasets, features, splits
+from . import config, features
+from .data import accessors, contract, datasets, splits
 
 
 def load_embedding_model(

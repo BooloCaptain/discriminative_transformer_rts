@@ -16,8 +16,8 @@ from typing import Sequence
 
 import numpy as np
 
-from .. import accessors
-from ..contract import Dataset
+from ..data import accessors
+from ..data.contract import Dataset
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 KEYWORDS = {

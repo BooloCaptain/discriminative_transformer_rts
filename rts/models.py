@@ -21,8 +21,9 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from . import accessors, config, contract, features, semif, splits
-from .contract import Dataset, Unmeasured, Warning
+from . import config, features, semif
+from .data import accessors, contract, splits
+from .data.contract import Dataset, Unmeasured, Warning
 
 # Feature families, taken from the block's own declaration so there is one definition of
 # what "the history family" is rather than a second list here that can drift from it.

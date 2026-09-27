@@ -18,8 +18,9 @@ import json
 import numpy as np
 import pytest
 
-from rts import config, features, models, populations, splits
-from rts.contract import Ordering, Unmeasured
+from rts import config, features, models
+from rts.data import populations, splits
+from rts.data.contract import Ordering, Unmeasured
 from rts.experiment import (
     ROLE_DATASET,
     ROLE_FEATURES,

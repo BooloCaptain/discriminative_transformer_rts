@@ -14,9 +14,11 @@ import json
 import numpy as np
 import pytest
 
-from rts import accessors, bugsinpy, config, models, studies
+from rts import bugsinpy, config, models, studies
+from rts.data import accessors
+
 # Aliased so pytest does not try to collect the enum as a test class.
-from rts.contract import TestUnit as Unit
+from rts.data.contract import TestUnit as Unit
 
 
 @pytest.fixture(scope="module")
@@ -142,7 +144,7 @@ def test_the_arm_holds_nothing_out(corpus):
     _, pooled, _ = corpus
     arms = studies.bugsinpy_arm(0.05)
     assert arms.splits.names() == ("split0",)
-    from rts import splits
+    from rts.data import splits
 
     split = splits.make_split(pooled, train_fraction=0.0)
     assert split.train_idx.size == 0
@@ -186,7 +188,8 @@ def test_the_cache_loader_resolves_columns_through_each_bugs_pool(corpus):
 
 
 def _context(pooled):
-    from rts import models, splits
+    from rts import models
+    from rts.data import splits
 
     return models.Context(
         ds=pooled,

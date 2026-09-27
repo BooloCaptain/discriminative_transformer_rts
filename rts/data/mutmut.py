@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+from .. import config
 
 MUTANT_SUFFIX_RE = re.compile(r"__mutmut_(\d+|orig)$")
 

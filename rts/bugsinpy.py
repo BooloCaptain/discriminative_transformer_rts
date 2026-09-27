@@ -40,7 +40,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import accessors, composition, config, contract, datasets as dataset_module, evaluate, features
+from . import config, evaluate, features
+from .data import accessors, composition, contract
+from .data import datasets as dataset_module
 from .studies import bugsinpy as declarations
 
 SEMIF_CACHE = declarations.SEMIF_CACHE

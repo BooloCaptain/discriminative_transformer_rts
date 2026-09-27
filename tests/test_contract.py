@@ -21,8 +21,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rts import accessors, composition, contract, features, populations, reporting, splits
-from rts.contract import Capability, CapabilityMissing, Ordering, TestUnit, Unmeasured
+from rts import features
+from rts.data import accessors, composition, contract, populations, reporting, splits
+from rts.data.contract import (
+    Capability,
+    CapabilityMissing,
+    Ordering,
+    TestUnit,
+    Unmeasured,
+)
 from tests.stub_dataset import DURATIONS, TEST_IDS, StubDataset
 
 # ``TestUnit`` starts with "Test", so pytest would otherwise try to collect the enum.
@@ -386,7 +393,7 @@ def test_pooled_ordering_is_observed_only_if_every_constituent_is():
 
 
 def test_bundle_dataset_is_a_dataset_over_another_dataset():
-    from rts.datasets import Bundle, BundleDataset
+    from rts.data.datasets import Bundle, BundleDataset
 
     base = StubDataset()
     bundles = [
@@ -406,7 +413,7 @@ def test_bundle_dataset_is_a_dataset_over_another_dataset():
 
 
 def test_bundle_dataset_narrows_capabilities():
-    from rts.datasets import Bundle, BundleDataset
+    from rts.data.datasets import Bundle, BundleDataset
 
     base = StubDataset()
     bundles = [Bundle(rung=0, signal=0, members=(0,))]
@@ -423,7 +430,7 @@ def test_bundle_dataset_narrows_capabilities():
 
 
 def test_bundle_dataset_rejects_an_unknown_pool():
-    from rts.datasets import Bundle, BundleDataset
+    from rts.data.datasets import Bundle, BundleDataset
 
     with pytest.raises(ValueError):
         BundleDataset(StubDataset(), [Bundle(0, 0, (0,))], rung=0, pool="nonsense")

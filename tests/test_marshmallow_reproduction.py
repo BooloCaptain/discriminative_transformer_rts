@@ -16,8 +16,9 @@ import json
 import numpy as np
 import pytest
 
-from rts import accessors, config, datasets, features, populations, reporting, splits
-from rts.contract import Capability, Ordering, TestUnit
+from rts import config, features
+from rts.data import accessors, datasets, populations, reporting, splits
+from rts.data.contract import Capability, Ordering, TestUnit
 
 pytestmark = pytest.mark.skipif(
     not config.SUT.exists() or not (config.MUTANTS_DIR / "mutmut-stats.json").exists(),

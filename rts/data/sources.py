@@ -17,8 +17,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import artifacts, config
-from .artifacts import Change, ChangeSet, Layout, MutmutArtifacts
+from .. import config
+from . import mutmut
+from .mutmut import Change, ChangeSet, Layout, MutmutArtifacts
 
 BUGSINPY_DIR = config.ARTIFACTS / "bugsinpy"
 BUGSINPY_SUMMARY = "summary.json"
@@ -66,7 +67,7 @@ class MutmutSource:
 
     def canonical_test_id(self, test: str) -> str:
         """Collapse unstable parametrization ids, but only when the pool was rebuilt."""
-        return artifacts.canonical_nodeid(test) if self.labels == "full" else test
+        return mutmut.canonical_nodeid(test) if self.labels == "full" else test
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"MutmutSource(labels={self.labels!r}, sut={str(self.sut)!r})"

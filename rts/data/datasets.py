@@ -22,7 +22,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from . import accessors, config, source
+from .. import config
+from . import accessors, test_source
 from .composition import pool
 from .contract import (
     Capability,
@@ -125,7 +126,7 @@ class MarshmallowDataset(Dataset):
         return self._pool
 
     def test_source(self, test: TestId) -> str | None:
-        return source.test_source(test, sut=self._source.sut)
+        return test_source.test_source(test, sut=self._source.sut)
 
     # --- optional primitives ---------------------------------------------
 
@@ -517,7 +518,7 @@ def bundles(
     The import is deferred because ``rts.bundles`` imports this module: the rung *definitions*
     are a study choice and live with the driver, while the bundled dataset is a dataset.
     """
-    from . import bundles as bundle_module
+    from .. import bundles as bundle_module
 
     picked = bundle_module.make_bundles(base, rung, seed)
     return BundleDataset(base, picked, rung=rung, pool=pool)

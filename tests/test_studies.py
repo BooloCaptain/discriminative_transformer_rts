@@ -16,7 +16,8 @@ import json
 
 import pytest
 
-from rts import config, models, populations, studies
+from rts import config, models, studies
+from rts.data import populations
 from rts.experiment import (
     ROLE_DATASET,
     ROLE_FEATURES,
@@ -294,8 +295,8 @@ def test_every_dataset_an_arm_uses_declares_its_test_unit_and_semantics():
     qualified -- so a dataset that answered neither would make its own results uninterpretable
     without the reader going to the source.
     """
-    from rts import datasets
-    from rts.contract import TestUnit
+    from rts.data import datasets
+    from rts.data.contract import TestUnit
 
     corpus = [datasets.marshmallow(), datasets.bugsinpy(datasets.available_bugsinpy_projects()[0])]
     for ds in corpus:

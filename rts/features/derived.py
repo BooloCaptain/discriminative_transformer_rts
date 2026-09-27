@@ -21,7 +21,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from ..contract import Dataset, TestId
+from ..data.contract import Dataset, TestId
 
 # --- change text -----------------------------------------------------------
 

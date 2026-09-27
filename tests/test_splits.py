@@ -12,8 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rts import evaluate, splits
-from rts.contract import Ordering
+from rts import evaluate
+from rts.data import splits
+from rts.data.contract import Ordering
 from tests.stub_dataset import StubDataset
 
 

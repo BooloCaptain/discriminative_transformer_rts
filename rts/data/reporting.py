@@ -21,7 +21,8 @@ import json
 
 import numpy as np
 
-from . import accessors, config
+from .. import config
+from . import accessors
 from .contract import Dataset, Policy, Warning, Warnings
 from .splits import Split, make_split
 

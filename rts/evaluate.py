@@ -33,7 +33,8 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from . import accessors, config, contract, populations, splits
+from . import config
+from .data import accessors, contract, populations, splits
 
 
 @dataclass

@@ -34,10 +34,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import (
-    accessors, config, contract, datasets, evaluate, features, models,
-    populations, semif, splits, studies,
-)
+from . import config, evaluate, features, models, semif, studies
+from .data import accessors, contract, datasets, populations, splits
 from .experiment import ROLE_MODEL, ROLE_POPULATION, run
 
 BUDGETS = studies.VARIATION_BUDGETS

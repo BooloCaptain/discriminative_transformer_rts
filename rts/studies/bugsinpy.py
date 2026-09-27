@@ -27,13 +27,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
-from typing import Sequence
-
-from .. import composition, config, datasets, models, populations
-from ..contract import Dataset
+from .. import config, models
+from ..data import composition, datasets, populations
+from ..data.contract import Dataset
 from ..experiment import (
     ROLE_DATASET,
     ROLE_MODEL,

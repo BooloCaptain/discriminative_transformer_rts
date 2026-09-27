@@ -15,8 +15,9 @@ import json
 
 import numpy as np
 
-from .. import config, features, models, populations
-from ..contract import Dataset, Unmeasured
+from .. import config, features, models
+from ..data import populations
+from ..data.contract import Dataset, Unmeasured
 from ..experiment import (
     ROLE_FEATURES,
     ROLE_MODEL,

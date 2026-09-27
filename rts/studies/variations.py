@@ -16,7 +16,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
-from .. import config, models, populations
+from .. import config, models
+from ..data import populations
 from ..experiment import (
     ROLE_MODEL,
     ROLE_POPULATION,

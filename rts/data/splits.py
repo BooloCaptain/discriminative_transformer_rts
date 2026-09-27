@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import config
+from .. import config
 from .contract import Dataset, Ordering, Policy, Warning
 
 

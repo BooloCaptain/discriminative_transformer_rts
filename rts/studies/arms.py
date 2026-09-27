@@ -17,7 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from .. import config, models
-from ..contract import Dataset
+from ..data.contract import Dataset
 from ..experiment import (
     ROLE_MODEL,
     Binding,

@@ -32,15 +32,9 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from .. import accessors
-from ..accessors import MATERIAL, requirements_for
-from ..contract import (
-    Dataset,
-    Requirement,
-    Unmeasured,
-    Warning,
-    Warnings,
-)
+from ..data import accessors
+from ..data.accessors import MATERIAL, requirements_for
+from ..data.contract import Dataset, Requirement, Unmeasured, Warning, Warnings
 
 
 @dataclass(frozen=True)
