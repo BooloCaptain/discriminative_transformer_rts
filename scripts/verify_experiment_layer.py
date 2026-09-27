@@ -22,6 +22,12 @@ Run it after any change to the layer or to an arm::
     python scripts/verify_experiment_layer.py ladder --labels full
 
 A non-zero exit status means the layer moved a number.
+
+This is the acceptance criterion, and it is slow: about 30 minutes here, almost all of it
+fitting XGBoost trees and reading SemIf caches. ``scripts/check_fast.py`` runs the cheap part
+of it in about 50 seconds -- the non-fitting selectors and the BugsInPy arm, compared against
+the same recorded artifacts through the same renderers -- and prints what it does not cover.
+Run that per commit and this before trusting a change to a model, a feature or a cache.
 """
 
 from __future__ import annotations

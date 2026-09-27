@@ -58,11 +58,16 @@ sut/              external checkouts (gitignored): marshmallow, SemIf, BugsInPy
 ## Reproducing
 
 The study's numbers are recorded in `artifacts/`, and the migrated arms are checked against them
-by regenerating and comparing **leaf by leaf**:
+by regenerating and comparing **leaf by leaf**. `check_fast.py` is the one to run per commit:
+about 50 s, and it compares the headline arm's non-fitting selectors and the BugsInPy arm
+against the recorded artifacts, through the real drivers. `verify_experiment_layer.py` is the
+full gate -- every arm, about 30 min, and the acceptance criterion.
 
 ```
-python scripts/verify_experiment_layer.py            # every migrated arm
-python scripts/verify_experiment_layer.py bugsinpy    # one arm
+python scripts/check_fast.py                          # ~50 s: static, unit, cheap numbers, real data
+python scripts/check_fast.py --quick                  # ~30 s: static and unit only
+python scripts/verify_experiment_layer.py            # every migrated arm (~30 min)
+python scripts/verify_experiment_layer.py bugsinpy    # one arm (~6 s)
 python -m pytest tests/ -q                            # the unit suite
 python -m ruff check rts/ tests/ scripts/ conftest.py  # the lint config (pip install ruff)
 ```

@@ -1,13 +1,15 @@
 # Scripts
 
-Two entry points live here; everything else is grouped by what it was for. Nothing in this
-directory is imported by `rts/` -- a script is a *caller* of the harness, never part of it.
+Two checkers and one queue live here; everything else is grouped by what it was for.
+Nothing in this directory is imported by `rts/` -- a script is a *caller* of the harness, never
+part of it.
 
 ## Entry points
 
 | script | what it does |
 |---|---|
-| `verify_experiment_layer.py` | **the gate.** Runs each migrated arm and compares the artifact it renders against the recorded one, leaf by leaf. Exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the documented addition list. |
+| `check_fast.py` | **run this one often.** Four tiers: ruff and every module imports; the test suite; the headline arm's *non-fitting* selectors rendered through the real driver and compared against `results_full.json` leaf by leaf; and the BugsInPy arm end to end. About 50 s in total, against the full gate's ~30 min. What it does **not** cover -- the fitted models, the sparse/covered arms, the ladder, the variation sections -- is printed at the end of every run. |
+| `verify_experiment_layer.py` | **the gate**, and the acceptance criterion: runs every migrated arm and compares the artifact it renders against the recorded one, leaf by leaf. Exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the documented addition list. About 30 min here, almost all of it fitting XGBoost trees and reading SemIf caches. |
 | `run_variation_arms.sh` | queues the SemIf arms. Only one 4B model fits in 17 GB, so they run sequentially rather than in parallel. |
 
 ## `probes/` -- reconnaissance, run once each

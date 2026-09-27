@@ -157,7 +157,11 @@ and this section for status.
 ### The gate every migration must pass
 
 A migration is accepted only when the driver's artifact is **regenerated and compared leaf by
-leaf** against the recorded one:
+leaf** against the recorded one. Two scripts do that, and the difference is cost:
+`scripts/check_fast.py` (~50 s, run per commit) does the cheap part -- the non-fitting
+selectors of the headline arm and the BugsInPy arm, through the same renderers, plus the test
+suite and the lint config -- and prints what it leaves out; this is the full gate, ~30 min,
+almost all of it fitting trees and reading caches.
 
     python scripts/verify_experiment_layer.py                  # study, ladder, variations
     python scripts/verify_experiment_layer.py ladder --labels full
