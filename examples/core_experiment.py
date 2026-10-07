@@ -17,6 +17,9 @@ Run it with the checkout present (it is gitignored):
     python -m examples.core_experiment          # CPU: baselines and trees
     python -m examples.core_experiment --gpu     # also run SemIf (needs a GPU)
 
+Every change is ranked against the **full** suite: the candidate policy is fixed, so no model is
+advantaged by a mask and the comparison is dataset-independent.
+
 For a sweep that needs no checkout at all, see ``examples/example.py``.
 """
 
@@ -35,6 +38,7 @@ from rts.experiment import (
     FACTOR_SPLIT,
     FACTOR_SUBSET,
     Contrast,
+    Controls,
     Experiment,
     Factor,
     budget_level,
@@ -79,6 +83,13 @@ def model_factor() -> Factor:
 
 
 def experiment() -> Experiment:
+    """The sweep. Every change is ranked against the full suite.
+
+    The candidate policy is fixed to ``full`` rather than parameterised: it is the honest,
+    dataset-independent choice, and a mask would have to be justified per dataset -- coverage is
+    lossless only where every killing test covers the mutated function, which is not a property
+    a dataset is guaranteed to have.
+    """
     return Experiment(
         name="core.marshmallow",
         datasets=Factor(FACTOR_DATASET, (constant("marshmallow", datasets.marshmallow()),)),
@@ -99,6 +110,7 @@ def experiment() -> Experiment:
             Contrast(FACTOR_MODEL, "random", 0.05),
             Contrast(FACTOR_MODEL, "bm25", 0.05),
         ),
+        controls=Controls(candidate_policy="full"),
         note="every baseline and model, on the mutation dataset",
     )
 
@@ -115,7 +127,9 @@ def main() -> None:
         )
 
     report = run(
-        experiment(), tiers=("cpu", "gpu") if args.gpu else ("cpu",), verbose=False
+        experiment(),
+        tiers=("cpu", "gpu") if args.gpu else ("cpu",),
+        verbose=False,
     )
     print(report.format_table())
     print(f"\nmeasured={len(report.design_points)}  undefined={len(report.undefined)}")
