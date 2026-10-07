@@ -3,7 +3,7 @@
 See ``docs/plan.md`` for the study design and ``docs/implementation.md`` for tooling details.
 
 Note on what is *not* here. The label source (``mutmut`` vs ``full``) used to be a
-module global, on the argument that every selector, feature and evaluation must
+module global, on the argument that every ranker, feature and evaluation must
 agree on it. The argument was right and the mechanism was wrong: agreement is now
 achieved by handing one :class:`rts.data.sources.MutmutSource` to every consumer of a
 run. A global could not be scoped to a test, could not be varied within a process,
@@ -43,8 +43,8 @@ LABEL_SOURCES = ("mutmut", "full")
 # --- Pinned choices -------------------------------------------------------
 
 # Fixed seed for the synthetic change ordering and for every stochastic model.
-# The mutant population has no intrinsic temporal order, so history is imposed
-# rather than observed. See docs/implementation.md.
+# The mutants have no intrinsic temporal order, so history is synthetic
+# rather than natural. See docs/implementation.md.
 SEED = 20260924
 
 # mutmut exit codes that mean "a test failed", i.e. the mutant was killed.

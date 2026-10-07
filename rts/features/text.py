@@ -155,9 +155,9 @@ def build_bm25_scores(
 def bm25_over(pairs: Sequence[tuple[str, str]], query: str) -> np.ndarray:
     """BM25 of one query against an explicit document list.
 
-    Used by the BugsInPy arm, which fits the scorer per bug on that bug's own pool: a
+    Used by the BugsInPy condition, which fits the scorer per bug on that bug's own pool: a
     global index over eight projects would make a term's idf depend on the other seven,
-    which is a different quantity from the one the marshmallow arm reports.
+    which is a different quantity from the one the marshmallow condition reports.
     """
     return BM25Scorer().fit(list(pairs)).score(query)
 

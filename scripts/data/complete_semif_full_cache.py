@@ -1,6 +1,6 @@
 """Complete the full-pool SemIf cache for the 1189-test pool.
 
-The existing caches (`semif_scores_starved5_full.jsonl` and `_extra_full`) cover 141 changes x
+The existing caches (`semif_scores_cold_start5_full.jsonl` and `_extra_full`) cover 141 changes x
 1187 tests, because they were scored before node-id canonicalisation and before the three
 mutmut-deselected tests were added to the pool. Under ``RTS_LABELS=full`` the pool is 1189, so
 those three tests -- which happen to be the main out-of-coverage killers -- have no score.
@@ -28,8 +28,8 @@ from rts import config, features
 from rts.data import accessors, datasets, mutmut
 
 SOURCES = [
-    config.ARTIFACTS / "semif_scores_starved5_full.jsonl",
-    config.ARTIFACTS / "semif_scores_starved5_extra_full.jsonl",
+    config.ARTIFACTS / "semif_scores_cold_start5_full.jsonl",
+    config.ARTIFACTS / "semif_scores_cold_start5_extra_full.jsonl",
 ]
 OUT = config.ARTIFACTS / "semif_scores_ladder141_full.jsonl"
 

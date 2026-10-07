@@ -1,5 +1,5 @@
 {
-  "candidate_mode": "full",
+  "candidate_policy": "full",
   "budgets": [
     0.01,
     0.02,
@@ -10,36 +10,36 @@
   ],
   "seed": 20260924,
   "labels": "mutmut",
-  "population": "fault_bearing",
+  "subset": "detectable",
   "dataset": {
     "changes": 2651,
     "tests": 1187,
     "killed": 2311,
     "survived": 340,
-    "fault_bearing_changes": 2311,
+    "detectable_changes": 2311,
     "train_changes": 2121,
     "test_changes": 530,
     "held_out_faults": 464,
     "killing_tests_per_fault_median": 1.0,
     "killing_tests_per_fault_max": 1,
-    "mean_covered_tests_per_change": 154.72161448509996,
+    "mean_coverage_set_size": 154.72161448509996,
     "changes_with_empty_coverage": 0,
-    "sparse_changes": 2
+    "low_cooccurrence_changes": 2
   },
-  "dataset_declaration": {
+  "dataset_metadata": {
     "name": "marshmallow",
-    "ordering": "imposed",
-    "test_unit": "function",
+    "ordering": "synthetic",
+    "test_granularity": "function",
     "capabilities": [
       "coverage",
       "durations"
     ],
-    "semantics": {
+    "annotations": {
       "change": "one mutant; the diff is reconstructed by diffing generated source",
-      "ordering": "imposed: mutant population has no intrinsic temporal order; canonical order is a permutation at seed 20260924",
+      "ordering": "synthetic: the mutants have no intrinsic temporal order; canonical order is a permutation at seed 20260924",
       "killing_tests": "tests that failed; under the mutmut label source these are the tests mutmut selected, so the label is defined by coverage",
-      "ran_tests": "tests mutmut actually executed; the complement of killing_tests inside this set passed, and everything outside it never ran",
-      "test_unit": "one test function; pytest parametrization is collapsed to the base id",
+      "executed_tests": "tests mutmut actually executed; the complement of killing_tests inside this set passed, and everything outside it never ran",
+      "test_granularity": "one test function; pytest parametrization is collapsed to the base id",
       "survivors": "retained as negative training signal, excluded from the recall denominator",
       "coverage": "mutmut's function-level test association",
       "durations": "wall-clock from the mutmut stats file; hardware-dependent, so available but not comparable with a duration measured elsewhere"
@@ -48,21 +48,21 @@
   "split": {
     "fraction": 0.8,
     "shuffle": false,
-    "effective_ordering": "imposed"
+    "effective_order": "synthetic"
   },
-  "warnings": [
+  "diagnostics": [
     {
-      "code": "feature.history_on_imposed_order",
-      "requirement": "ordering.observed",
-      "note": "history features are enabled on an imposed order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
-      "scope": "features:history"
+      "code": "feature.temporal_on_synthetic_order",
+      "requirement": "ordering.natural",
+      "note": "temporal features are enabled on a synthetic order (order_seed=20260924); the values are only interpretable under that seed and should be reported as a spread over seeds, not as one number",
+      "scope": "features:temporal"
     }
   ],
   "audit": [
     {
-      "code": "split.contiguous_prefix_on_imposed_order",
-      "requirement": "ordering.observed",
-      "note": "a contiguous prefix on an imposed order is a well-defined partition but carries no temporal reading",
+      "code": "split.contiguous_prefix_on_synthetic_order",
+      "requirement": "ordering.natural",
+      "note": "a contiguous prefix on a synthetic order is a well-defined partition but carries no temporal reading",
       "scope": "split"
     }
   ],
@@ -1090,7 +1090,7 @@
       }
     ]
   },
-  "sparse_arm": {
+  "low_cooccurrence_condition": {
     "random@80": [
       {
         "budget": 0.05,

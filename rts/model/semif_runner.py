@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import config, features
-from ..data import accessors, contract, datasets, populations, splits
+from ..data import accessors, contract, datasets, splits, subsets
 from . import semif
 
 INSTRUCTION = (
@@ -80,26 +80,26 @@ INSTRUCTION_VARIANTS: dict[str, str] = {
     "terse": "Does this test depend on the behaviour that this change modifies?",
 }
 
-# Structured features that never vary across a change's candidates under the
+# Structured features that never vary across a change's candidate sets under the
 # `covered` mask, and so cannot help rank within that change. Verified empirically:
-# path_distance is included because every test lives in the same directory tree, so
+# path proximity is included because every test lives in the same directory tree, so
 # it is constant per change rather than merely low-variance.
 PER_CHANGE_CONSTANT = frozenset(
     {
-        "covers_function",
-        "n_covering_tests",
-        "coverage_rank_prior",
-        "path_distance",
-        "change_size",
-        "change_added_lines",
-        "change_removed_lines",
+        "function_coverage",
+        "coverage_set_size",
+        "coverage_set_size_prior",
+        "path_proximity",
+        "code_churn",
+        "added_lines",
+        "removed_lines",
     }
 )
 
-# Diagnostic arms for the mirror-degradation question. Each holds everything else
+# Diagnostic conditions for the mirror-degradation question. Each holds everything else
 # fixed and varies one property of the injected block:
 #   full          -- all 15 features (the original mirror treatment)
-#   informative   -- only features that actually vary across candidates
+#   informative   -- only features that actually vary across candidate sets
 #   placebo       -- same field names and length, every value replaced by a constant
 #   shuffled      -- real values and distribution, decorrelated from the candidate
 #   after_document -- full features, but placed after <Document> instead of <Instruct>
@@ -132,7 +132,7 @@ def build_prompt(
 
     ``instruction`` overrides the question text (see ``INSTRUCTION_VARIANTS``).
 
-    ``features_block`` carries the structured features for the fairness arm.
+    ``features_block`` carries the structured features for the fairness condition.
     ``placement`` controls where it goes: inside ``<Instruct>`` (before the
     Query/Document, which also pushes the content further from the final position
     the reranker reads) or appended after ``<Document>``. The placement switch
@@ -193,7 +193,7 @@ def format_features(
     ``mode`` produces the diagnostic variants:
 
     * ``full`` -- every feature, as XGBoost sees them (the mirror treatment).
-    * ``informative`` -- only features that vary across a change's candidates, so
+    * ``informative`` -- only features that vary across a change's candidate sets, so
       the block stops carrying per-change constants that cannot discriminate.
     * ``placebo`` -- identical field names and length, every value replaced by a
       constant. Same distraction, zero information: this isolates a length/format
@@ -220,11 +220,11 @@ def format_features(
     else:
         selected = list(range(len(names)))
 
-    boolean = {"covers_function", "filename_stem_match"}
+    boolean = {"function_coverage", "filename_match"}
     integer = {
-        "n_covering_tests", "n_tests_in_test_file", "test_n_lines", "test_n_tokens",
-        "change_size", "change_added_lines", "change_removed_lines", "test_runs_cum",
-        "path_distance",
+        "coverage_set_size", "tests_per_file", "test_lines", "test_tokens",
+        "code_churn", "added_lines", "removed_lines", "cumulative_runs",
+        "path_proximity",
     }
     for k in selected:
         name = names[k]
@@ -232,7 +232,7 @@ def format_features(
             lines.append(f"- {name}: n/a")
             continue
         value = float(matrix.X[row, source, k])
-        if name == "test_last_failure_age":
+        if name == "failure_recency":
             lines.append(
                 f"- {name}: never failed in prior changes"
                 if value >= ds.n_changes
@@ -244,7 +244,7 @@ def format_features(
             lines.append(f"- {name}: {int(round(value))}")
         else:
             lines.append(f"- {name}: {value:.4f}")
-    return "Precomputed candidate metadata (from the test suite):\n" + "\n".join(lines)
+    return "Precomputed candidate metadata (from the test_suite):\n" + "\n".join(lines)
 
 
 def score_batch(model, tokenizer, prompts: list[str], max_tokens: int) -> tuple[list[float], dict]:
@@ -410,7 +410,7 @@ class PairSet:
 def build_pair_set(
     ds: contract.Dataset,
     rows: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     shuffle: bool = False,
     seed: int = config.SEED,
     include_features: bool = False,
@@ -435,16 +435,16 @@ def build_pair_set(
     matrix = None
     want_blocks = feature_mode is not None
     if want_blocks:
-        # The mirror/informative arms exist to compare a model's input against the
+        # The mirror/informative conditions exist to compare a model's input against the
         # classical model's, so they ask for the same feature block explicitly.
-        matrix = features.structured(ds, history=True)
+        matrix = features.structured(ds, temporal=True)
 
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, int]] = []
     blocks: list[str] | None = [] if want_blocks else None
     for r in rows:
         r = int(r)
-        cols = [int(j) for j in np.flatnonzero(candidates[r])]
+        cols = [int(j) for j in np.flatnonzero(candidate_sets[r])]
         if feature_mode == "shuffled":
             # Values come from a different candidate in the same change, so the
             # block keeps its format and value distribution but loses any
@@ -498,7 +498,7 @@ def _missing_pairs(pair_set: PairSet, path: Path) -> set[tuple[int, int]]:
 def missing_pairs(
     ds: contract.Dataset,
     rows: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     path: Path,
     *,
     shuffle: bool = False,
@@ -524,7 +524,7 @@ def missing_pairs(
     pair_set = build_pair_set(
         ds,
         rows,
-        candidates,
+        candidate_sets,
         shuffle=shuffle,
         seed=seed,
         feature_mode=feature_mode,
@@ -607,7 +607,7 @@ def score_to_cache(
 def score_context(
     ds: contract.Dataset,
     rows: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     out_path: Path,
     *,
     batch_size: int = 8,
@@ -622,13 +622,13 @@ def score_context(
     model=None,
     tokenizer=None,
 ) -> tuple[np.ndarray, dict]:
-    """Score ``rows`` against their candidates: write the cache, return the matrix.
+    """Score ``rows`` against their candidate sets: write the cache, return the matrix.
 
-    The context-driven entry point, and the reason score *production* can be a cell rather
+    The context-driven entry point, and the reason score *production* can be a design point rather
     than a driver's invisible precondition. Everything the pair set needs comes from the
     dataset, the rows and the candidate mask, so a
-    :class:`~rts.model.selectors.ProducedScores` selector calls this from ``scores(ctx)`` and the
-    layer sees the study's most expensive step with a tier, a cost and a cell key.
+    :class:`~rts.model.rankers.ProducedScores` ranker calls this from ``scores(ctx)`` and the
+    layer sees the study's most expensive step with a tier, a cost and a design point key.
 
     ``model``/``tokenizer`` may be injected -- a test supplies a fake, so the produce path
     needs no GPU -- and are loaded from the pinned checkpoint otherwise.
@@ -642,7 +642,7 @@ def score_context(
         model, tokenizer, _metadata = load_model()
 
     pair_set = build_pair_set(
-        ds, rows, candidates,
+        ds, rows, candidate_sets,
         shuffle=shuffle, seed=seed,
         feature_mode=feature_mode, placement=placement, instruction=instruction,
     )
@@ -678,18 +678,18 @@ def pilot(
 ) -> dict:
     """Score N held-out fault changes on their covered candidate sets.
 
-    Produces recall numbers directly comparable to the other selectors, plus real
+    Produces recall numbers directly comparable to the other rankers, plus real
     throughput so the full-run cost can be extrapolated instead of guessed.
     """
     from .. import evaluate
 
     ds = datasets.marshmallow(order_seed=seed)
     split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "covered")
+    candidate_sets = accessors.candidate_sets(ds, "coverage_restricted")
     fault_held = [int(i) for i in accessors.test_fault_idx(ds, split.test_idx)]
     rows = np.array(fault_held[:n_changes], dtype=np.int64)
 
-    pair_set = build_pair_set(ds, rows, candidates)
+    pair_set = build_pair_set(ds, rows, candidate_sets)
     print(f"changes         : {len(rows)}")
     print(f"pairs           : {len(pair_set.pairs)}")
 
@@ -708,11 +708,11 @@ def pilot(
 
     results = evaluate.evaluate(
         matrix, ds, rows, budgets=(0.01, 0.05, 0.1, 0.2),
-        n_bootstrap=1000, seed=seed, candidates=candidates,
+        n_bootstrap=1000, seed=seed, candidate_sets=candidate_sets,
     )
     print(evaluate.format_table(f"semif_reranker ({orientation}, pilot n={len(rows)})", results))
 
-    full_pairs = int(candidates[split.test_idx].sum())
+    full_pairs = int(candidate_sets[split.test_idx].sum())
     print(f"\nfull held-out cost at this throughput: {full_pairs:,} pairs "
           f"-> {full_pairs / stats['pairs_per_second'] / 3600:.1f} h")
     return {"stats": stats, "results": evaluate.results_to_dicts(results)}
@@ -739,7 +739,7 @@ def smoke_test(n_changes: int = 10, n_distractors: int = 9, batch_size: int = 8,
     for n, i in enumerate(picked, 1):
         killing = sorted(ds.killing_tests(ds.changes[i]))[0]
         kill_col = ds.test_index[killing]
-        pool = [c for c in accessors.covered(ds)[i] if c != killing]
+        pool = [c for c in accessors.coverage_sets(ds)[i] if c != killing]
         distractors = rng.choice(pool, size=min(n_distractors, len(pool)), replace=False)
         cols = [kill_col] + [ds.test_index[ds.test_ids[c]] if isinstance(c, (int, np.integer)) else ds.test_index[c] for c in distractors]
         cols = [int(c) for c in cols]
@@ -769,32 +769,32 @@ def score_heldout(
     include_features: bool = False,
     out_path: Path | None = None,
     seed: int = config.SEED,
-    candidates_mode: str = "covered",
-    starved_max_failures: int | None = None,
+    candidate_policy: str = "coverage_restricted",
+    cold_start_max_failures: int | None = None,
     instruction: str | None = None,
     feature_mode: str | None = None,
     placement: str = "instruct",
     train_prefix: int | None = None,
     exclude_scored: Path | None = None,
 ) -> dict:
-    """Score every held-out change (or a starved subset) against its candidates.
+    """Score every held-out change (or a cold start subset) against its candidate sets.
 
     SemIf is zero-shot, so the training window is never needed: scoring only the
     held-out changes keeps all 464 faults and costs a fifth of the full grid.
     Writes the cache in the format ``rts.model.semif.load_scores`` consumes.
 
-    ``include_features`` selects the fairness arm: with it, the prompt carries the
+    ``include_features`` selects the fairness condition: with it, the prompt carries the
     same 15 structured features XGBoost receives. Without it the prompt is
     text-only, which is the control.
 
     Three extensions added for the variation experiments:
 
-    * ``candidates_mode="full"`` scores the whole 1187-test suite. This is the
-      outstanding "full-suite starved arm": with ``covered`` candidates the
+    * ``candidate_policy="full"`` scores the whole 1187-test suite. This is the
+      outstanding "full-suite cold start condition": with ``covered`` candidate sets the
       ``coverage`` baseline is degenerate (every candidate already covers the
       mutated function), so this is what makes the one positive result comparable
       to how RTS is actually deployed.
-    * ``starved_max_failures`` restricts rows to the starved population, so the
+    * ``cold_start_max_failures`` restricts rows to the cold start subset, so the
       full suite only has to be scored for those changes.
     * ``instruction`` swaps the question text (see ``INSTRUCTION_VARIANTS``); the
       prompt skeleton is otherwise identical.
@@ -802,28 +802,28 @@ def score_heldout(
       the held-out window. The P5 "SemIf as an XGBoost column" variant needs the
       feature on training rows, and the cache only covers held-out changes. Scoring
       the whole training window is 329k pairs (~3 h); a temporally adjacent prefix
-      of 400 changes is ~62k pairs and is enough to fit the column comparison, with
+      of 400 changes is ~62k pairs and is enough to fit the column contrast, with
       the baseline trained on exactly the same rows.
     """
     ds = datasets.marshmallow(order_seed=seed)
     split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, candidates_mode)
+    candidate_sets = accessors.candidate_sets(ds, candidate_policy)
     rows = split.test_idx
-    if starved_max_failures is not None:
-        mask = populations.starved_mask(ds, max_failures=starved_max_failures)
+    if cold_start_max_failures is not None:
+        mask = subsets.cold_start_mask(ds, max_failures=cold_start_max_failures)
         rows = split.test_idx[mask[split.test_idx]]
     if train_prefix is not None:
         rows = split.train_idx[-train_prefix:]
     if exclude_scored is not None:
-        # Score only the changes a previous arm has not already covered. Used to
-        # build a superset arm incrementally: `failures <= 2` is a subset of
-        # `failures <= 5`, so the 141-change arm only needs the 98 new changes.
+        # Score only the changes a previous condition has not already covered. Used to
+        # build a superset condition incrementally: `failures <= 2` is a subset of
+        # `failures <= 5`, so the 141-change condition only needs the 98 new changes.
         done = load_done_keys(exclude_scored)
         before = len(rows)
         rows = np.array(
             [
                 int(r) for r in rows
-                if not all((int(r), int(j)) in done for j in np.flatnonzero(candidates[r]))
+                if not all((int(r), int(j)) in done for j in np.flatnonzero(candidate_sets[r]))
             ],
             dtype=np.int64,
         )
@@ -832,7 +832,7 @@ def score_heldout(
     if feature_mode is None and include_features:
         feature_mode = "full"
     pair_set = build_pair_set(
-        ds, rows, candidates, shuffle=shuffle, seed=seed,
+        ds, rows, candidate_sets, shuffle=shuffle, seed=seed,
         feature_mode=feature_mode, placement=placement, instruction=instruction,
     )
 
@@ -849,8 +849,8 @@ def score_heldout(
     print(f"feature mode    : {feature_mode}")
     print(f"placement       : {placement}")
     print(f"instruction     : {'default' if instruction is None else 'override'}")
-    print(f"candidates      : {candidates_mode}")
-    print(f"starved <=      : {starved_max_failures}")
+    print(f"candidate_sets      : {candidate_policy}")
+    print(f"cold_start <=      : {cold_start_max_failures}")
     print(f"train prefix    : {train_prefix}")
     print(f"changes         : {len(rows)}")
     print(f"pairs           : {len(pair_set.pairs):,}")
@@ -871,25 +871,25 @@ def run_controls(
     max_tokens: int | None = None,
     seed: int = config.SEED,
 ) -> dict:
-    """Run the mirror-degradation diagnostics on the starved subset.
+    """Run the mirror-degradation diagnostics on the cold start subset.
 
     Depends on the existing text-only and full-mirror caches for the reference
-    arms; scores the remaining arms sequentially in one process so the model is
+    conditions; scores the remaining conditions sequentially in one process so the model is
     loaded once.
     """
     ds = datasets.marshmallow(order_seed=seed)
     split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "covered")
-    mask = populations.starved_mask(ds, max_failures=max_failures)
+    candidate_sets = accessors.candidate_sets(ds, "coverage_restricted")
+    mask = subsets.cold_start_mask(ds, max_failures=max_failures)
     rows = split.test_idx[mask[split.test_idx]]
     n_faults = int(sum(1 for i in rows if accessors.fault_mask(ds)[i]))
 
-    print(f"subset          : starved failures<={max_failures}")
+    print(f"subset          : cold_start failures<={max_failures}")
     print(f"changes         : {len(rows)}")
     print(f"faults          : {n_faults}")
 
     # (label, feature_mode, placement, output filename)
-    arms = [
+    conditions = [
         ("informative", "informative", "instruct", "semif_scores_ctl_informative.jsonl"),
         ("placebo", "placebo", "instruct", "semif_scores_ctl_placebo.jsonl"),
         ("shuffled", "shuffled", "instruct", "semif_scores_ctl_shuffled.jsonl"),
@@ -900,11 +900,11 @@ def run_controls(
     print(f"loaded          : {metadata['device']} {metadata['dtype']}", flush=True)
 
     stats: dict[str, dict] = {}
-    for label, mode, placement, filename in arms:
+    for label, mode, placement, filename in conditions:
         out_path = config.ARTIFACTS / filename
-        print(f"\n=== arm: {label} (mode={mode}, placement={placement}) ===", flush=True)
+        print(f"\n=== condition: {label} (mode={mode}, placement={placement}) ===", flush=True)
         pair_set = build_pair_set(
-            ds, rows, candidates,
+            ds, rows, candidate_sets,
             feature_mode=mode, placement=placement, seed=seed,
         )
         print(f"pairs: {len(pair_set.pairs):,}", flush=True)
@@ -925,22 +925,22 @@ if __name__ == "__main__":
     parser.add_argument("--pilot", type=int, default=0, help="score N held-out changes")
     parser.add_argument("--heldout", action="store_true", help="score all held-out changes")
     parser.add_argument("--controls", action="store_true",
-                        help="run the mirror-degradation diagnostics on the starved subset")
+                        help="run the mirror-degradation diagnostics on the cold_start subset")
     parser.add_argument("--shuffle", action="store_true", help="change-shuffle ablation")
     parser.add_argument("--mirror", action="store_true",
-                        help="include the structured features in the prompt (fairness arm)")
+                        help="include the structured features in the prompt (fairness condition)")
     parser.add_argument("--max-failures", type=int, default=5,
-                        help="starved subset threshold for --controls")
+                        help="cold_start subset threshold for --controls")
     parser.add_argument("--changes", type=int, default=10)
     parser.add_argument("--distractors", type=int, default=9)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--orientation", default="change_query",
                         choices=["change_query", "test_query"])
     parser.add_argument("--max-tokens", type=int, default=None)
-    parser.add_argument("--candidates", default="covered", choices=["covered", "full"],
-                        help="candidate set to score; 'full' is the whole 1187-test suite")
-    parser.add_argument("--starved", type=int, default=None,
-                        help="restrict to the starved population with this failure cap")
+    parser.add_argument("--candidate-policy", default="coverage_restricted", choices=["coverage_restricted", "full"],
+                        help="candidate set to score; 'full' is the whole 1187-test_suite")
+    parser.add_argument("--cold_start", type=int, default=None,
+                        help="restrict to the cold_start subset with this failure cap")
     parser.add_argument("--train-prefix", type=int, default=None,
                         help="score the last N training-window changes (for the P5 column)")
     parser.add_argument("--instruction", default="default",
@@ -969,8 +969,8 @@ if __name__ == "__main__":
             shuffle=args.shuffle,
             include_features=args.mirror,
             out_path=args.out,
-            candidates_mode=args.candidates,
-            starved_max_failures=args.starved,
+            candidate_policy=args.candidate_policy,
+            cold_start_max_failures=args.cold_start,
             instruction=instruction,
             train_prefix=args.train_prefix,
             exclude_scored=args.exclude_scored,

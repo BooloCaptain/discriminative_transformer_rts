@@ -23,11 +23,11 @@ import numpy as np
 
 from .. import config
 from . import accessors
-from .contract import Dataset, Policy, Warning, Warnings
+from .contract import Dataset, Diagnostic, Diagnostics, Policy
 from .splits import Split, make_split
 
 
-def audit(ds: Dataset, split: Split | None = None) -> tuple[Warning, ...]:
+def audit(ds: Dataset, split: Split | None = None) -> tuple[Diagnostic, ...]:
     """What a consumer should know about ``ds`` before trusting a number from it.
 
     Deliberately silent about absent capabilities: a feature block already reports each
@@ -35,7 +35,7 @@ def audit(ds: Dataset, split: Split | None = None) -> tuple[Warning, ...]:
     reports the capability set. A third voice saying the same thing is noise rather than
     propagation.
     """
-    collected = Warnings()
+    collected = Diagnostics()
 
     multi = accessors.multi_file_changes(ds)
     if multi:
@@ -48,17 +48,17 @@ def audit(ds: Dataset, split: Split | None = None) -> tuple[Warning, ...]:
         )
 
     # Divergences the dataset declares about itself: a pool whose constituents disagree
-    # on what a test is, a bundle whose diff_text is a concatenation. Declared at the
+    # on what a test is, a bundle whose diff text is a concatenation. Declared at the
     # dataset rather than inferred here from its type.
     collected.extend(ds.integrity_notes())
 
     if split is not None:
-        collected.extend(split.warnings)
-        if split.shuffle and ds.ordering().value == "observed":
+        collected.extend(split.diagnostics)
+        if split.shuffle and ds.ordering().value == "natural":
             collected.add(
-                "dataset.history_off_for_shuffled_run",
+                "dataset.temporal_off_for_shuffled_run",
                 Policy.EFFECTIVE_ORDER.value,
-                "the split shuffled an observed dataset, so history features are off for "
+                "the split shuffled a natural-order dataset, so temporal_features are off for "
                 "this run even though the dataset's own order is real",
                 scope="reporting:split",
             )
@@ -84,7 +84,7 @@ def describe(ds: Dataset, split: Split) -> dict:
     out.update(ds.source_counts())
     out.update(
         {
-            "fault_bearing_changes": int(len(faults)),
+            "detectable_changes": int(len(faults)),
             "train_changes": int(len(split.train_idx)),
             "test_changes": int(len(split.test_idx)),
             "held_out_faults": int(len(accessors.test_fault_idx(ds, split.test_idx))),
@@ -93,29 +93,29 @@ def describe(ds: Dataset, split: Split) -> dict:
         }
     )
     if ds.has_capability("coverage"):
-        covered_by = accessors.covered(ds)
-        out["mean_covered_tests_per_change"] = float(
-            np.mean([len(c) for c in covered_by])
+        coverage_by = accessors.coverage_sets(ds)
+        out["mean_coverage_set_size"] = float(
+            np.mean([len(c) for c in coverage_by])
         )
-        out["changes_with_empty_coverage"] = int(sum(not c for c in covered_by))
-        from .populations import sparse_mask
+        out["changes_with_empty_coverage"] = int(sum(not c for c in coverage_by))
+        from .subsets import low_cooccurrence_mask
 
-        out["sparse_changes"] = int(sparse_mask(ds).sum())
+        out["low_cooccurrence_changes"] = int(low_cooccurrence_mask(ds).sum())
     return out
 
 
 def recurrence(ds: Dataset) -> dict:
-    """How often ``(file, test)`` pairs recur, which is what makes history features flattered.
+    """How often ``(file, test)`` pairs recur, which is what makes temporal features flattered.
 
     A statistic about the *data* rather than about a sweep, which is why it lives here and not
-    in the experiment layer: it needs no scores, no split and no selector. It is recorded
-    beside every history-bearing result because a pair that recurs a median of 159 times means
+    in the experiment layer: it needs no scores, no split and no ranker. It is recorded
+    beside every temporal result because a pair that recurs a median of 159 times means
     the cumulative features were measured against a sequence that revisits a pair far more often
     than real evolution would.
     """
-    counts = accessors.pair_counts(ds)
+    counts = accessors.pair_cooccurrence_counts(ds)
     faults = accessors.fault_idx(ds)
-    covered_by = accessors.covered(ds)
+    coverage_by = accessors.coverage_sets(ds)
     paths = accessors.change_paths(ds)
     fault_pairs = np.array(
         [
@@ -125,7 +125,7 @@ def recurrence(ds: Dataset) -> dict:
     )
     maxpc = np.array(
         [
-            max((counts[(paths[i], t)] for t in covered_by[i]), default=0)
+            max((counts[(paths[i], t)] for t in coverage_by[i]), default=0)
             for i in range(ds.n_changes)
         ]
     )
@@ -138,7 +138,7 @@ def recurrence(ds: Dataset) -> dict:
     }
 
 
-def describe_starved(ds: Dataset, split: Split, mask: np.ndarray) -> dict:
+def describe_cold_start(ds: Dataset, split: Split, mask: np.ndarray) -> dict:
     """Distribution shape of a filtered subset, to show it is narrow and low."""
     run_counts, fail_counts = accessors.pair_history_counts(ds)
     paths = accessors.change_paths(ds)
@@ -149,7 +149,7 @@ def describe_starved(ds: Dataset, split: Split, mask: np.ndarray) -> dict:
         if tests:
             keys.append((paths[i], tests[0]))
     failures = np.array([fail_counts.get(k, 0) for k in keys], dtype=np.float64)
-    runs = np.array([run_counts.get(k, 0) for k in keys], dtype=np.float64)
+    run_totals = np.array([run_counts.get(k, 0) for k in keys], dtype=np.float64)
     held = set(split.test_idx.tolist())
     return {
         "changes": int(mask.sum()),
@@ -160,8 +160,8 @@ def describe_starved(ds: Dataset, split: Split, mask: np.ndarray) -> dict:
         "failure_count_mean": float(failures.mean()) if failures.size else float("nan"),
         "failure_count_sd": float(failures.std()) if failures.size else float("nan"),
         "failure_count_max": int(failures.max()) if failures.size else 0,
-        "run_count_mean": float(runs.mean()) if runs.size else float("nan"),
-        "run_count_max": int(runs.max()) if runs.size else 0,
+        "run_count_mean": float(run_totals.mean()) if run_totals.size else float("nan"),
+        "run_count_max": int(run_totals.max()) if run_totals.size else 0,
     }
 
 
@@ -169,21 +169,21 @@ def save(ds: Dataset, split: Split, out_dir=None) -> None:
     """Persist the dataset and the split that was used with it, side by side."""
     out = config.ensure_artifacts_dir() if out_dir is None else out_dir
     payload = {
-        **ds.declaration(),
+        **ds.metadata(),
         "audit": [w.to_dict() for w in audit(ds, split)],
         "split": {
             "fraction": split.fraction,
             "shuffle": split.shuffle,
             "seed": split.seed,
-            "effective_ordering": split.effective_ordering.value,
+            "effective_order": split.effective_order.value,
         },
         "test_ids": ds.test_ids,
         "change_ids": [ds.change_id(c) for c in ds.changes],
         "files": [list(ds.files(c)) for c in ds.changes],
         "killing_tests": [sorted(ds.killing_tests(c)) for c in ds.changes],
-        "ran_tests": [sorted(ds.ran_tests(c)) for c in ds.changes],
-        "covered": (
-            [sorted(t) for t in accessors.covered(ds)]
+        "executed_tests": [sorted(ds.executed_tests(c)) for c in ds.changes],
+        "coverage_restricted": (
+            [sorted(t) for t in accessors.coverage_sets(ds)]
             if ds.has_capability("coverage")
             else None
         ),
@@ -191,7 +191,7 @@ def save(ds: Dataset, split: Split, out_dir=None) -> None:
     np.savez_compressed(
         out / "dataset.npz",
         labels=accessors.labels(ds),
-        runs=accessors.runs(ds),
+        execution=accessors.execution_matrix(ds),
         train_idx=split.train_idx,
         test_idx=split.test_idx,
     )
@@ -204,4 +204,4 @@ def split_for(ds: Dataset, **kwargs) -> Split:
     return make_split(ds, **kwargs)
 
 
-__all__ = ["audit", "describe", "describe_starved", "recurrence", "save", "split_for"]
+__all__ = ["audit", "describe", "describe_cold_start", "recurrence", "save", "split_for"]

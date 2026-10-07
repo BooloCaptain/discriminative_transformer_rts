@@ -1,4 +1,4 @@
-"""The structured block: the 15 columns the classical selectors read.
+"""The structured block: the 15 columns the classical rankers read.
 
 The declaration is the whole point of this module. Adding a column means adding it to a
 group here -- one file, one line -- rather than editing an assembly function that also
@@ -21,52 +21,52 @@ from typing import Any
 
 import numpy as np
 
-from ..data.contract import Dataset, Ordering, Policy, Warnings
+from ..data.contract import Dataset, Diagnostics, Ordering, Policy
 from . import derived
 from .block import FeatureBlock, FeatureColumn, FeatureGroup, FeatureMatrix
 
 #: Families the traceability ladder ablates as a group.
-FAMILIES = ("coverage", "traceability", "history")
+FAMILIES = ("coverage", "proximity", "temporal")
 
 
-def _test_index(material: Mapping[str, Any]) -> dict[str, int]:
-    return {t: i for i, t in enumerate(material["test_ids"])}
+def _test_index(inputs: Mapping[str, Any]) -> dict[str, int]:
+    return {t: i for i, t in enumerate(inputs["test_ids"])}
 
 
-def _coverage_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
+def _coverage_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
     return derived.coverage_columns(
-        material["coverage"],
-        _test_index(material),
-        len(material["changes"]),
-        len(material["test_ids"]),
+        inputs["coverage"],
+        _test_index(inputs),
+        len(inputs["changes"]),
+        len(inputs["test_ids"]),
     )
 
 
-def _proximity_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
-    paths, test_ids = material["paths"], material["test_ids"]
+def _proximity_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
+    paths, test_ids = inputs["paths"], inputs["test_ids"]
     return (
-        derived.path_distance(paths, test_ids),
-        derived.n_tests_in_test_file(test_ids),
-        derived.filename_stem_match(paths, test_ids),
+        derived.path_proximity(paths, test_ids),
+        derived.tests_per_file(test_ids),
+        derived.filename_match(paths, test_ids),
     )
 
 
-def _duration_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
-    return (derived.durations_column(material["durations"], material["test_ids"]),)
+def _duration_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
+    return (derived.durations_column(inputs["durations"], inputs["test_ids"]),)
 
 
-def _test_size_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
-    test_ids = material["test_ids"]
-    sources = {t: material["test_source"](t) for t in test_ids}
+def _test_size_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
+    test_ids = inputs["test_ids"]
+    sources = {t: inputs["test_source"](t) for t in test_ids}
     return (
         derived.test_n_lines_row(test_ids, sources),
         derived.test_n_tokens_row(test_ids, sources),
     )
 
 
-def _change_size_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
-    diffs = [material["diff"](c) for c in material["changes"]]
-    n_c, n_t = len(diffs), len(material["test_ids"])
+def _change_size_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
+    diffs = [inputs["diff"](c) for c in inputs["changes"]]
+    n_c, n_t = len(diffs), len(inputs["test_ids"])
     size = np.array([derived.change_size_in(d) for d in diffs], dtype=np.float32)
     added = np.array([len(derived.changed_lines_in(d)) for d in diffs], dtype=np.float32)
     removed = np.array([len(derived.removed_lines_in(d)) for d in diffs], dtype=np.float32)
@@ -75,20 +75,20 @@ def _change_size_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
     )
 
 
-def _history_group(material: Mapping[str, Any]) -> Sequence[np.ndarray]:
-    return derived.history_features(material["labels"], material["runs"])
+def _temporal_group(inputs: Mapping[str, Any]) -> Sequence[np.ndarray]:
+    return derived.temporal_features(inputs["labels"], inputs["execution"])
 
 
 #: The structured block. Group order is column order and is load-bearing.
 STRUCTURED = FeatureBlock(
     name="structured",
-    note="the 15 columns the classical selectors read, in recorded order",
+    note="the 15 columns the classical rankers read, in recorded order",
     groups=(
         FeatureGroup(
             columns=(
-                FeatureColumn("covers_function", "coverage"),
-                FeatureColumn("n_covering_tests", "coverage"),
-                FeatureColumn("coverage_rank_prior", "coverage"),
+                FeatureColumn("function_coverage", "coverage"),
+                FeatureColumn("coverage_set_size", "coverage"),
+                FeatureColumn("coverage_set_size_prior", "coverage"),
             ),
             needs=("coverage", "changes", "test_ids"),
             produce=_coverage_group,
@@ -96,24 +96,24 @@ STRUCTURED = FeatureBlock(
         ),
         FeatureGroup(
             columns=(
-                FeatureColumn("path_distance", "traceability"),
-                FeatureColumn("n_tests_in_test_file", "traceability"),
-                FeatureColumn("filename_stem_match", "traceability"),
+                FeatureColumn("path_proximity", "proximity"),
+                FeatureColumn("tests_per_file", "proximity"),
+                FeatureColumn("filename_match", "proximity"),
             ),
             needs=("diff", "test_ids"),
             produce=_proximity_group,
             note="co-location and naming, which assume tests live beside the code",
         ),
         FeatureGroup(
-            columns=(FeatureColumn("test_duration", "intrinsic"),),
+            columns=(FeatureColumn("test_duration", "static_size"),),
             needs=("durations", "test_ids"),
             produce=_duration_group,
             note="wall-clock; hardware-dependent, so available but not comparable",
         ),
         FeatureGroup(
             columns=(
-                FeatureColumn("test_n_lines", "intrinsic"),
-                FeatureColumn("test_n_tokens", "intrinsic"),
+                FeatureColumn("test_lines", "static_size"),
+                FeatureColumn("test_tokens", "static_size"),
             ),
             needs=("test_source", "test_ids"),
             produce=_test_size_group,
@@ -121,9 +121,9 @@ STRUCTURED = FeatureBlock(
         ),
         FeatureGroup(
             columns=(
-                FeatureColumn("change_size", "intrinsic"),
-                FeatureColumn("change_added_lines", "intrinsic"),
-                FeatureColumn("change_removed_lines", "intrinsic"),
+                FeatureColumn("code_churn", "static_size"),
+                FeatureColumn("added_lines", "static_size"),
+                FeatureColumn("removed_lines", "static_size"),
             ),
             needs=("diff",),
             produce=_change_size_group,
@@ -131,12 +131,12 @@ STRUCTURED = FeatureBlock(
         ),
         FeatureGroup(
             columns=(
-                FeatureColumn("test_failure_rate_cum", "history"),
-                FeatureColumn("test_runs_cum", "history"),
-                FeatureColumn("test_last_failure_age", "history"),
+                FeatureColumn("cumulative_failure_rate", "temporal"),
+                FeatureColumn("cumulative_runs", "temporal"),
+                FeatureColumn("failure_recency", "temporal"),
             ),
-            needs=("labels", "runs"),
-            produce=_history_group,
+            needs=("labels", "execution"),
+            produce=_temporal_group,
             note="cumulative over strictly earlier changes; needs a real order to mean anything",
         ),
     ),
@@ -146,39 +146,39 @@ STRUCTURED = FeatureBlock(
 def structured(
     ds: Dataset,
     *,
-    history: bool | None = None,
+    temporal: bool | None = None,
     block: FeatureBlock | None = None,
-    warnings: Warnings | None = None,
+    diagnostics: Diagnostics | None = None,
 ) -> FeatureMatrix:
     """Build the structured block against ``ds``.
 
-    ``history`` selects the cumulative-history columns. ``None`` means *the default*: on
-    for an :attr:`Ordering.OBSERVED` dataset, off for an :attr:`Ordering.IMPOSED` one,
+    ``temporal`` selects the cumulative-failure-history columns. ``None`` means *the default*: on
+    for an :attr:`Ordering.NATURAL` dataset, off for an :attr:`Ordering.SYNTHETIC` one,
     where a cumulative feature over an arbitrary order manufactures a leak rather than
     merely failing to be interpretable.
 
     Study entry points that reproduce the documented numbers opt in explicitly, and the
-    accompanying warning travels with the returned matrix rather than being stored on
+    accompanying diagnostic travels with the returned matrix rather than being stored on
     the dataset -- so the record describes the derivation, not the call history.
     """
-    collected = warnings if warnings is not None else Warnings()
-    use_history = ds.ordering() is Ordering.OBSERVED if history is None else bool(history)
+    collected = diagnostics if diagnostics is not None else Diagnostics()
+    use_temporal = ds.ordering() is Ordering.NATURAL if temporal is None else bool(temporal)
 
-    if use_history and ds.ordering() is Ordering.IMPOSED:
+    if use_temporal and ds.ordering() is Ordering.SYNTHETIC:
         collected.add(
-            "feature.history_on_imposed_order",
-            Policy.OBSERVED_ORDER.value,
-            f"history features are enabled on an imposed order (order_seed={ds.order_seed}); "
+            "feature.temporal_on_synthetic_order",
+            Policy.NATURAL_ORDER.value,
+            f"temporal features are enabled on a synthetic order (order_seed={ds.order_seed}); "
             "the values are only interpretable under that seed and should be reported as a "
             "spread over seeds, not as one number",
-            scope="features:history",
+            scope="features:temporal",
         )
 
     chosen = block if block is not None else STRUCTURED
-    if not use_history and chosen.has_family("history"):
+    if not use_temporal and chosen.has_family("temporal"):
         # Withholding a family the block does not declare is an error, not a no-op, so a
-        # custom block without a history family is left alone rather than rejected here.
-        chosen = chosen.without_families("history")
+        # custom block without a temporal family is left alone rather than rejected here.
+        chosen = chosen.without_families("temporal")
     return chosen.build(ds, collected)
 
 

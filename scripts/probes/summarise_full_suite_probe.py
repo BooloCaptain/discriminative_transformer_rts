@@ -57,7 +57,7 @@ def main() -> None:
         records.append(data)
 
     zero_outcome = [d for d in records if not d["records"]]
-    fault_bearing = [d for d in records if d["failures"]]
+    detectable = [d for d in records if d["failures"]]
 
     # Gate 5: outcome count.
     wrong_counts = [d for d in records if d["records"] and d["records"] != 1190]
@@ -74,7 +74,7 @@ def main() -> None:
                 {"mutant": d["mutant"], "missing": sorted(o - set(d["failures"]))[:5]}
             )
 
-    killers = [len(d["failures"]) for d in fault_bearing]
+    killers = [len(d["failures"]) for d in detectable]
     killers_sorted = sorted(killers)
 
     def pct(q: float) -> float:
@@ -105,7 +105,7 @@ def main() -> None:
                     }
                 )
         return {
-            "fault_bearing": len(rows),
+            "detectable": len(rows),
             "with_out_of_coverage_killer": len(out_of_cov),
             "share_out_of_coverage": (len(out_of_cov) / len(rows)) if rows else float("nan"),
             "killers_not_in_pool": off_pool,
@@ -113,13 +113,13 @@ def main() -> None:
             "examples": out_of_cov[:10],
         }
 
-    killed_rows = [d for d in fault_bearing if verdicts.get(d["mutant"]) in (1, 3)]
-    survivor_rows = [d for d in fault_bearing if verdicts.get(d["mutant"]) == 0]
+    killed_rows = [d for d in detectable if verdicts.get(d["mutant"]) in (1, 3)]
+    survivor_rows = [d for d in detectable if verdicts.get(d["mutant"]) == 0]
     survivors_total = sum(1 for m, e in verdicts.items() if e == 0)
     survivors_sampled = sum(1 for m in (d["mutant"] for d in records) if verdicts.get(m) == 0)
 
     why = Counter()
-    for d in fault_bearing:
+    for d in detectable:
         key = MUTANT_SUFFIX_RE.sub("", d["mutant"])
         covering = set(coverage.get(key, []))
         for t in set(d["failures"]) - covering:
@@ -128,13 +128,13 @@ def main() -> None:
     summary = {
         "probe_dir": str(probe_dir),
         "mutants_summarised": len(records),
-        "population": len(verdicts),
+        "subset": len(verdicts),
         "zero_outcome": len(zero_outcome),
         "zero_outcome_mutants": [d["mutant"] for d in zero_outcome[:20]],
         "wrong_outcome_count": len(wrong_counts),
         "gate2_subset_ok": subset_ok,
         "gate2_violations": subset_violations[:20],
-        "fault_bearing": len(fault_bearing),
+        "detectable": len(detectable),
         "killers": {
             "median": float(statistics.median(killers)) if killers else float("nan"),
             "mean": float(statistics.mean(killers)) if killers else float("nan"),
@@ -147,7 +147,7 @@ def main() -> None:
         },
         "killed": analyse(killed_rows),
         "survivors": {
-            "population": survivors_total,
+            "subset": survivors_total,
             "sampled": survivors_sampled,
             "converted_to_fault": len(survivor_rows),
             **analyse(survivor_rows),
@@ -190,25 +190,25 @@ def main() -> None:
     )
     print(f"wrote {labels_path} ({labels_path.stat().st_size / 1e6:.1f} MB)")
 
-    print(f"mutants summarised        : {summary['mutants_summarised']} of {summary['population']}")
+    print(f"mutants summarised        : {summary['mutants_summarised']} of {summary['subset']}")
     print(f"zero-outcome mutants      : {summary['zero_outcome']}")
     print(f"mutants w/ != 1190 records: {summary['wrong_outcome_count']}")
     print(f"gate 2 old subset of new  : {summary['gate2_subset_ok']}/{len(records)}")
     for v in summary["gate2_violations"][:5]:
         print(f"    VIOLATION {v['mutant']} missing={v['missing']}")
     k = summary["killers"]
-    print(f"fault-bearing             : {summary['fault_bearing']}")
+    print(f"fault-bearing             : {summary['detectable']}")
     print(f"killers median/q25/q75/max: {k['median']:.0f} / {k['q25']:.0f} / {k['q75']:.0f} / {k['max']}")
     print(f"killers mean / total      : {k['mean']:.1f} / {k['total_killers']}")
     print(f"single-killer faults      : {k['single_killer_faults']}")
     print(
         f"killed: out-of-coverage   : {summary['killed']['with_out_of_coverage_killer']}"
-        f"/{summary['killed']['fault_bearing']} "
+        f"/{summary['killed']['detectable']} "
         f"({summary['killed']['share_out_of_coverage']:.1%})"
     )
     s = summary["survivors"]
     print(
-        f"survivors: {s['sampled']} sampled of {s['population']}, "
+        f"survivors: {s['sampled']} sampled of {s['subset']}, "
         f"converted to fault: {s['converted_to_fault']}"
     )
     print(f"killers not in pool       : {summary['killed']['killers_not_in_pool']} (killed) "

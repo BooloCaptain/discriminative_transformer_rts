@@ -13,7 +13,7 @@ It gives: real change text (the bug-inducing commit), real failing tests (``run_
 bug), real test suites, several failing tests per change, and 17 independent projects.
 
 It does **not** give the boundary regime -- these are still co-located unit tests. It is the
-"honest labels, real text, no synthetic history" arm, not the embedded arm.
+"honest labels, real text, no synthetic history" condition, not the embedded condition.
 
 No test execution is required
 -----------------------------

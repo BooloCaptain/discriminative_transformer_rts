@@ -3,7 +3,6 @@
     "n_bundles": 2311,
     "pool": "union",
     "n_held_out": 200,
-    "mean_candidates": 157.5828645607962,
     "mean_files_per_bundle": 1.0,
     "frac_single_file": 1.0,
     "results": {
@@ -1251,26 +1250,26 @@
       ]
     },
     "importances": {
-      "name_match_any": 0.21902886033058167,
       "test_duration": 0.1572083681821823,
-      "test_last_failure_age": 0.15253478288650513,
-      "test_n_lines": 0.1035923957824707,
-      "test_failure_rate_cum": 0.09116622805595398,
-      "n_tests_in_test_file": 0.07593902945518494,
-      "test_n_tokens": 0.06950206309556961,
-      "change_size": 0.06881953775882721,
-      "test_runs_cum": 0.06220877543091774,
       "n_mutations": 0.0,
       "n_mutations_covered": 0.0,
       "frac_mutations_covered": 0.0,
-      "min_path_distance": 0.0
-    }
+      "tests_per_file": 0.07593902945518494,
+      "test_lines": 0.1035923957824707,
+      "test_tokens": 0.06950206309556961,
+      "code_churn": 0.06881953775882721,
+      "cumulative_failure_rate": 0.09116622805595398,
+      "cumulative_runs": 0.06220877543091774,
+      "failure_recency": 0.15253478288650513,
+      "filename_match_any": 0.21902886033058167,
+      "min_path_proximity": 0.0
+    },
+    "mean_candidate_count": 157.5828645607962
   },
   "1": {
     "n_bundles": 2311,
     "pool": "union",
     "n_held_out": 200,
-    "mean_candidates": 281.298572046733,
     "mean_files_per_bundle": 1.006490696668109,
     "frac_single_file": 0.9956728688879273,
     "results": {
@@ -2518,26 +2517,26 @@
       ]
     },
     "importances": {
-      "name_match_any": 0.19558057188987732,
-      "test_last_failure_age": 0.1527368128299713,
       "test_duration": 0.10293687880039215,
-      "test_n_lines": 0.09065958857536316,
       "n_mutations_covered": 0.08324696868658066,
-      "test_failure_rate_cum": 0.07344755530357361,
-      "n_tests_in_test_file": 0.06985040754079819,
       "frac_mutations_covered": 0.0629432424902916,
-      "test_n_tokens": 0.06190388277173042,
-      "test_runs_cum": 0.05915238708257675,
-      "change_size": 0.04754169285297394,
       "n_mutations": 0.0,
-      "min_path_distance": 0.0
-    }
+      "tests_per_file": 0.06985040754079819,
+      "test_lines": 0.09065958857536316,
+      "test_tokens": 0.06190388277173042,
+      "code_churn": 0.04754169285297394,
+      "cumulative_failure_rate": 0.07344755530357361,
+      "cumulative_runs": 0.05915238708257675,
+      "failure_recency": 0.1527368128299713,
+      "filename_match_any": 0.19558057188987732,
+      "min_path_proximity": 0.0
+    },
+    "mean_candidate_count": 281.298572046733
   },
   "2": {
     "n_bundles": 2311,
     "pool": "union",
     "n_held_out": 200,
-    "mean_candidates": 381.3132842925141,
     "mean_files_per_bundle": 1.0735612289052359,
     "frac_single_file": 0.9770662051060147,
     "results": {
@@ -3785,26 +3784,26 @@
       ]
     },
     "importances": {
-      "test_last_failure_age": 0.1783708930015564,
-      "name_match_any": 0.1577821522951126,
       "test_duration": 0.10556992143392563,
       "n_mutations_covered": 0.09000322222709656,
-      "n_tests_in_test_file": 0.08058066666126251,
-      "test_n_lines": 0.08006627857685089,
-      "test_failure_rate_cum": 0.0714145228266716,
-      "test_n_tokens": 0.06364119052886963,
-      "test_runs_cum": 0.06205753982067108,
       "frac_mutations_covered": 0.0583936870098114,
-      "change_size": 0.05211993679404259,
       "n_mutations": 0.0,
-      "min_path_distance": 0.0
-    }
+      "tests_per_file": 0.08058066666126251,
+      "test_lines": 0.08006627857685089,
+      "test_tokens": 0.06364119052886963,
+      "code_churn": 0.05211993679404259,
+      "cumulative_failure_rate": 0.0714145228266716,
+      "cumulative_runs": 0.06205753982067108,
+      "failure_recency": 0.1783708930015564,
+      "filename_match_any": 0.1577821522951126,
+      "min_path_proximity": 0.0
+    },
+    "mean_candidate_count": 381.3132842925141
   },
   "3": {
     "n_bundles": 2311,
     "pool": "union",
     "n_held_out": 200,
-    "mean_candidates": 489.9640848117698,
     "mean_files_per_bundle": 3.797922977066205,
     "frac_single_file": 0.0,
     "results": {
@@ -5052,19 +5051,20 @@
       ]
     },
     "importances": {
-      "name_match_any": 0.22427979111671448,
-      "test_last_failure_age": 0.16220752894878387,
       "test_duration": 0.10271895676851273,
-      "n_tests_in_test_file": 0.07465445250272751,
-      "test_n_lines": 0.07136958092451096,
       "frac_mutations_covered": 0.06803786009550095,
-      "test_n_tokens": 0.06710953265428543,
-      "test_failure_rate_cum": 0.061253029853105545,
-      "change_size": 0.057887446135282516,
-      "test_runs_cum": 0.057360149919986725,
       "n_mutations_covered": 0.05312160775065422,
       "n_mutations": 0.0,
-      "min_path_distance": 0.0
-    }
+      "tests_per_file": 0.07465445250272751,
+      "test_lines": 0.07136958092451096,
+      "test_tokens": 0.06710953265428543,
+      "code_churn": 0.057887446135282516,
+      "cumulative_failure_rate": 0.061253029853105545,
+      "cumulative_runs": 0.057360149919986725,
+      "failure_recency": 0.16220752894878387,
+      "filename_match_any": 0.22427979111671448,
+      "min_path_proximity": 0.0
+    },
+    "mean_candidate_count": 489.9640848117698
   }
 }

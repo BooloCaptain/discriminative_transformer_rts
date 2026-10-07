@@ -16,7 +16,7 @@ Three defects the move to free functions fixes:
   :meth:`rts.data.contract.Dataset.cached`. A subclass that omitted them all, as
   ``PooledDataset`` did, no longer silently loses every cache -- ``n_changes`` rebuilt
   the entire change list just to take a length.
-* **Mutable internals were handed out by reference.** ``labels``, ``runs`` and
+* **Mutable internals were handed out by reference.** ``labels``, ``execution_matrix`` and
   ``fault_mask`` are now frozen on construction, so ``ds.labels[i, j] = 1`` raises
   instead of corrupting every later reader.
 * **An expensive ``test_source`` was read twice per test** (once for the line count,
@@ -37,7 +37,7 @@ from .contract import Capability, CapabilityMissing, Dataset, Requirement, TestI
 # --- labels and runs -------------------------------------------------------
 
 
-def _build_labels(ds: Dataset) -> np.ndarray:
+def _build_label_matrix(ds: Dataset) -> np.ndarray:
     out = np.zeros((ds.n_changes, ds.n_tests), dtype=np.uint8)
     index = ds.test_index
     for i, change in enumerate(ds.changes):
@@ -49,11 +49,11 @@ def _build_labels(ds: Dataset) -> np.ndarray:
     return out
 
 
-def _build_runs(ds: Dataset) -> np.ndarray:
+def _build_execution_matrix(ds: Dataset) -> np.ndarray:
     out = np.zeros((ds.n_changes, ds.n_tests), dtype=np.uint8)
     index = ds.test_index
     for i, change in enumerate(ds.changes):
-        for test in ds.ran_tests(change):
+        for test in ds.executed_tests(change):
             j = index.get(test)
             if j is not None:
                 out[i, j] = 1
@@ -67,17 +67,17 @@ def labels(ds: Dataset) -> np.ndarray:
     Read-only: this is the evaluation contract's label matrix, and a caller that
     mutated it would change every later measurement.
     """
-    return ds.cached("labels", lambda: _build_labels(ds))
+    return ds.cached("labels", lambda: _build_label_matrix(ds))
 
 
-def runs(ds: Dataset) -> np.ndarray:
+def execution_matrix(ds: Dataset) -> np.ndarray:
     """``[n_changes, n_tests]`` uint8: 1 where the test was actually executed.
 
     Harness-internal rather than part of the advertised surface: the only readers are
-    the cumulative history block and the pair-recurrence population, and both want it
+    the cumulative temporal block and the pair-recurrence subset, and both want it
     for the same reason -- to separate "passed" from "never ran".
     """
-    return ds.cached("runs", lambda: _build_runs(ds))
+    return ds.cached("execution", lambda: _build_execution_matrix(ds))
 
 
 # --- paths and coverage ----------------------------------------------------
@@ -106,11 +106,11 @@ def multi_file_changes(ds: Dataset) -> tuple[int, ...]:
     return tuple(i for i, c in enumerate(ds.changes) if len(ds.files(c)) != 1)
 
 
-def covered(ds: Dataset) -> tuple[frozenset[TestId], ...]:
+def coverage_sets(ds: Dataset) -> tuple[frozenset[TestId], ...]:
     """Tests covering each change, index-aligned. Requires ``coverage``."""
     if not ds.has_capability(Capability.COVERAGE):
         raise CapabilityMissing(ds.name, Capability.COVERAGE)
-    return ds.cached("covered", lambda: tuple(ds.coverage(c) for c in ds.changes))
+    return ds.cached("coverage_sets", lambda: tuple(ds.coverage(c) for c in ds.changes))
 
 
 # --- faults ----------------------------------------------------------------
@@ -145,16 +145,16 @@ def change_index(ds: Dataset) -> dict[str, int]:
 # --- candidate sets --------------------------------------------------------
 
 
-def candidates(ds: Dataset, mode: str = "full") -> np.ndarray:
+def candidate_sets(ds: Dataset, mode: str = "full") -> np.ndarray:
     """Which ``(change, test)`` pairs are eligible for selection.
 
     ``full``    -- every test in the pool, the realistic RTS setting.
     ``covered`` -- only tests covering the change, plus that change's killing tests as
                    a safety net. Requires ``coverage``.
     ``own``     -- the dataset's own per-change pool, for a corpus where each change's
-                   candidates come from its own suite ``(Dataset.own_candidate_pool)``.
+                   candidate sets come from its own suite ``(Dataset.own_candidate_pool)``.
 
-    All selectors are evaluated on the same mask so the comparison stays fair.
+    All rankers are evaluated on the same mask so the comparison stays fair.
     """
     if mode == "full":
         return np.ones((ds.n_changes, ds.n_tests), dtype=bool)
@@ -163,15 +163,15 @@ def candidates(ds: Dataset, mode: str = "full") -> np.ndarray:
         if pool is None:
             raise CapabilityMissing(ds.name, "own_candidate_pool")
         return pool
-    if mode != "covered":
+    if mode != "coverage_restricted":
         raise ValueError(f"unknown candidate mode: {mode!r}")
     if not ds.has_capability(Capability.COVERAGE):
         raise CapabilityMissing(ds.name, Capability.COVERAGE)
     mask = np.zeros((ds.n_changes, ds.n_tests), dtype=bool)
     index = ds.test_index
-    covered_by = covered(ds)
+    coverage_by = coverage_sets(ds)
     for i, change in enumerate(ds.changes):
-        for test in covered_by[i]:
+        for test in coverage_by[i]:
             j = index.get(test)
             if j is not None:
                 mask[i, j] = True
@@ -189,36 +189,36 @@ def candidate_counts(ds: Dataset, candidate_mask: np.ndarray) -> np.ndarray:
 # --- pair recurrence -------------------------------------------------------
 
 
-def pair_counts(ds: Dataset) -> dict[tuple[str, str], int]:
+def pair_cooccurrence_counts(ds: Dataset) -> dict[tuple[str, str], int]:
     """How often each ``(file, test)`` combination recurs across changes.
 
     A pair that occurs once is a combination the structured models have no history for.
     Requires ``coverage``.
     """
     counts: dict[tuple[str, str], int] = {}
-    covered_by = covered(ds)
+    coverage_by = coverage_sets(ds)
     for i in range(ds.n_changes):
         path = change_paths(ds)[i]
-        for test in covered_by[i]:
+        for test in coverage_by[i]:
             key = (path, test)
             counts[key] = counts.get(key, 0) + 1
     return counts
 
 
-def sparse_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
+def low_cooccurrence_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
     """Changes whose every ``(file, test)`` combination recurs at most this often.
 
-    The "sparse" evaluation arm from ``docs/plan.md``: a proxy for software evolution where a
+    The "low co-occurrence" evaluation condition from ``docs/plan.md``: a proxy for software evolution where a
     file and a test are not repeatedly paired. Note that it also removes exactly the
-    repeated co-occurrences the structured history features depend on, so it is a
+    repeated co-occurrences the structured temporal features depend on, so it is a
     robustness check, not a neutral split.
     """
-    counts = pair_counts(ds)
-    covered_by = covered(ds)
+    counts = pair_cooccurrence_counts(ds)
+    coverage_by = coverage_sets(ds)
     paths = change_paths(ds)
     mask = np.zeros(ds.n_changes, dtype=bool)
     for i in range(ds.n_changes):
-        pairs = [(paths[i], t) for t in covered_by[i]]
+        pairs = [(paths[i], t) for t in coverage_by[i]]
         if not pairs:
             continue
         mask[i] = max(counts[p] for p in pairs) <= max_pair_count
@@ -232,13 +232,13 @@ def pair_history_counts(ds: Dataset) -> tuple[dict, dict]:
     therefore includes the change itself, so ``failures <= 1`` means the pair has *no
     prior failure history*.
     """
-    runs_matrix, label_matrix = runs(ds), labels(ds)
+    execution, label_matrix = execution_matrix(ds), labels(ds)
     paths = change_paths(ds)
     test_ids = ds.test_ids
     run_counts: dict[tuple[str, str], int] = {}
     fail_counts: dict[tuple[str, str], int] = {}
     for i, path in enumerate(paths):
-        for j in np.flatnonzero(runs_matrix[i]):
+        for j in np.flatnonzero(execution[i]):
             key = (path, test_ids[int(j)])
             run_counts[key] = run_counts.get(key, 0) + 1
         for j in np.flatnonzero(label_matrix[i]):
@@ -253,7 +253,7 @@ def pair_history_counts(ds: Dataset) -> tuple[dict, dict]:
 def test_source(ds: Dataset, test: TestId) -> str | None:
     """The test's source text, memoised on the dataset.
 
-    The contract's primitive returns ``None`` for an unlocatable test and ``""`` for an
+    The contract's raw accessor returns ``None`` for an unlocatable test and ``""`` for an
     empty one, and keeps the two apart. This wrapper exists purely so that the several
     features derived from one test's text share a single read: without it the block read
     every test twice, which is free for an ``lru_cache``-backed checkout and not free
@@ -266,11 +266,11 @@ def test_source(ds: Dataset, test: TestId) -> str | None:
     return ds.cached(f"test_source:{test}", lambda: ds.test_source(test))
 
 
-# --- material --------------------------------------------------------------
+# --- inputs --------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Material:
+class Input:
     """One named thing a computation may be handed, and what reading it requires."""
 
     name: str
@@ -283,73 +283,73 @@ def _pair_history(ds: Dataset) -> tuple[dict, dict]:
     return pair_history_counts(ds)
 
 
-def _catalogue() -> dict[str, Material]:
+def _catalogue() -> dict[str, Input]:
     r = Requirement
     entries = (
-        Material("changes", frozenset(), lambda ds: ds.changes),
-        Material("test_ids", frozenset(), lambda ds: ds.test_ids),
-        Material("paths", frozenset({r.DIFF_TEXT}), change_paths),
-        Material("diff", frozenset({r.DIFF_TEXT}), lambda ds: ds.diff_text),
-        Material("test_source", frozenset(), lambda ds: lambda t: test_source(ds, t)),
-        Material("labels", frozenset({r.LABELS}), labels),
-        Material("runs", frozenset({r.LABELS}), runs),
-        Material("faults", frozenset({r.LABELS}), fault_mask),
-        Material(
+        Input("changes", frozenset(), lambda ds: ds.changes),
+        Input("test_ids", frozenset(), lambda ds: ds.test_ids),
+        Input("paths", frozenset({r.DIFF_TEXT}), change_paths),
+        Input("diff", frozenset({r.DIFF_TEXT}), lambda ds: ds.diff_text),
+        Input("test_source", frozenset(), lambda ds: lambda t: test_source(ds, t)),
+        Input("labels", frozenset({r.LABELS}), labels),
+        Input("execution", frozenset({r.LABELS}), execution_matrix),
+        Input("faults", frozenset({r.LABELS}), fault_mask),
+        Input(
             "killing",
             frozenset({r.LABELS}),
             lambda ds: tuple(frozenset(ds.killing_tests(c)) for c in ds.changes),
             "per-change killing tests, sorted",
         ),
-        Material("coverage", frozenset({r.COVERAGE}), covered),
-        Material("durations", frozenset({r.DURATIONS}), lambda ds: ds.durations()),
-        Material(
+        Input("coverage", frozenset({r.COVERAGE}), coverage_sets),
+        Input("durations", frozenset({r.DURATIONS}), lambda ds: ds.durations()),
+        Input(
             "pair_runs",
             frozenset({r.LABELS}),
             lambda ds: _pair_history(ds)[0],
-            "runs per (file, test)",
+            "executions per (file, test)",
         ),
-        Material(
+        Input(
             "pair_failures",
             frozenset({r.LABELS}),
             lambda ds: _pair_history(ds)[1],
             "failures per (file, test)",
         ),
-        Material("pairs", frozenset({r.COVERAGE}), pair_counts),
+        Input("pairs", frozenset({r.COVERAGE}), pair_cooccurrence_counts),
     )
     return {entry.name: entry for entry in entries}
 
 
-#: The one catalogue of material a computation may name. A block group's ``needs``, a
-#: population's ``needs`` and the derived features all resolve through it, so a
+#: The one catalogue of inputs a computation may name. A block group's ``needs``, a
+#: subset's ``needs`` and the derived features all resolve through it, so a
 #: requirement set is *derived* from what is read rather than asserted beside it.
-MATERIAL: dict[str, Material] = _catalogue()
+INPUTS: dict[str, Input] = _catalogue()
 
 
 def requirements_for(needs: Sequence[str]) -> frozenset[Requirement]:
-    """The requirements implied by a list of material names."""
+    """The requirements implied by a list of input names."""
     out: set[Requirement] = set()
     for name in needs:
         try:
-            out |= MATERIAL[name].requires
+            out |= INPUTS[name].requires
         except KeyError:
             raise KeyError(
-                f"unknown material {name!r}; known: {sorted(MATERIAL)}"
+                f"unknown input {name!r}; known: {sorted(INPUTS)}"
             ) from None
     return frozenset(out)
 
 
-def material(ds: Dataset) -> dict[str, Any]:
+def inputs(ds: Dataset) -> dict[str, Any]:
     """Everything a computation may be handed, resolved for this dataset.
 
     Only what the dataset can satisfy is present. A computation that names absent
-    material is never called, so it cannot raise a capability error deep inside
+    inputs is never called, so it cannot raise a capability error deep inside
     arithmetic -- which is what makes :func:`requirements_for` a derivation rather than
     an assertion.
     """
     available = ds.available_requirements()
     return {
         entry.name: entry.resolve(ds)
-        for entry in MATERIAL.values()
+        for entry in INPUTS.values()
         if entry.requires <= available
     }
 
@@ -359,7 +359,7 @@ def resolve(ds: Dataset, needs: Sequence[str]) -> dict[str, Any]:
     _, missing = satisfies(ds, needs)
     if missing:
         raise CapabilityMissing(ds.name, missing[0].value)
-    everything = material(ds)
+    everything = inputs(ds)
     return {name: everything[name] for name in needs}
 
 
@@ -371,25 +371,25 @@ def satisfies(ds: Dataset, needs: Sequence[str]) -> tuple[bool, tuple[Requiremen
 
 
 __all__ = [
-    "MATERIAL",
-    "Material",
+    "INPUTS",
+    "Input",
     "candidate_counts",
-    "candidates",
+    "candidate_sets",
     "change_index",
     "change_paths",
-    "covered",
+    "coverage_sets",
     "fault_idx",
     "fault_mask",
     "labels",
-    "material",
+    "inputs",
     "multi_file_changes",
-    "pair_counts",
+    "pair_cooccurrence_counts",
     "pair_history_counts",
     "requirements_for",
     "resolve",
-    "runs",
+    "execution_matrix",
     "satisfies",
-    "sparse_mask",
+    "low_cooccurrence_mask",
     "test_fault_idx",
     "test_source",
 ]

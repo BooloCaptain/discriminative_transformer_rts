@@ -2,9 +2,9 @@
 
 The evaluation contract needs from a dataset only a quadruple::
 
-    (scores, labels, candidates, rows) -> recall / hits
+    (scores, labels, candidate sets, rows) -> recall / hits
 
-A dataset provides ``labels``, ``candidates`` and its ``rows``; a selector provides
+A dataset provides ``labels``, ``candidate_sets`` and its ``rows``; a ranker provides
 ``scores``. Evaluation therefore never depends on the dataset *type*, which is what lets
 a wrapped dataset, a pooled dataset, or a bundle carrying its own label matrix be
 evaluated by exactly the same code.
@@ -15,12 +15,12 @@ Design notes
   selected from that change's own suite. A single global budget would let a
   constant-selection strategy score well; a per-change budget does not.
 * **Tie-breaking is deterministic.** Tests are ordered by score descending, with the test's
-  index (i.e. its node id, sorted) breaking ties. This matters: with 1187 candidates and
+  index (i.e. its node id, sorted) breaking ties. This matters: with 1187 candidate sets and
   coarse integer-ish features, ties are common.
 * **A fault is caught** if any killing test is selected for that change.
-* **The averaging population is named**, and it declares the material it reads rather than
+* **The averaging subset is named**, and it declares the inputs it reads rather than
   asserting a requirement set. Recall over all changes and recall over fault-bearing
-  changes are different quantities, so the population is part of the result rather than an
+  changes are different quantities, so the subset is part of the result rather than an
   implicit choice buried inside it.
 * **Cumulative trick.** One descending argsort per change yields every budget at once via a
   cumulative max (hit at k) and cumulative sum (precision at k).
@@ -34,7 +34,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from . import config
-from .data import accessors, contract, populations, splits
+from .data import accessors, contract, splits, subsets
 
 
 @dataclass
@@ -52,47 +52,47 @@ class BudgetResult:
 
 @dataclass
 class Evaluation:
-    """One metric sweep, with the population it was averaged over and any caveat.
+    """One metric sweep, with the subset it was averaged over and any caveat.
 
-    ``results`` is ``None`` exactly when ``unmeasured`` is set: a population that cannot
+    ``results`` is ``None`` exactly when ``undefined`` is set: a subset that cannot
     exist on this dataset has no rows, which is a different statement from an average over
     no rows. Keeping them apart is the point -- reporting the second as the first is a
     false statement about the data, not a rounding error.
     """
 
-    population: str
+    subset: str
     results: list[BudgetResult] | None
-    unmeasured: contract.Unmeasured | None = None
+    undefined: contract.Undefined | None = None
     n_rows: int = 0
     n_changes: int = 0
-    warnings: tuple[contract.Warning, ...] = ()
+    diagnostics: tuple[contract.Diagnostic, ...] = ()
 
     @property
     def measured(self) -> bool:
-        return self.unmeasured is None
+        return self.undefined is None
 
     def to_dict(self) -> dict:
         if not self.measured:
             return {
-                "population": self.population,
+                "subset": self.subset,
                 "measured": False,
-                **self.unmeasured.to_dict(),
+                **self.undefined.to_dict(),
             }
         return {
-            "population": self.population,
+            "subset": self.subset,
             "measured": True,
             "n_rows": self.n_rows,
             "n_changes": self.n_changes,
-            "warnings": [w.to_dict() for w in self.warnings],
+            "diagnostics": [w.to_dict() for w in self.diagnostics],
             "results": results_to_dicts(self.results or []),
         }
 
 
-class UnmeasuredPopulation(RuntimeError):
-    """Raised when a measurement is requested from a population that cannot exist."""
+class UndefinedSubset(RuntimeError):
+    """Raised when a measurement is requested from a subset that cannot exist."""
 
     def __init__(self, evaluation: Evaluation):
-        super().__init__(evaluation.unmeasured.note if evaluation.unmeasured else "unmeasured")
+        super().__init__(evaluation.undefined.note if evaluation.undefined else "undefined")
         self.evaluation = evaluation
 
 
@@ -118,19 +118,19 @@ def _bootstrap_ci(
 def curve_from_arrays(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray | None,
+    candidate_sets: np.ndarray | None,
     rows: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """``(cum_hit, cum_count)`` for ``rows``, from a label matrix.
 
-    The metric sweep's whole primitive, expressed over matrices rather than over a
-    dataset, so a bundle arm carrying its own label matrix is evaluated by exactly the same
+    The metric sweep's whole operation, expressed over matrices rather than over a
+    dataset, so a bundle condition carrying its own label matrix is evaluated by exactly the same
     code as a dataset -- which is what stops a second implementation drifting from the
-    first. Non-candidates are pushed to the end, so the first ``k`` entries of each row are
+    first. Non-candidate sets are pushed to the end, so the first ``k`` entries of each row are
     always the selected set, and ties break by column index.
     """
     masked = (
-        scores[rows] if candidates is None else np.where(candidates[rows], scores[rows], -np.inf)
+        scores[rows] if candidate_sets is None else np.where(candidate_sets[rows], scores[rows], -np.inf)
     )
     order = np.argsort(-masked, axis=1, kind="stable")
     ordered = labels[rows][np.arange(len(rows))[:, None], order]
@@ -140,7 +140,7 @@ def curve_from_arrays(
 def sweep_matrices(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray | None,
+    candidate_sets: np.ndarray | None,
     rows: np.ndarray,
     n_tests: int,
     budgets: tuple[float, ...] = config.DEFAULT_BUDGETS,
@@ -150,14 +150,14 @@ def sweep_matrices(
 ) -> list[BudgetResult]:
     """Budget sweep over a label matrix.
 
-    ``avg_rows`` are indices *into* ``rows`` and select the averaging population. Left
+    ``avg_rows`` are indices *into* ``rows`` and select the averaging subset. Left
     unset, every row with at least one label is averaged -- the fault-bearing default.
     """
     rng = np.random.default_rng(seed)
-    cum_hit, cum_count = curve_from_arrays(scores, labels, candidates, rows)
+    cum_hit, cum_count = curve_from_arrays(scores, labels, candidate_sets, rows)
     cand_counts = (
-        candidates[rows].sum(axis=1).astype(np.int64)
-        if candidates is not None
+        candidate_sets[rows].sum(axis=1).astype(np.int64)
+        if candidate_sets is not None
         else np.full(len(rows), n_tests, dtype=np.int64)
     )
     if avg_rows is None:
@@ -199,15 +199,15 @@ def sweep_matrices(
 def per_change_hit_matrix(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray | None,
+    candidate_sets: np.ndarray | None,
     rows: np.ndarray,
     budget: float,
 ) -> np.ndarray:
     """Per-row caught/not at one budget, from a label matrix."""
-    cum_hit, _ = curve_from_arrays(scores, labels, candidates, rows)
+    cum_hit, _ = curve_from_arrays(scores, labels, candidate_sets, rows)
     cand_counts = (
-        candidates[rows].sum(axis=1).astype(np.int64)
-        if candidates is not None
+        candidate_sets[rows].sum(axis=1).astype(np.int64)
+        if candidate_sets is not None
         else np.full(len(rows), labels.shape[1], dtype=np.int64)
     )
     k = np.array([budget_k(budget, int(c)) for c in cand_counts], dtype=np.int64)
@@ -217,17 +217,17 @@ def per_change_hit_matrix(
 # --- the sweep, over a dataset ---------------------------------------------
 
 
-def population_rows(
+def subset_rows(
     ds: contract.Dataset,
     eval_idx: np.ndarray,
-    population: populations.Population | str,
-) -> tuple[populations.Population, np.ndarray | contract.Unmeasured]:
+    subset: subsets.Subset | str,
+) -> tuple[subsets.Subset, np.ndarray | contract.Undefined]:
     """Row indices into ``eval_idx`` to average over, or why they cannot exist."""
-    spec = populations.resolve(population)
+    spec = subsets.resolve(subset)
     mask = spec.mask(ds)
-    if isinstance(mask, contract.Unmeasured):
+    if isinstance(mask, contract.Undefined):
         return spec, mask
-    # A population restricts *which rows the metric is averaged over*; it does not add rows
+    # A subset restricts *which rows the metric is averaged over*; it does not add rows
     # outside the evaluation window. A change with no killing test still has no recall to
     # average, so it is excluded either way.
     faults = accessors.fault_mask(ds)
@@ -244,32 +244,32 @@ def evaluate_rows(
     budgets: tuple[float, ...] = config.DEFAULT_BUDGETS,
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP,
     seed: int = config.SEED,
-    candidates: np.ndarray | None = None,
-    population: populations.Population | str = "fault_bearing",
+    candidate_sets: np.ndarray | None = None,
+    subset: subsets.Subset | str = "detectable",
     split: splits.Split | None = None,
 ) -> Evaluation:
-    """Metric sweep for one selector, over a named averaging population.
+    """Metric sweep for one ranker, over a named averaging subset.
 
-    When ``candidates`` is given, the budget is a fraction of each change's own candidate
+    When ``candidate_sets`` is given, the budget is a fraction of each change's own candidate
     set, so the selected count varies per change.
 
     ``split``, when given, is the evaluation boundary: ``eval_idx`` must lie inside its window,
     because a metric may only be averaged over rows the split held out for evaluation. The
     layer always satisfies this, since it evaluates exactly ``split.test_idx``; the guard
     matters for a caller that passes rows *directly*, which is what evaluating inside the
-    held-out tail does. A zero-shot arm over every change has no split and leaves it out.
+    held-out tail does. A zero-shot condition over every change has no split and leaves it out.
     """
     if split is not None:
         splits.require_in_window(split, eval_idx, what="evaluation rows")
-    spec, rows = population_rows(ds, eval_idx, population)
-    if isinstance(rows, contract.Unmeasured):
-        return Evaluation(population=spec.name, results=None, unmeasured=rows)
+    spec, rows = subset_rows(ds, eval_idx, subset)
+    if isinstance(rows, contract.Undefined):
+        return Evaluation(subset=spec.name, results=None, undefined=rows)
     return Evaluation(
-        population=spec.name,
+        subset=spec.name,
         results=sweep_matrices(
             scores,
             accessors.labels(ds),
-            candidates,
+            candidate_sets,
             eval_idx,
             ds.n_tests,
             budgets,
@@ -289,21 +289,21 @@ def evaluate(
     budgets: tuple[float, ...] = config.DEFAULT_BUDGETS,
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP,
     seed: int = config.SEED,
-    candidates: np.ndarray | None = None,
-    population: populations.Population | str = "fault_bearing",
+    candidate_sets: np.ndarray | None = None,
+    subset: subsets.Subset | str = "detectable",
     split: splits.Split | None = None,
 ) -> list[BudgetResult]:
     """Metric sweep returning only the results list, for the many call sites that want it.
 
-    Use :func:`evaluate_rows` when the population name and the measured/unmeasured
+    Use :func:`evaluate_rows` when the subset name and the measured/undefined
     distinction need to travel with the numbers, or when the evaluation boundary should be
     enforced (see its ``split`` parameter).
     """
     evaluation = evaluate_rows(
-        scores, ds, eval_idx, budgets, n_bootstrap, seed, candidates, population, split
+        scores, ds, eval_idx, budgets, n_bootstrap, seed, candidate_sets, subset, split
     )
     if not evaluation.measured:
-        raise UnmeasuredPopulation(evaluation)
+        raise UndefinedSubset(evaluation)
     return evaluation.results or []
 
 
@@ -312,13 +312,13 @@ def per_change_hits(
     ds: contract.Dataset,
     eval_idx: np.ndarray,
     budget: float,
-    candidates: np.ndarray | None = None,
+    candidate_sets: np.ndarray | None = None,
 ) -> dict[int, bool]:
-    """Map change index -> caught, at one budget. Used for paired comparisons."""
+    """Map change index -> caught, at one budget. Used for paired contrasts."""
     return {
         int(eval_idx[r]): bool(value)
         for r, value in enumerate(
-            per_change_hit_matrix(scores, accessors.labels(ds), candidates, eval_idx, budget)
+            per_change_hit_matrix(scores, accessors.labels(ds), candidate_sets, eval_idx, budget)
         )
         if accessors.fault_mask(ds)[int(eval_idx[r])]
     }
@@ -376,15 +376,15 @@ def results_to_dicts(results: list[BudgetResult]) -> list[dict]:
     return [asdict(r) for r in results]
 
 
-def population_report(evaluations: dict[str, Evaluation]) -> dict:
-    """Tabulate populations by whether they could be measured, for an artifact payload."""
+def subset_report(evaluations: dict[str, Evaluation]) -> dict:
+    """Tabulate subsets by whether they could be measured, for an artifact payload."""
     return {name: ev.to_dict() for name, ev in evaluations.items()}
 
 
 __all__ = [
     "BudgetResult",
     "Evaluation",
-    "UnmeasuredPopulation",
+    "UndefinedSubset",
     "budget_k",
     "curve_from_arrays",
     "evaluate",
@@ -393,8 +393,8 @@ __all__ = [
     "paired_bootstrap",
     "per_change_hit_matrix",
     "per_change_hits",
-    "population_report",
-    "population_rows",
+    "subset_report",
+    "subset_rows",
     "results_to_dicts",
     "sweep_matrices",
 ]

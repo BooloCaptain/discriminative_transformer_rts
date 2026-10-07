@@ -1,9 +1,9 @@
 """Tests for the extension points -- the reason the modules were split at all.
 
 The critique that motivated this restructure was that adding a feature meant editing a
-central assembly function, and adding a population meant editing a module-level dict in
+central assembly function, and adding a subset meant editing a module-level dict in
 the contract. These tests assert the opposite, and they are written so that the *only*
-files changed to add a feature or a population are the ones here.
+files changed to add a feature or a subset are the ones here.
 """
 
 from __future__ import annotations
@@ -12,20 +12,20 @@ import numpy as np
 import pytest
 
 from rts import features
-from rts.data import accessors, contract, populations, reporting, splits
-from rts.data.contract import Capability, Requirement, Unmeasured
+from rts.data import accessors, contract, reporting, splits, subsets
+from rts.data.contract import Capability, Requirement, Undefined
 from rts.features.block import FeatureBlock, FeatureColumn, FeatureGroup
 from tests.stub_dataset import StubDataset
 
 # --- adding a feature ------------------------------------------------------
 
 
-def _name_lengths(material) -> tuple[np.ndarray]:
-    """A new column, computed from material the contract already provides."""
+def _name_lengths(inputs) -> tuple[np.ndarray]:
+    """A new column, computed from inputs the contract already provides."""
     values = np.array(
-        [len(t.split("::")[-1]) for t in material["test_ids"]], dtype=np.float32
+        [len(t.split("::")[-1]) for t in inputs["test_ids"]], dtype=np.float32
     )
-    return (np.broadcast_to(values[None, :], (len(material["changes"]), len(values))),)
+    return (np.broadcast_to(values[None, :], (len(inputs["changes"]), len(values))),)
 
 
 EXTENDED = FeatureBlock(
@@ -59,7 +59,7 @@ def test_a_new_family_can_be_withheld_like_a_builtin_one():
         ds, block=EXTENDED.without_families("custom")
     )
     assert withheld.column("test_name_length").max() == 0.0
-    assert withheld.is_unmeasured("test_name_length")
+    assert withheld.is_undefined("test_name_length")
     # Withholding and genuine absence take the same path, so both report "withheld" vs a
     # named requirement -- the two are distinguishable.
     assert withheld.reason("test_name_length").requirement == "withheld"
@@ -68,11 +68,11 @@ def test_a_new_family_can_be_withheld_like_a_builtin_one():
 
 def test_a_group_whose_requirements_are_unmet_is_unmeasured_not_an_error():
     """A custom group that needs coverage on a dataset without it."""
-    def counts(material):
+    def counts(inputs):
         values = np.array(
-            [len(c) for c in material["coverage"]], dtype=np.float32
+            [len(c) for c in inputs["coverage"]], dtype=np.float32
         )
-        return (np.broadcast_to(values[:, None], (len(values), len(material["test_ids"]))),)
+        return (np.broadcast_to(values[:, None], (len(values), len(inputs["test_ids"]))),)
 
     block = FeatureBlock(
         name="needs-coverage",
@@ -85,17 +85,17 @@ def test_a_group_whose_requirements_are_unmet_is_unmeasured_not_an_error():
         ),
     )
     matrix = features.structured(StubDataset(coverage=False), block=block)
-    assert matrix.is_unmeasured("n_covered")
+    assert matrix.is_undefined("n_covered")
     assert matrix.reason("n_covered").requirement == Requirement.COVERAGE.value
     assert matrix.column("n_covered").max() == 0.0
     # The same block on a dataset that has coverage produces real values, so the
-    # unmeasured result above is about the dataset and not about the group.
+    # undefined result above is about the dataset and not about the group.
     with_coverage = features.structured(StubDataset(), block=block)
     assert with_coverage.column("n_covered")[0].max() == 2.0
 
 
 def test_material_a_group_names_but_the_caller_does_not_supply_raises():
-    """Caller-supplied material is a promise, so failing to supply it is a bug, not a zero."""
+    """Caller-supplied inputs is a promise, so failing to supply it is a bug, not a zero."""
     block = FeatureBlock(
         name="external",
         groups=(
@@ -106,8 +106,8 @@ def test_material_a_group_names_but_the_caller_does_not_supply_raises():
             ),
         ),
     )
-    assert block.external_material == frozenset({"something_external"})
-    with pytest.raises(ValueError, match="caller-supplied material"):
+    assert block.external_inputs == frozenset({"something_external"})
+    with pytest.raises(ValueError, match="caller-supplied inputs"):
         block.build(StubDataset())
     supplied = np.ones((4, 3), dtype=np.float32)
     matrix = block.build(StubDataset(), extra={"something_external": supplied})
@@ -136,13 +136,13 @@ def test_the_traceability_family_is_exactly_its_three_real_columns():
     """Regression: the family used to name ``n_tests_in_file``, which is not a column.
 
     A name-based ablation ignores a name that matches nothing, so the L3 rung silently
-    kept ``n_tests_in_test_file`` -- real traceability information -- while reporting
+    kept ``tests_per_file`` -- real traceability information -- while reporting
     itself as traceability-free. Withholding is strict now, so the same typo raises.
     """
-    assert features.STRUCTURED.family("traceability") == (
-        "path_distance",
-        "n_tests_in_test_file",
-        "filename_stem_match",
+    assert features.STRUCTURED.family("proximity") == (
+        "path_proximity",
+        "tests_per_file",
+        "filename_match",
     )
     assert "n_tests_in_file" not in features.STRUCTURED.columns
     with pytest.raises(KeyError):
@@ -169,46 +169,46 @@ def test_every_ladder_rung_withholds_exactly_the_columns_its_families_name():
     # traceability column standing.
     l3 = studies.rung_block(studies.RUNGS[-1][1])
     assert set(l3.suppressed) == set(
-        features.STRUCTURED.family("history")
+        features.STRUCTURED.family("temporal")
         + features.STRUCTURED.family("coverage")
-        + features.STRUCTURED.family("traceability")
+        + features.STRUCTURED.family("proximity")
     )
     assert len(l3.suppressed) == 9
 
 
-# --- adding a population ---------------------------------------------------
+# --- adding a subset ---------------------------------------------------
 
 
-def _long_named_tests(material) -> np.ndarray:
+def _long_named_tests(inputs) -> np.ndarray:
     return np.array(
-        [any(len(t.split("::")[-1]) > 8 for t in tests) for tests in material["killing"]],
+        [any(len(t.split("::")[-1]) > 8 for t in tests) for tests in inputs["killing"]],
         dtype=bool,
     )
 
 
-LONG_NAMES = populations.Population(
+LONG_NAMES = subsets.Subset(
     name="long_test_names",
-    note="a population added here, not in rts/data/populations.py",
+    note="a subset added here, not in rts/data/subsets.py",
     needs=("killing",),
     predicate=_long_named_tests,
 )
 
 
-MINE = populations.PopulationRegistry(
-    populations.STUDY.populations + (LONG_NAMES,)
+MINE = subsets.SubsetRegistry(
+    subsets.STUDY.subsets + (LONG_NAMES,)
 )
 
 
 def test_a_new_population_is_a_value_the_caller_supplies():
-    assert "long_test_names" not in populations.STUDY.names()
-    assert LONG_NAMES in MINE.populations
+    assert "long_test_names" not in subsets.STUDY.names()
+    assert LONG_NAMES in MINE.subsets
     assert MINE.get("long_test_names") is LONG_NAMES
     # The study's own set is unchanged by the caller's addition.
-    assert populations.STUDY.names() == (
-        "fault_bearing",
+    assert subsets.STUDY.names() == (
+        "detectable",
         "no_prior_failure",
-        "starved",
-        "low_pair_recurrence",
+        "cold_start",
+        "low_cooccurrence",
     )
 
 
@@ -227,12 +227,12 @@ def test_withholding_a_family_that_does_not_exist_is_an_error():
         EXTENDED.without_families("hitory")  # deliberate typo
     # But withholding a family that IS present, when the block may or may not have it,
     # is guarded by asking first -- which is what features.structured does for history.
-    assert EXTENDED.has_family("history")
+    assert EXTENDED.has_family("temporal")
     custom_only = FeatureBlock(
         name="custom-only",
         groups=(EXTENDED.groups[-1],),
     )
-    assert not custom_only.has_family("history")
+    assert not custom_only.has_family("temporal")
 
 
 def test_keeping_part_of_a_group_projects_its_computation():
@@ -240,48 +240,48 @@ def test_keeping_part_of_a_group_projects_its_computation():
     ds = StubDataset()
     full = features.structured(ds)
     # Two of the three coverage columns, taken from the middle and end of one group.
-    partial = features.STRUCTURED.only(["covers_function", "coverage_rank_prior"])
+    partial = features.STRUCTURED.only(["function_coverage", "coverage_set_size_prior"])
     matrix = features.structured(ds, block=partial)
-    assert matrix.columns == ("covers_function", "coverage_rank_prior")
-    assert np.array_equal(matrix.column("covers_function"), full.column("covers_function"))
+    assert matrix.columns == ("function_coverage", "coverage_set_size_prior")
+    assert np.array_equal(matrix.column("function_coverage"), full.column("function_coverage"))
     assert np.array_equal(
-        matrix.column("coverage_rank_prior"), full.column("coverage_rank_prior")
+        matrix.column("coverage_set_size_prior"), full.column("coverage_set_size_prior")
     )
     with pytest.raises(KeyError):
-        features.STRUCTURED.only(["covers_function", "nope"])
+        features.STRUCTURED.only(["function_coverage", "nope"])
 
 
 def test_a_population_over_coverage_material_is_unavailable_without_it():
-    over_coverage = populations.Population(
+    over_coverage = subsets.Subset(
         name="over_coverage",
-        note="requires coverage because it reads coverage material",
+        note="requires coverage because it reads coverage inputs",
         needs=("coverage",),
-        predicate=lambda material: np.array(
-            [bool(tests) for tests in material["coverage"]], dtype=bool
+        predicate=lambda inputs: np.array(
+            [bool(tests) for tests in inputs["coverage"]], dtype=bool
         ),
     )
-    # The requirement was never written down; it came from the material name.
+    # The requirement was never written down; it came from the inputs name.
     assert over_coverage.requires() == frozenset({Requirement.COVERAGE})
     assert over_coverage.unavailable(StubDataset()) is None
     missing = over_coverage.unavailable(StubDataset(coverage=False))
-    assert isinstance(missing, Unmeasured) and missing.requirement == "coverage"
+    assert isinstance(missing, Undefined) and missing.requirement == "coverage"
 
 
 def test_extending_the_registry_does_not_mutate_the_original():
-    extra = populations.PopulationRegistry((LONG_NAMES,))
-    combined = populations.STUDY + extra
+    extra = subsets.SubsetRegistry((LONG_NAMES,))
+    combined = subsets.STUDY + extra
     assert combined.names()[-1] == "long_test_names"
-    assert "long_test_names" not in populations.STUDY.names()
+    assert "long_test_names" not in subsets.STUDY.names()
     # Composition is left-biased, so re-adding an existing name does not duplicate it.
     assert (combined + extra).names() == combined.names()
 
 
 def test_a_registry_resolves_names_and_rejects_unknown_ones():
-    assert populations.population("starved", MINE) is populations.STARVED
+    assert subsets.subset("cold_start", MINE) is subsets.COLD_START
     with pytest.raises(KeyError):
-        populations.population("nope", MINE)
-    assert populations.resolve(LONG_NAMES, MINE) is LONG_NAMES
-    assert populations.resolve("fault_bearing", MINE) is populations.FAULT_BEARING
+        subsets.subset("nope", MINE)
+    assert subsets.resolve(LONG_NAMES, MINE) is LONG_NAMES
+    assert subsets.resolve("detectable", MINE) is subsets.DETECTABLE
 
 
 def test_a_population_can_be_evaluated_against_any_dataset():
@@ -293,21 +293,21 @@ def test_a_population_can_be_evaluated_against_any_dataset():
     split = splits.make_split(ds, train_fraction=0.5)
     scores = accessors.labels(ds).astype(np.float32)
     evaluation = evaluate.evaluate_rows(
-        scores, ds, split.test_idx, budgets=(0.5,), n_bootstrap=0, population=LONG_NAMES
+        scores, ds, split.test_idx, budgets=(0.5,), n_bootstrap=0, subset=LONG_NAMES
     )
-    assert evaluation.population == "long_test_names"
+    assert evaluation.subset == "long_test_names"
     assert evaluation.measured
     assert evaluation.n_rows == 1
 
 
 def test_a_populations_declaration_is_reportable():
-    assert LONG_NAMES.declaration() == {
+    assert LONG_NAMES.metadata() == {
         "name": "long_test_names",
         "needs": ["killing"],
         "requires": ["labels"],
-        "note": "a population added here, not in rts/data/populations.py",
+        "note": "a subset added here, not in rts/data/subsets.py",
     }
-    assert len(populations.STUDY.describe()) == 4
+    assert len(subsets.STUDY.describe()) == 4
     assert any(w.code == "dataset.multi_file_changes_flattened" for w in reporting.audit(
         StubDataset(extra_files={"c0": ("pkg/other.py",)})
     ))
@@ -334,14 +334,14 @@ def test_adding_a_capability_is_a_vocabulary_change_in_one_place():
     assert {c.value for c in Capability} == {"coverage", "durations"}
     for capability in Capability:
         assert contract.requirement_for(capability).value == capability.value
-    # The material catalogue is the single source of what reading something requires, so a
+    # The inputs catalogue is the single source of what reading something requires, so a
     # capability and its requirement cannot drift apart.
-    assert accessors.MATERIAL["coverage"].requires == frozenset({Requirement.COVERAGE})
-    assert accessors.MATERIAL["durations"].requires == frozenset({Requirement.DURATIONS})
-    assert accessors.MATERIAL["labels"].requires == frozenset({Requirement.LABELS})
-    assert accessors.MATERIAL["changes"].requires == frozenset()
-    assert accessors.MATERIAL["pair_failures"].requires == frozenset({Requirement.LABELS})
-    assert accessors.MATERIAL["pairs"].requires == frozenset({Requirement.COVERAGE})
+    assert accessors.INPUTS["coverage"].requires == frozenset({Requirement.COVERAGE})
+    assert accessors.INPUTS["durations"].requires == frozenset({Requirement.DURATIONS})
+    assert accessors.INPUTS["labels"].requires == frozenset({Requirement.LABELS})
+    assert accessors.INPUTS["changes"].requires == frozenset()
+    assert accessors.INPUTS["pair_failures"].requires == frozenset({Requirement.LABELS})
+    assert accessors.INPUTS["pairs"].requires == frozenset({Requirement.COVERAGE})
 
 
 def test_requirement_for_maps_a_capability_to_its_requirement():

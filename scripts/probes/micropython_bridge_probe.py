@@ -202,9 +202,9 @@ def main() -> None:
                 "budgets": results,
                 "median_rank": float(np.median(ranks)),
                 "mean_percentile": float((ranks / n_pool).mean()),
-                "bridge_rate": bridge,
+                "lexical_overlap_rate": bridge,
                 "label_proxy": "co-change (commit touches source and the test file)",
-                "boundary": (
+                'host_target_boundary': (
                     "tests/run-tests.py drives the interpreter under test with subprocess.Popen "
                     "and pty.openpty(); the changed code is C in py/, extmod/, ports/ and does "
                     "not run in the test process, so coverage cannot cross the boundary."

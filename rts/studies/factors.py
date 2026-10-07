@@ -1,10 +1,10 @@
-"""The study's axes, by role.
+"""The study's factors, by role.
 
-A *role* is a slot in a cell and an *axis* is what that slot can range over, so everything
-here is a value the layer turns into elements: the datasets, the feature blocks, the selector
-sets, the averaging populations and the split. The builders are functions rather than module
-constants because several of them hold selector instances that train on use -- a fresh axis
-per arm keeps two runs from sharing one model object.
+A *role* is a slot in a design point and a *factor* is what that slot can range over, so everything
+here is a value the layer turns into levels: the datasets, the feature blocks, the ranker
+sets, the averaging subsets and the split. The builders are functions rather than module
+constants because several of them hold ranker instances that train on use -- a fresh factor
+per condition keeps two runs from sharing one model object.
 """
 
 from __future__ import annotations
@@ -13,84 +13,84 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .. import bundles, config, features
-from ..data import datasets, populations, splits
+from ..data import datasets, splits, subsets
 from ..experiment import (
-    ROLE_DATASET,
-    ROLE_FEATURES,
-    ROLE_MODEL,
-    ROLE_POPULATION,
-    ROLE_SPLIT,
-    Axis,
-    Element,
+    FACTOR_DATASET,
+    FACTOR_FEATURES,
+    FACTOR_MODEL,
+    FACTOR_SPLIT,
+    FACTOR_SUBSET,
+    Factor,
+    Level,
     constant,
 )
 
-# Imported by name: ``model_axis`` has a parameter called ``selectors``, so a module binding
+# Imported by name: ``model_factor`` has a parameter called ``rankers``, so a module binding
 # of the same name would be shadowed by it inside that function.
-from ..model.selectors import (
-    LexicalSelector,
+from ..model.rankers import (
+    LexicalRanker,
     ProducedScores,
-    Selector,
-    default_selectors,
+    Ranker,
+    default_rankers,
 )
 
 # --- datasets ---------------------------------------------------------------
 
 
-def _marshmallow(labels: str) -> Element:
-    return Element(
+def _marshmallow(labels: str) -> Level:
+    return Level(
         f"marshmallow_{labels}",
-        lambda b, labels=labels: datasets.marshmallow(labels=labels, order_seed=b.knobs.seed),
+        lambda b, labels=labels: datasets.marshmallow(labels=labels, order_seed=b.controls.seed),
         note=f"the mutation-testing dataset, {labels} labels",
     )
 
 
-def _bundle_dataset(base_labels: str, rung: int, pool: str) -> Element:
+def _bundle_dataset(base_labels: str, rung: int, pool: str) -> Level:
     """A dataset derived from another dataset -- the pattern that needs no special support.
 
-    ``make`` is arbitrary Python, so a derived dataset is just an element whose builder
+    ``make`` is arbitrary Python, so a derived dataset is just a level whose builder
     constructs (and here shares) its base.
     """
 
     def make(binding, rung=rung, pool=pool, base_labels=base_labels):
-        base = datasets.marshmallow(labels=base_labels, order_seed=binding.knobs.seed)
-        return datasets.bundles(base, rung, seed=binding.knobs.seed, pool=pool)
+        base = datasets.marshmallow(labels=base_labels, order_seed=binding.controls.seed)
+        return datasets.bundles(base, rung, seed=binding.controls.seed, pool=pool)
 
     kind = bundles.RUNGS[rung][2]
-    return Element(
+    return Level(
         f"bundles_r{rung}_{pool}_{base_labels}",
         make,
         note=f"rung {rung} ({kind} distractors), pool={pool}",
     )
 
 
-def dataset_axis(
+def dataset_factor(
     label_sources: Sequence[str] = ("mutmut", "full"),
     *,
     bundle_rungs: Sequence[int] = (),
-    pool: str = "signal",
-) -> Axis:
-    """One element per label source, plus one per bundle rung when asked for.
+    pool: str = "focal",
+) -> Factor:
+    """One level per label source, plus one per bundle rung when asked for.
 
-    A label source is a dataset, not a knob, because a source is what the labels come from:
+    A label source is a dataset, not a control, because a source is what the labels come from:
     the refactor made it a constructor argument precisely so two label sources can coexist in
-    one process, and an axis is how that gets expressed.
+    one process, and a factor is how that gets expressed.
     """
-    elements = [_marshmallow(labels) for labels in label_sources]
-    elements.extend(
+    levels = [_marshmallow(labels) for labels in label_sources]
+    levels.extend(
         _bundle_dataset(label_sources[0], rung, pool) for rung in bundle_rungs
     )
-    return Axis(ROLE_DATASET, tuple(elements), note="one dataset per label source")
+    return Factor(FACTOR_DATASET, tuple(levels), note="one dataset per label source")
 
 
 # --- feature sets -----------------------------------------------------------
 
 
-def structured_feature_axis() -> Axis:
-    return Axis(
-        ROLE_FEATURES,
+def structured_feature_factor() -> Factor:
+    return Factor(
+        FACTOR_FEATURES,
         (constant("structured", features.STRUCTURED, tier="cpu", note="the 15 declared columns"),),
-        note="the one block the study's headline arm uses",
+        note="the one block the study's headline condition uses",
     )
 
 
@@ -99,7 +99,7 @@ def structured_feature_axis() -> Axis:
 
 #: The BM25 ablation probes from ``docs/plan.md``: shuffle the change text, the test text, or both,
 #: and re-score the same pairs. They are *controls* rather than competitors, but they are
-#: produced by the same machinery from the same context, so they are model elements instead of a
+#: produced by the same machinery from the same context, so they are model levels instead of a
 #: driver's second loop with its own bookkeeping.
 ABLATION_MODELS: tuple[tuple[str, dict], ...] = (
     ("bm25_change_shuffled", {"shuffle_changes": True}),
@@ -107,65 +107,65 @@ ABLATION_MODELS: tuple[tuple[str, dict], ...] = (
     ("bm25_both_shuffled", {"shuffle_changes": True, "shuffle_tests": True}),
 )
 
-def _model_element(selector: Selector, tier: str = "cpu", note: str = "") -> Element:
-    """An element for a selector.
+def _model_element(ranker: Ranker, tier: str = "cpu", note: str = "") -> Level:
+    """A level for a ranker.
 
-    ``tier`` is the caller's, not the selector's: it says whether *measuring* this element
-    needs a GPU, which no selector in the study does -- SemIf reads a precomputed cache, which
+    ``tier`` is the caller's, not the ranker's: it says whether *measuring* this level
+    needs a GPU, which no ranker in the study does -- SemIf reads a precomputed cache, which
     is why it declares an artifact requirement instead.
     """
-    return Element(
-        selector.name,
-        lambda _binding, selector=selector: selector,
+    return Level(
+        ranker.name,
+        lambda _binding, ranker=ranker: ranker,
         tier=tier,
-        note=note or type(selector).__name__,
+        note=note or type(ranker).__name__,
     )
 
 
-def model_axis(
-    selectors: Sequence[Selector] | None = None,
+def model_factor(
+    rankers: Sequence[Ranker] | None = None,
     *,
     ablations: bool = False,
     include_semif: bool = True,
-) -> Axis:
+) -> Factor:
     chosen = (
-        list(selectors)
-        if selectors is not None
-        else default_selectors(include_semif=include_semif)
+        list(rankers)
+        if rankers is not None
+        else default_rankers(include_semif=include_semif)
     )
     if ablations:
         chosen.extend(
-            LexicalSelector(**kwargs) for _, kwargs in ABLATION_MODELS
+            LexicalRanker(**kwargs) for _, kwargs in ABLATION_MODELS
         )
-    return Axis(
-        ROLE_MODEL,
+    return Factor(
+        FACTOR_MODEL,
         tuple(_model_element(s) for s in chosen),
-        note="the study's selector set" + (", plus the BM25 shuffle controls" if ablations else ""),
+        note="the study's ranker set" + (", plus the BM25 shuffle controls" if ablations else ""),
     )
 
 
-def semif_scoring_model_axis(
+def semif_scoring_model_factor(
     cache: Path,
     *,
-    candidates_mode: str = "full",
+    candidate_policy: str = "full",
     instruction: str | None = None,
     feature_mode: str | None = None,
     placement: str = "instruct",
     shuffle: bool = False,
-) -> Axis:
-    """The one model whose cache the cell **produces** instead of reading.
+) -> Factor:
+    """The one model whose cache the design point **produces** instead of reading.
 
-    Every other SemIf element in the study declares a cache as an artifact requirement, so an
-    absent one is an unmeasured cell. This one declares none: the cell scores the held-out
+    Every other SemIf level in the study declares a cache as an artifact requirement, so an
+    absent one is a undefined design point. This one declares none: the design point scores the held-out
     changes against the candidate pool and writes the cache. That makes the study's most
-    expensive step visible to the layer -- with a tier, a cost estimate and a cell key -- rather
+    expensive step visible to the layer -- with a tier, a cost estimate and a design point key -- rather
     than a precondition no one can see.
 
-    The prompt configuration is part of the element's **name**, exactly as the cache filename
+    The prompt configuration is part of the level's **name**, exactly as the cache filename
     encodes it today, because the score key is keyed on the name: two wordings must not share a
     matrix.
     """
-    parts = ["semif_scored", candidates_mode]
+    parts = ["semif_scored", candidate_policy]
     if instruction:
         parts.append(f"instr_{instruction}")
     if feature_mode:
@@ -183,7 +183,7 @@ def semif_scoring_model_axis(
         return semif_runner.score_context(
             ctx.ds,
             ctx.split.test_idx,
-            accessors.candidates(ctx.ds, candidates_mode),
+            accessors.candidate_sets(ctx.ds, candidate_policy),
             path,
             instruction=instruction,
             feature_mode=feature_mode,
@@ -192,11 +192,11 @@ def semif_scoring_model_axis(
         )
 
     def verify(ctx, path):
-        """Refuse a cache that does not cover the pairs this cell needs.
+        """Refuse a cache that does not cover the pairs this design point needs.
 
         The cache is identified by its path, so an existing file may have been produced for
         other rows, another candidate pool or another wording -- and it would be read as this
-        cell's. The pair set is the same one ``score_context`` builds, so a complete cache for
+        design point's. The pair set is the same one ``score_context`` builds, so a complete cache for
         this context passes and any other raises instead of yielding a number.
         """
         from ..data import accessors
@@ -205,7 +205,7 @@ def semif_scoring_model_axis(
         missing = semif_runner.missing_pairs(
             ctx.ds,
             ctx.split.test_idx,
-            accessors.candidates(ctx.ds, candidates_mode),
+            accessors.candidate_sets(ctx.ds, candidate_policy),
             path,
             instruction=instruction,
             feature_mode=feature_mode,
@@ -214,15 +214,15 @@ def semif_scoring_model_axis(
         )
         if missing:
             raise RuntimeError(
-                f"{Path(path).name} is missing {len(missing)} pair(s) this cell needs; it "
+                f"{Path(path).name} is missing {len(missing)} pair(s) this design point needs; it "
                 "was produced for a different context (rows, candidate pool or prompt) or "
                 "is torn -- delete it and re-run with the GPU tier"
             )
 
-    return Axis(
-        ROLE_MODEL,
+    return Factor(
+        FACTOR_MODEL,
         (
-            Element(
+            Level(
                 name,
                 lambda _binding: ProducedScores(
                     name, cache, produce, verifier=verify
@@ -230,69 +230,69 @@ def semif_scoring_model_axis(
                 tier="gpu",
                 note=(
                     "SemIf scores for the held-out changes over the "
-                    f"{candidates_mode} candidate pool, produced by the cell when "
+                    f"{candidate_policy} candidate pool, produced by the design point when "
                     f"{cache.name} is absent"
                 ),
             ),
         ),
-        note="score production declared as a cell",
+        note="score production declared as a design point",
     )
 
 
-# --- populations ------------------------------------------------------------
+# --- subsets ------------------------------------------------------------
 
 
-def population_axis(
-    names: Sequence[populations.Population | str] = (),
+def subset_factor(
+    names: Sequence[subsets.Subset | str] = (),
     *,
-    sparse: Sequence[int] = (),
-) -> Axis:
-    """Populations, by registry name or as values, plus parameterised sparse thresholds.
+    low_cooccurrence: Sequence[int] = (),
+) -> Factor:
+    """Populations, by registry name or as values, plus parameterised low_cooccurrence thresholds.
 
-    A parameterised population is passed as a value, because it is not in the registry: the
+    A parameterised subset is passed as a value, because it is not in the registry: the
     registry holds the study's named vocabulary, which is a different thing from the set of
-    populations a particular sweep uses. A sparse threshold and a starvation threshold are both
-    of the second kind -- the number is part of the population's identity, so it belongs to the
-    element rather than to a global name table.
+    subsets a particular sweep uses. A low_cooccurrence threshold and a starvation threshold are both
+    of the second kind -- the number is part of the subset's identity, so it belongs to the
+    level rather than to a global name table.
     """
-    elements: list[Element] = []
+    levels: list[Level] = []
     for spec in names:
-        population = populations.resolve(spec)
-        elements.append(
+        subset = subsets.resolve(spec)
+        levels.append(
             constant(
-                population.name,
-                population,
-                note="from populations.STUDY" if isinstance(spec, str) else population.note,
+                subset.name,
+                subset,
+                note="from subsets.STUDY" if isinstance(spec, str) else subset.note,
             )
         )
-    for threshold in sparse:
-        population = populations.low_pair_recurrence(threshold)
-        elements.append(constant(population.name, population, note=population.note))
-    return Axis(
-        ROLE_POPULATION,
-        tuple(elements),
-        note="the averaging populations a metric is reported over",
+    for threshold in low_cooccurrence:
+        subset = subsets.low_cooccurrence(threshold)
+        levels.append(constant(subset.name, subset, note=subset.note))
+    return Factor(
+        FACTOR_SUBSET,
+        tuple(levels),
+        note="the averaging subsets a metric is reported over",
     )
 
 
 # --- splits -----------------------------------------------------------------
 
 
-def split_axis(
+def split_factor(
     train_fraction: float = config.DEFAULT_TRAIN_FRACTION,
     shuffle: bool = False,
-) -> Axis:
+) -> Factor:
     label = f"split{int(round(train_fraction * 100))}" + ("_shuffled" if shuffle else "")
-    return Axis(
-        ROLE_SPLIT,
+    return Factor(
+        FACTOR_SPLIT,
         (
-            Element(
+            Level(
                 label,
                 lambda binding: splits.make_split(
                     binding.dataset,
                     train_fraction=train_fraction,
                     shuffle=shuffle,
-                    seed=binding.knobs.seed,
+                    seed=binding.controls.seed,
                 ),
                 tier="cpu",
                 note=f"{train_fraction:.0%} train prefix" + (", shuffled" if shuffle else ""),

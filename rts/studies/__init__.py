@@ -1,31 +1,31 @@
-"""The study's experiments, expressed as values: axes by role, and the named arms.
+"""The study's experiments, expressed as values: factors by role, and the named conditions.
 
 This is the config package the experiment layer was built for. It holds the study's *choices*
--- which datasets, which rungs, which selectors, which populations, which budgets -- and
+-- which datasets, which rungs, which rankers, which subsets, which budgets -- and
 nothing about how a sweep is executed.
 
-It used to be one module of about 1150 lines holding three catalogues, so the variation arms
+It used to be one module of about 1150 lines holding three catalogues, so the variation conditions
 were not findable without reading all of it. It is now a package, and the public names are
-re-exported here, so ``studies.study_arm()``, ``studies.RUNGS`` and ``studies.semif_margins``
+re-exported here, so ``studies.study_condition()``, ``studies.RUNGS`` and ``studies.semif_margins``
 read exactly as they did:
 
-* :mod:`.axes` -- the role-by-role element builders (datasets, feature blocks, selector sets,
-  populations, split);
-* :mod:`.arms` -- the named arms and the runner that shares one score cache between them;
-* :mod:`.ladder` -- the traceability ladder's declarations and its arm;
-* :mod:`.variations` -- the variation study's arms;
+* :mod:`.factors` -- the role-by-role level builders (datasets, feature blocks, ranker sets,
+  subsets, split);
+* :mod:`.conditions` -- the named conditions and the runner that shares one score cache between them;
+* :mod:`.ladder` -- the traceability ladder's declarations and its condition;
+* :mod:`.variations` -- the variation study's conditions;
 * :mod:`.readings` -- quantities computed *from* a report rather than recorded by the kernel.
 
-**Axis builders are functions, not module constants**, wherever the elements hold state. An
-:class:`~rts.experiment.Experiment` is immutable and could be a constant, but its axes hold
-selector instances that train on use, so a fresh axis per arm keeps two runs from sharing one
+**Factor builders are functions, not module constants**, wherever the levels hold state. An
+:class:`~rts.experiment.Experiment` is immutable and could be a constant, but its factors hold
+ranker instances that train on use, so a fresh factor per condition keeps two runs from sharing one
 model object.
 
-**Two arms here are verification vehicles.** ``study_arm()``/``sparse_arm()`` reproduce
-``artifacts/results_{full,covered}.json`` and ``ladder_arm()`` reproduces
+**Two conditions here are verification vehicles.** ``study_condition()``/``low_cooccurrence_condition()`` reproduce
+``artifacts/results_{full,covered}.json`` and ``ladder_condition()`` reproduces
 ``artifacts/ladder.json``, both through ``scripts/verify_experiment_layer.py``. The drivers that
 render those artifacts -- ``rts/render/pipeline.py``, ``rts/render/ladder.py`` and ``rts/render/bugsinpy.py`` -- are
-thin: they run an arm declared here and write it in the shape the recorded numbers are written
+thin: they run a condition declared here and write it in the shape the recorded numbers are written
 against. ``rts/bundles.py`` is the last driver that still holds its own sweep and is therefore
 the next migration (``docs/experiment.md`` §13).
 
@@ -41,25 +41,25 @@ import argparse
 
 from ..experiment import run
 from . import bugsinpy
-from .arms import (
-    SPARSE_BUDGETS,
-    SPARSE_THRESHOLDS,
+from .bugsinpy import BUGSINPY_BUDGETS, bugsinpy_condition, run_bugsinpy
+from .conditions import (
+    LOW_COOCCURRENCE_BUDGETS,
+    LOW_COOCCURRENCE_THRESHOLDS,
     dataset,
+    low_cooccurrence_condition,
     run_study,
-    semif_production_arm,
-    sparse_arm,
-    study_arm,
+    semif_production_condition,
+    study_condition,
 )
-from .axes import (
+from .factors import (
     ABLATION_MODELS,
-    dataset_axis,
-    model_axis,
-    population_axis,
-    semif_scoring_model_axis,
-    split_axis,
-    structured_feature_axis,
+    dataset_factor,
+    model_factor,
+    semif_scoring_model_factor,
+    split_factor,
+    structured_feature_factor,
+    subset_factor,
 )
-from .bugsinpy import BUGSINPY_BUDGETS, bugsinpy_arm, run_bugsinpy
 from .ladder import (
     LADDER_BUDGETS,
     LADDER_PROBE,
@@ -67,41 +67,41 @@ from .ladder import (
     LADDER_TABLE_RESAMPLES,
     RUNGS,
     SEMIF_LADDER_CACHE,
-    ladder_arm,
-    ladder_feature_axis,
-    ladder_model_axis,
-    ladder_population_axis,
-    ladder_populations,
-    ladder_selectors,
+    ladder_condition,
+    ladder_feature_factor,
+    ladder_model_factor,
+    ladder_rankers,
+    ladder_subset_factor,
+    ladder_subsets,
     rung_block,
 )
 from .readings import semif_margins
 from .variations import (
+    COLD_START_THRESHOLDS,
     SEED_SWEEP,
-    STARVED_THRESHOLDS,
     VARIATION_BUDGETS,
     VARIATION_PROBE,
     VARIATION_RESAMPLES,
     VARIATION_TABLE_RESAMPLES,
-    embed_arm,
+    cold_start_cache,
+    cold_start_condition,
+    cold_start_model_factor,
+    cold_start_seeds_condition,
     embed_cache,
-    embed_model_axis,
-    instruction_arm,
+    embed_model_factor,
+    embedding_condition,
     instruction_cache,
-    instruction_model_axis,
+    instruction_condition,
+    instruction_model_factor,
     instruction_names,
-    redundancy_arm,
-    redundancy_model_axis,
-    starved_arm,
-    starved_cache,
-    starved_model_axis,
-    starved_seeds_arm,
-    variation_comparisons,
+    redundancy_condition,
+    redundancy_model_factor,
+    variation_contrasts,
 )
 
 __all__ = [
     "ABLATION_MODELS",
-    "ARMS",
+    "CONDITIONS",
     "BUGSINPY_BUDGETS",
     "LADDER_BUDGETS",
     "LADDER_PROBE",
@@ -110,84 +110,84 @@ __all__ = [
     "RUNGS",
     "SEED_SWEEP",
     "SEMIF_LADDER_CACHE",
-    "SPARSE_BUDGETS",
-    "SPARSE_THRESHOLDS",
-    "STARVED_THRESHOLDS",
+    "LOW_COOCCURRENCE_BUDGETS",
+    "LOW_COOCCURRENCE_THRESHOLDS",
+    "COLD_START_THRESHOLDS",
     "VARIATION_BUDGETS",
     "VARIATION_PROBE",
     "VARIATION_RESAMPLES",
     "VARIATION_TABLE_RESAMPLES",
     "dataset",
-    "dataset_axis",
+    "dataset_factor",
     "bugsinpy",
-    "bugsinpy_arm",
-    "embed_arm",
+    "bugsinpy_condition",
+    "embedding_condition",
     "embed_cache",
-    "embed_model_axis",
-    "instruction_arm",
+    "embed_model_factor",
+    "instruction_condition",
     "instruction_cache",
-    "instruction_model_axis",
+    "instruction_model_factor",
     "instruction_names",
-    "ladder_arm",
-    "ladder_feature_axis",
-    "ladder_model_axis",
-    "ladder_population_axis",
-    "ladder_populations",
-    "ladder_selectors",
+    "ladder_condition",
+    "ladder_feature_factor",
+    "ladder_model_factor",
+    "ladder_subset_factor",
+    "ladder_subsets",
+    "ladder_rankers",
     "main",
-    "model_axis",
-    "population_axis",
-    "redundancy_arm",
-    "redundancy_model_axis",
+    "model_factor",
+    "subset_factor",
+    "redundancy_condition",
+    "redundancy_model_factor",
     "rung_block",
     "run_bugsinpy",
     "run_study",
     "semif_margins",
-    "semif_production_arm",
-    "semif_scoring_model_axis",
-    "sparse_arm",
-    "split_axis",
-    "starved_arm",
-    "starved_cache",
-    "starved_model_axis",
-    "starved_seeds_arm",
-    "structured_feature_axis",
-    "study_arm",
-    "variation_comparisons",
+    "semif_production_condition",
+    "semif_scoring_model_factor",
+    "low_cooccurrence_condition",
+    "split_factor",
+    "cold_start_condition",
+    "cold_start_cache",
+    "cold_start_model_factor",
+    "cold_start_seeds_condition",
+    "structured_feature_factor",
+    "study_condition",
+    "variation_contrasts",
 ]
 
 
 # --- CLI --------------------------------------------------------------------
 
-ARMS: dict[str, object] = {
-    "study": study_arm,
-    "study.covered": lambda: study_arm(candidates="covered"),
-    "ladder.mutmut": lambda: ladder_arm("mutmut"),
-    "ladder.full": lambda: ladder_arm("full"),
-    # Declared so score *production* is addressable like any other arm: the GPU tier is what
-    # makes it score rather than report an unmeasured cell.
-    "semif.produce": lambda: semif_production_arm(),
-    # One budget, which is the arm's unit: the recorded intervals are per-budget, so the full
+CONDITIONS: dict[str, object] = {
+    "study": study_condition,
+    "study.covered": lambda: study_condition(candidate_sets="coverage_restricted"),
+    "ladder.mutmut": lambda: ladder_condition("mutmut"),
+    "ladder.full": lambda: ladder_condition("full"),
+    # Declared so score *production* is addressable like any other condition: the GPU tier is what
+    # makes it score rather than report a undefined design point.
+    "semif.produce": lambda: semif_production_condition(),
+    # One budget, which is the condition's unit: the recorded intervals are per-budget, so the full
     # sweep is four runs through ``studies.run_bugsinpy`` (see ``rts/studies/bugsinpy``).
-    "bugsinpy": lambda: bugsinpy_arm(0.05),
+    "bugsinpy": lambda: bugsinpy_condition(0.05),
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("arm", choices=sorted(ARMS))
+    parser.add_argument("condition", choices=sorted(CONDITIONS))
     parser.add_argument("--out", default=None, help="output directory (default: artifacts/)")
     parser.add_argument(
         "--tiers",
         nargs="*",
         default=None,
-        help="cost tiers to spend; the rest are reported unmeasured",
+        help="cost tiers to spend; the rest are reported undefined",
     )
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--no-save", action="store_true")
     args = parser.parse_args()
 
-    experiment = ARMS[args.arm]()
+    experiment = CONDITIONS[args.condition]()
     report = run(
         experiment,
         out_dir=args.out,
@@ -195,12 +195,12 @@ def main() -> None:
         save=not args.no_save,
         verbose=not args.quiet,
     )
-    if args.arm.startswith("ladder"):
+    if args.condition.startswith("ladder"):
         margins = semif_margins(report)
-        print("\nSemIf margin over the best classical selector (starved141):")
+        print("\nSemIf margin over the best classical ranker (cache_covered):")
         for rung, table in margins.items():
-            if "unmeasured" in table:
-                print(f"  {rung}: {table['unmeasured']}")
+            if "undefined" in table:
+                print(f"  {rung}: {table['undefined']}")
                 continue
-            cells = "  ".join(f"b{k}={v['semif_margin']:+.3f}" for k, v in sorted(table.items()))
-            print(f"  {rung:>14}: {cells}")
+            design_points = "  ".join(f"b{k}={v['semif_margin']:+.3f}" for k, v in sorted(table.items()))
+            print(f"  {rung:>14}: {design_points}")

@@ -2,7 +2,7 @@
 
 Two layers, deliberately:
 
-* ``*_in`` functions are pure over the material they read -- a diff string, a test's
+* ``*_in`` functions are pure over the inputs they read -- a diff string, a test's
   source text, a label matrix. They are what a feature group calls, so a group never
   reaches back into a dataset while it is being built.
 * The dataset-level functions (``changed_lines(ds, change)``, ...) are the convenience
@@ -91,7 +91,7 @@ def removed_lines(ds: Dataset, change: Any) -> tuple[str, ...]:
     return removed_lines_in(ds.diff_text(change))
 
 
-def change_size(ds: Dataset, change: Any) -> int:
+def code_churn(ds: Dataset, change: Any) -> int:
     return change_size_in(ds.diff_text(change))
 
 
@@ -99,11 +99,11 @@ def change_query_text(ds: Dataset, change: Any) -> str:
     return change_query_text_in(ds.diff_text(change))
 
 
-def test_n_lines(ds: Dataset, test: TestId) -> int:
+def test_lines(ds: Dataset, test: TestId) -> int:
     return test_n_lines_in(ds.test_source(test))
 
 
-def test_n_tokens(ds: Dataset, test: TestId) -> int:
+def test_tokens(ds: Dataset, test: TestId) -> int:
     return test_n_tokens_in(ds.test_source(test))
 
 
@@ -126,7 +126,7 @@ def test_n_tokens_row(test_ids: Sequence[TestId], sources: Mapping[str, str | No
     return np.broadcast_to(values[None, :], (1, len(test_ids)))
 
 
-def n_tests_in_test_file(test_ids: Sequence[TestId]) -> np.ndarray:
+def tests_per_file(test_ids: Sequence[TestId]) -> np.ndarray:
     """How many tests share a file with this one. Cheap context for whether a test is a
     focused unit test or one of many in a large module suite."""
     counts: dict[str, int] = defaultdict(int)
@@ -156,7 +156,7 @@ def _dir_distance(a: list[str], b: list[str]) -> int:
     return len(a) + len(b) - 2 * common
 
 
-def path_distance(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.ndarray:
+def path_proximity(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.ndarray:
     """Directory-tree distance between each change's file and each test's file."""
     n_c, n_t = len(paths), len(test_ids)
     change_dirs, _ = _dirs_and_stems(paths)
@@ -174,7 +174,7 @@ def path_distance(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.ndarra
     return out
 
 
-def filename_stem_match(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.ndarray:
+def filename_match(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.ndarray:
     """``test_utils.py`` for ``utils.py``: a strong, cheap naming signal."""
     n_c, n_t = len(paths), len(test_ids)
     _, change_stems = _dirs_and_stems(paths)
@@ -187,7 +187,7 @@ def filename_stem_match(paths: Sequence[str], test_ids: Sequence[TestId]) -> np.
 
 
 def coverage_columns(
-    covered_by: Sequence[frozenset[TestId]],
+    coverage_by: Sequence[frozenset[TestId]],
     test_index: Mapping[TestId, int],
     n_changes: int,
     n_tests: int,
@@ -199,7 +199,7 @@ def coverage_columns(
     not. A test outside the pool cannot be a column.
     """
     mask = np.zeros((n_changes, n_tests), dtype=np.float32)
-    for i, tests in enumerate(covered_by):
+    for i, tests in enumerate(coverage_by):
         for test in tests:
             j = test_index.get(test)
             if j is not None:
@@ -214,7 +214,7 @@ def coverage_columns(
     )
 
 
-def history_features(
+def temporal_features(
     label_matrix: np.ndarray, run_matrix: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Cumulative ``(failure_rate, runs, last_failure_age)`` over the canonical order.
@@ -249,22 +249,22 @@ def history_features(
 __all__ = [
     "change_query_text",
     "change_query_text_in",
-    "change_size",
+    "code_churn",
     "change_size_in",
     "changed_lines",
     "changed_lines_in",
     "coverage_columns",
     "durations_column",
-    "filename_stem_match",
-    "history_features",
-    "n_tests_in_test_file",
-    "path_distance",
+    "filename_match",
+    "temporal_features",
+    "tests_per_file",
+    "path_proximity",
     "removed_lines",
     "removed_lines_in",
-    "test_n_lines",
+    "test_lines",
     "test_n_lines_in",
     "test_n_lines_row",
-    "test_n_tokens",
+    "test_tokens",
     "test_n_tokens_in",
     "test_n_tokens_row",
 ]

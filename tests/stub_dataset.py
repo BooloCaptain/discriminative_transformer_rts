@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rts.data.contract import Capability, Dataset, Ordering, TestUnit
+from rts.data.contract import Capability, Dataset, Granularity, Ordering
 
 TEST_IDS = (
     "tests/test_alpha.py::test_one",
@@ -83,8 +83,8 @@ class StubDataset(Dataset):
         name: str = "stub",
         coverage: bool = True,
         durations: bool = True,
-        ordering: Ordering = Ordering.IMPOSED,
-        test_unit: TestUnit = TestUnit.FUNCTION,
+        ordering: Ordering = Ordering.SYNTHETIC,
+        test_granularity: Granularity = Granularity.FUNCTION,
         changes: tuple[tuple[str, str, str, tuple[str, ...]], ...] = CHANGES,
         sources=SOURCES,
         extra_files: dict[str, tuple[str, ...]] | None = None,
@@ -93,7 +93,7 @@ class StubDataset(Dataset):
         self._coverage = coverage
         self._durations = durations
         self._ordering = ordering
-        self._test_unit = test_unit
+        self._test_unit = test_granularity
         extras = dict(extra_files or {})
         self._changes = tuple(
             StubChange(
@@ -126,12 +126,12 @@ class StubDataset(Dataset):
     def killing_tests(self, change):
         return frozenset(change.killing)
 
-    def ran_tests(self, change):
+    def executed_tests(self, change):
         # Every test ran, so the label and the run set differ only by outcome.
         return frozenset(TEST_IDS)
 
     @property
-    def test_pool(self):
+    def test_suite(self):
         return TEST_IDS
 
     def test_source(self, test):
@@ -162,8 +162,8 @@ class StubDataset(Dataset):
     def ordering(self) -> Ordering:
         return self._ordering
 
-    def test_unit(self) -> TestUnit:
+    def test_granularity(self) -> Granularity:
         return self._test_unit
 
-    def semantics(self):
+    def annotations(self):
         return {"change": "stub", "ordering": self._ordering.value}

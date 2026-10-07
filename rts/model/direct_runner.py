@@ -26,10 +26,10 @@ the wrong thing to measure here:
   cross-window normalisation or a tournament, both of which add their own
   assumptions.
 
-Pairwise keeps the context the same size as the reranker arm's (change + one test),
-so the only differences from the reranker arm are the model and the prompt
+Pairwise keeps the context the same size as the reranker condition's (change + one test),
+so the only differences from the reranker condition are the model and the prompt
 formulation. That is the clean, comparable experiment. ``--windowed`` implements the
-tournament variant as a secondary arm for completeness.
+tournament variant as a secondary condition for completeness.
 
 Scoring
 -------
@@ -40,7 +40,7 @@ one global scale:
     question = <the RTS criterion>
     options  = yes / no
 
-Readout is ``logit(A) - logit(B)``, the same log-odds shape the reranker arm uses.
+Readout is ``logit(A) - logit(B)``, the same log-odds shape the reranker condition uses.
 """
 
 from __future__ import annotations
@@ -52,11 +52,11 @@ from pathlib import Path
 import numpy as np
 
 from .. import config
-from ..data import accessors, contract, datasets, populations, splits
+from ..data import accessors, contract, datasets, splits, subsets
 from .semif_runner import PairSet, build_pair_set, load_done_keys
 
 # The criterion for pairwise direct mode. Deliberately the same content as the
-# reranker's INSTRUCTION default so the comparison isolates formulation + model
+# reranker's INSTRUCTION default so the contrast isolates formulation + model
 # rather than wording: this is the ``default`` variant of the P2 sweep expressed as
 # a criterion rather than as a relevance question.
 CRITERION = (
@@ -181,7 +181,7 @@ def score_to_cache_direct(
     """Score pairs with direct mode, flushing per batch so the run is resumable.
 
     Writes the same record shape as ``rts.model.semif_runner.score_to_cache`` so
-    ``rts.model.semif.load_scores`` consumes either arm without changes.
+    ``rts.model.semif.load_scores`` consumes either condition without changes.
     """
     import torch
 
@@ -237,7 +237,7 @@ def score_to_cache_direct(
 
     wall = time.perf_counter() - started
     stats = {
-        "arm": "direct_pairwise",
+        "condition": "direct_pairwise",
         "pairs": len(keep),
         "batch_size": batch_size,
         "wall_seconds": wall,
@@ -251,11 +251,11 @@ def score_to_cache_direct(
     return stats
 
 
-def score_arm(
+def score_condition(
     batch_size: int = 8,
     out_path: Path | None = None,
-    candidates_mode: str = "covered",
-    starved_max_failures: int | None = None,
+    candidate_policy: str = "coverage_restricted",
+    cold_start_max_failures: int | None = None,
     max_tokens: int | None = None,
     criterion: str = CRITERION,
     seed: int = config.SEED,
@@ -264,21 +264,21 @@ def score_arm(
 ) -> dict:
     ds = datasets.marshmallow(order_seed=seed)
     split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, candidates_mode)
+    candidate_sets = accessors.candidate_sets(ds, candidate_policy)
     rows = split.test_idx
-    if starved_max_failures is not None:
-        mask = populations.starved_mask(ds, max_failures=starved_max_failures)
+    if cold_start_max_failures is not None:
+        mask = subsets.cold_start_mask(ds, max_failures=cold_start_max_failures)
         rows = split.test_idx[mask[split.test_idx]]
     if limit is not None:
         rows = rows[:limit]
-    pair_set = build_pair_set(ds, rows, candidates)
+    pair_set = build_pair_set(ds, rows, candidate_sets)
     if out_path is None:
-        suffix = "starved" if starved_max_failures is not None else "heldout"
-        out_path = config.ARTIFACTS / f"semif_direct_{suffix}_{candidates_mode}.jsonl"
+        suffix = "cold_start" if cold_start_max_failures is not None else "heldout"
+        out_path = config.ARTIFACTS / f"semif_direct_{suffix}_{candidate_policy}.jsonl"
 
-    print("arm             : direct_pairwise (Qwen3.5-4B)")
-    print(f"candidates      : {candidates_mode}")
-    print(f"starved <=      : {starved_max_failures}")
+    print("condition             : direct_pairwise (Qwen3.5-4B)")
+    print(f"candidate_sets      : {candidate_policy}")
+    print(f"cold_start <=      : {cold_start_max_failures}")
     print(f"changes         : {len(rows)}")
     print(f"pairs           : {len(pair_set.pairs):,}")
     print(f"output          : {out_path}")
@@ -294,8 +294,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidates", default="covered", choices=["covered", "full"])
-    parser.add_argument("--starved", type=int, default=None)
+    parser.add_argument("--candidate-policy", default="coverage_restricted", choices=["coverage_restricted", "full"])
+    parser.add_argument("--cold_start", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument("--out", type=Path, default=None)
@@ -303,11 +303,11 @@ if __name__ == "__main__":
                         help="score only the first N changes (smoke test)")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     args = parser.parse_args()
-    score_arm(
+    score_condition(
         batch_size=args.batch_size,
         out_path=args.out,
-        candidates_mode=args.candidates,
-        starved_max_failures=args.starved,
+        candidate_policy=args.candidate_policy,
+        cold_start_max_failures=args.cold_start,
         max_tokens=args.max_tokens,
         limit=args.limit,
         device=args.device,

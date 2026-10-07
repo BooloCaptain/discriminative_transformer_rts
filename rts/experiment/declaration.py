@@ -1,10 +1,10 @@
-"""What an experiment *is*, as a value: roles, axes, elements, cells, knobs.
+"""What an experiment *is*, as a value: roles, factors, levels, design points, controls.
 
-Nothing here measures anything. ``Experiment`` is an immutable declaration, ``Axis`` is an
-ordered set of variants of one role, and ``Element`` is one variant with its cost -- and, when
+Nothing here measures anything. ``Experiment`` is an immutable declaration, ``Factor`` is an
+ordered set of variants of one role, and ``Level`` is one variant with its cost -- and, when
 a variant cannot be expressed for a role's value alone, its applicability. Measuring is
 :mod:`.run`; what a measurement records is :mod:`.report`. The package docstring is the
-original module's, which explains the five roles and why a cell is not a product.
+original module's, which explains the five roles and why a design point is not a product.
 """
 
 from __future__ import annotations
@@ -16,57 +16,57 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
-from ..data.contract import Dataset, Unmeasured, is_unmeasured
+from ..data.contract import Dataset, Undefined, is_undefined
 
-ROLE_DATASET = "dataset"
+FACTOR_DATASET = "dataset"
 
-ROLE_FEATURES = "features"
+FACTOR_FEATURES = "features"
 
-ROLE_MODEL = "model"
+FACTOR_MODEL = "model"
 
-ROLE_POPULATION = "population"
+FACTOR_SUBSET = "subset"
 
-ROLE_SPLIT = "split"
-
-
-#: The roles an experiment sweeps, in the order a cell's key names them.
-ROLES: tuple[str, ...] = (ROLE_DATASET, ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, ROLE_SPLIT)
+FACTOR_SPLIT = "split"
 
 
-#: Roles whose variation changes *which rows exist* or which pairs are rankable. Two cells
+#: The roles an experiment sweeps, in the order a design point's key names them.
+FACTORS: tuple[str, ...] = (FACTOR_DATASET, FACTOR_FEATURES, FACTOR_MODEL, FACTOR_SUBSET, FACTOR_SPLIT)
+
+
+#: Roles whose variation changes *which rows exist* or which pairs are rankable. Two design points
 #: differing in one of these are not two measurements of one quantity, so a paired
-#: comparison across them is refused rather than reported (``docs/experiment.md`` §7).
-ROW_CHANGING_ROLES = frozenset({ROLE_DATASET, ROLE_POPULATION, ROLE_SPLIT})
+#: contrast across them is refused rather than reported (``docs/experiment.md`` §7).
+ROW_CHANGING_FACTORS = frozenset({FACTOR_DATASET, FACTOR_SUBSET, FACTOR_SPLIT})
 
 
 ARTIFACT_PREFIX = "artifact:"
 
 
 
-# --- knobs and environment -------------------------------------------------
+# --- controls and environment -------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Knobs:
+class Controls:
     """Run-level constants: a choice that is free, not one the harness can derive.
 
-    These do not multiply into cells. They parameterise every cell and are recorded once, so
-    a difference in a result can never be attributed to a knob that moved silently.
+    These do not multiply into design points. They parameterise every design point and are recorded once, so
+    a difference in a result can never be attributed to a control that moved silently.
     """
 
     seed: int = config.SEED
     budgets: tuple[float, ...] = config.DEFAULT_BUDGETS
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP
-    candidates: str = "full"
+    candidate_policy: str = "full"
     #: Resamples for a paired test, when it differs from the table CI's. Two quantities, two
     #: precision needs: the recorded ladder used 1000 for its table intervals and 2000 for its
     #: paired p-values. ``None`` means "the same as ``n_bootstrap``".
     n_bootstrap_paired: int | None = None
     #: Seed for the *model's* randomness, when that should differ from the run's. ``seed`` fixes
-    #: the imposed change order and the temporal split, and a score cache is keyed to that order
+    #: the synthetic change order and the temporal split, and a score cache is keyed to that order
     #: -- so a study that wants to re-fit one model under several seeds must vary this one and
     #: hold ``seed``, or it would move the data underneath the cache and invalidate the paired
-    #: comparison instead of testing it. ``None`` means "the same as ``seed``".
+    #: contrast instead of testing it. ``None`` means "the same as ``seed``".
     model_seed: int | None = None
 
     def to_dict(self) -> dict:
@@ -74,9 +74,9 @@ class Knobs:
             "seed": self.seed,
             "model_seed": self.model_seed,
             "budgets": list(self.budgets),
-            "n_bootstrap": self.n_bootstrap,
-            "n_bootstrap_paired": self.paired_resamples,
-            "candidates": self.candidates,
+            "bootstrap_resamples": self.n_bootstrap,
+            "paired_resample_count": self.paired_resamples,
+            "candidate_policy": self.candidate_policy,
         }
 
     @property
@@ -92,22 +92,22 @@ class Knobs:
 
 @dataclass(frozen=True)
 class Environment:
-    """What a run offers to the elements it builds.
+    """What a run offers to the levels it builds.
 
     ``caches`` maps a short name to an artifact path, so a run can point at a different cache
     without editing the experiment that names the requirement. ``shared`` is free-form and
-    exists so a *caller* can inject an object an element expects -- a stub dataset in a test,
-    or one expensive base dataset shared by several derived elements.
+    exists so a *caller* can inject an object a level expects -- a stub dataset in a test,
+    or one expensive base dataset shared by several derived levels.
     """
 
-    knobs: Knobs = Knobs()
+    controls: Controls = Controls()
     out_dir: Path = config.ARTIFACTS
     caches: Mapping[str, Path] = field(default_factory=dict)
     shared: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
-            "knobs": self.knobs.to_dict(),
+            "controls": self.controls.to_dict(),
             "out_dir": str(self.out_dir),
             "caches": {k: str(v) for k, v in self.caches.items()},
             "shared": sorted(self.shared),
@@ -117,18 +117,18 @@ class Environment:
 
 @dataclass(frozen=True)
 class Binding:
-    """What an :class:`Element` is handed when it is built.
+    """What an :class:`Level` is handed when it is built.
 
-    ``dataset`` is the cell's resolved dataset for every role except ``dataset`` itself, which
-    is built first and sees ``None``. A dataset element that derives from another dataset
+    ``dataset`` is the design point's resolved dataset for every role except ``dataset`` itself, which
+    is built first and sees ``None``. A dataset level that derives from another dataset
     simply constructs or shares its base inside ``make`` -- no extra machinery is needed,
     because ``make`` is already arbitrary Python.
 
-    ``factors`` is the cell's factor names by role, and is populated **only when an element's
+    ``factors`` is the design point's factor names by role, and is populated **only when a level's
     applicability is checked**. It is empty while a value is being built, because a value is
-    built once per run and shared across every cell that selects it: an element whose ``make``
-    read this would silently be reused for cells it does not describe. Anything that genuinely
-    varies by cell belongs in ``Element.applies``, which is asked per cell.
+    built once per run and shared across every design point that selects it: a level whose ``make``
+    read this would silently be reused for design points it does not describe. Anything that genuinely
+    varies by design point belongs in ``Level.applies``, which is asked per design point.
     """
 
     env: Environment
@@ -136,8 +136,8 @@ class Binding:
     factors: Mapping[str, str] = field(default_factory=dict)
 
     @property
-    def knobs(self) -> Knobs:
-        return self.env.knobs
+    def controls(self) -> Controls:
+        return self.env.controls
 
     @property
     def caches(self) -> Mapping[str, Path]:
@@ -149,18 +149,18 @@ class Binding:
 
 
 
-# --- elements and axes -----------------------------------------------------
+# --- levels and factors -----------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Element:
+class Level:
     """One variant of one input: a name, a builder, and what it costs to measure.
 
     ``applies`` is for the case where availability cannot be asked of one role's value alone.
-    Normally a requirement is a property of a value (``Selector.requirements()``,
-    ``Population.needs``), and the kernel resolves it against the dataset. But some variants
-    are only meaningful in combination with a particular element of *another* role -- a score
-    artifact that covers one population and not another -- and that is a fact the study config
+    Normally a requirement is a property of a value (``Ranker.requirements()``,
+    ``Subset.needs``), and the kernel resolves it against the dataset. But some variants
+    are only meaningful in combination with a particular level of *another* role -- a score
+    artifact that covers one subset and not another -- and that is a fact the study config
     knows and no single value does. Declaring it here keeps the knowledge beside the variant
     rather than putting a special case in the kernel.
     """
@@ -170,19 +170,19 @@ class Element:
     tier: str = "cpu"
     estimated_seconds: float | None = None
     note: str = ""
-    applies: Callable[[Binding], Unmeasured | None] | None = None
+    applies: Callable[[Binding], Undefined | None] | None = None
 
     def build(self, binding: Binding) -> Any:
-        """The value this element denotes, or an :class:`Unmeasured` if it cannot exist."""
+        """The value this level denotes, or an :class:`Undefined` if it cannot exist."""
         return self.make(binding)
 
-    def check(self, binding: Binding) -> Unmeasured | None:
-        """Why this element does not apply to ``binding``'s cell, or ``None`` if it does."""
+    def check(self, binding: Binding) -> Undefined | None:
+        """Why this level does not apply to ``binding``'s design point, or ``None`` if it does."""
         if self.applies is None:
             return None
         return self.applies(binding)
 
-    def declaration(self) -> dict:
+    def metadata(self) -> dict:
         return {
             "name": self.name,
             "tier": self.tier,
@@ -193,23 +193,23 @@ class Element:
 
 
 
-def constant(name: str, obj: Any, **kwargs: Any) -> Element:
-    """An element whose value does not depend on the run.
+def constant(name: str, obj: Any, **kwargs: Any) -> Level:
+    """A level whose value does not depend on the run.
 
-    The value is shared by every cell that selects this element, which is intended: for a
+    The value is shared by every design point that selects this level, which is intended: for a
     dataset it means the artifact is read once however many models are swept over it.
     """
-    return Element(name=name, make=lambda _binding: obj, **kwargs)
+    return Level(name=name, make=lambda _binding: obj, **kwargs)
 
 
 
-def unavailable(name: str, reason: Unmeasured, **kwargs: Any) -> Element:
-    """An element that can never be materialised, carrying why.
+def unavailable(name: str, reason: Undefined, **kwargs: Any) -> Level:
+    """A level that can never be materialised, carrying why.
 
-    Used by :meth:`Axis.map` to keep an element whose shared option cannot be expressed for
-    it: the cell is then reported unmeasured rather than silently absent.
+    Used by :meth:`Factor.map` to keep a level whose shared option cannot be expressed for
+    it: the design point is then reported undefined rather than silently absent.
     """
-    return Element(
+    return Level(
         name=name,
         make=lambda _binding, reason=reason: reason,
         note=kwargs.pop("note", "") or reason.note,
@@ -219,86 +219,86 @@ def unavailable(name: str, reason: Unmeasured, **kwargs: Any) -> Element:
 
 
 @dataclass(frozen=True)
-class Axis:
-    """A named, ordered set of variants of one role's input."""
+class Factor:
+    """A named, ordered set of levels for one role."""
 
     role: str
-    elements: tuple[Element, ...]
+    levels: tuple[Level, ...]
     note: str = ""
 
     def __post_init__(self) -> None:
-        if self.role not in ROLES:
-            raise ValueError(f"unknown role {self.role!r}; known roles: {list(ROLES)}")
-        names = [e.name for e in self.elements]
+        if self.role not in FACTORS:
+            raise ValueError(f"unknown role {self.role!r}; known roles: {list(FACTORS)}")
+        names = [e.name for e in self.levels]
         duplicates = sorted({n for n in names if names.count(n) > 1})
         if duplicates:
-            raise ValueError(f"axis {self.role!r} has duplicate element names: {duplicates}")
-        if not self.elements:
-            raise ValueError(f"axis {self.role!r} has no elements")
+            raise ValueError(f"factor {self.role!r} has duplicate level names: {duplicates}")
+        if not self.levels:
+            raise ValueError(f"factor {self.role!r} has no levels")
 
     def names(self) -> tuple[str, ...]:
-        return tuple(e.name for e in self.elements)
+        return tuple(e.name for e in self.levels)
 
-    def get(self, name: str) -> Element:
-        for element in self.elements:
-            if element.name == name:
-                return element
-        raise KeyError(f"axis {self.role!r} has no element {name!r}; have {list(self.names())}")
+    def get(self, name: str) -> Level:
+        for level in self.levels:
+            if level.name == name:
+                return level
+        raise KeyError(f"factor {self.role!r} has no level {name!r}; have {list(self.names())}")
 
     def has(self, name: str) -> bool:
-        return any(e.name == name for e in self.elements)
+        return any(e.name == name for e in self.levels)
 
-    def select(self, *names: str) -> Axis:
-        """This axis restricted to ``names``, in the axis's own order."""
+    def select(self, *names: str) -> Factor:
+        """This factor restricted to ``names``, in the factor's own order."""
         wanted = set(names)
         unknown = wanted - set(self.names())
         if unknown:
-            raise KeyError(f"axis {self.role!r} has no element(s) {sorted(unknown)}")
-        return Axis(self.role, tuple(e for e in self.elements if e.name in wanted), self.note)
+            raise KeyError(f"factor {self.role!r} has no level(s) {sorted(unknown)}")
+        return Factor(self.role, tuple(e for e in self.levels if e.name in wanted), self.note)
 
-    def without(self, *names: str) -> Axis:
-        """This axis with ``names`` removed."""
+    def without(self, *names: str) -> Factor:
+        """This factor with ``names`` removed."""
         dropped = set(names)
         unknown = dropped - set(self.names())
         if unknown:
-            raise KeyError(f"axis {self.role!r} has no element(s) {sorted(unknown)}")
-        return Axis(self.role, tuple(e for e in self.elements if e.name not in dropped), self.note)
+            raise KeyError(f"factor {self.role!r} has no level(s) {sorted(unknown)}")
+        return Factor(self.role, tuple(e for e in self.levels if e.name not in dropped), self.note)
 
-    def extend(self, *elements: Element) -> Axis:
-        return Axis(self.role, self.elements + tuple(elements), self.note)
+    def extend(self, *levels: Level) -> Factor:
+        return Factor(self.role, self.levels + tuple(levels), self.note)
 
-    def map(self, fn: Callable[[Element], Element | Unmeasured]) -> Axis:
-        """Apply a shared dimension-level option to every element.
+    def map(self, fn: Callable[[Level], Level | Undefined]) -> Factor:
+        """Apply a shared dimension-level option to every level.
 
-        ``fn`` returns the element as it should be with the option applied, or an
-        :class:`Unmeasured` when the option cannot be expressed for that element -- which is a
-        real case, not a degenerate one: "exclude the history family" is expressible for a
+        ``fn`` returns the level as it should be with the option applied, or an
+        :class:`Undefined` when the option cannot be expressed for that level -- which is a
+        real case, not a degenerate one: "exclude the temporal family" is expressible for a
         column-reading model and meaningless for one that reads text pairs. An inapplicable
-        element is kept as a poisoned element rather than dropped, so its cells appear as
-        unmeasured findings.
+        level is kept as an undefined level rather than dropped, so its design points appear as
+        undefined findings.
         """
-        out: list[Element] = []
-        for element in self.elements:
-            result = fn(element)
-            if is_unmeasured(result):
+        out: list[Level] = []
+        for level in self.levels:
+            result = fn(level)
+            if is_undefined(result):
                 out.append(
-                    unavailable(element.name, result, tier=element.tier, note=element.note)
+                    unavailable(level.name, result, tier=level.tier, note=level.note)
                 )
             else:
                 out.append(result)
-        return Axis(self.role, tuple(out), self.note)
+        return Factor(self.role, tuple(out), self.note)
 
-    def declaration(self) -> list[dict]:
-        return [e.declaration() for e in self.elements]
+    def metadata(self) -> list[dict]:
+        return [e.metadata() for e in self.levels]
 
 
 
-# --- cells and comparisons -------------------------------------------------
+# --- design points and contrasts -------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Cell:
-    """One point in the product: one element per role, plus the run's knobs."""
+class DesignPoint:
+    """One point in the product: one level per role, plus the run's controls."""
 
     factors: tuple[tuple[str, str], ...]
     tier: str = "cpu"
@@ -308,11 +308,11 @@ class Cell:
         for r, n in self.factors:
             if r == role:
                 return n
-        raise KeyError(f"cell has no factor for role {role!r}")
+        raise KeyError(f"design_point has no factor for role {role!r}")
 
     @property
     def key(self) -> str:
-        """Stable identity of the cell: the element names, in role order."""
+        """Stable identity of the design point: the level names, in role order."""
         return "|".join(f"{r}={n}" for r, n in self.factors)
 
     @property
@@ -333,13 +333,13 @@ class Cell:
 
 
 @dataclass(frozen=True)
-class Comparison:
-    """A paired delta against a reference element of one role, at a probe budget.
+class Contrast:
+    """A paired delta against a reference level of one role, at a probe budget.
 
-    Only a *pairable* role may be named. Pairing is a claim that the two cells measure the same
+    Only a *pairable* role may be named. Pairing is a claim that the two design points measure the same
     quantity on the same rows, which is false the moment the varying role changes the rows --
     so a row-changing role is refused at construction rather than producing a plausible number
-    from two different populations.
+    from two different subsets.
     """
 
     role: str
@@ -348,10 +348,10 @@ class Comparison:
     note: str = ""
 
     def __post_init__(self) -> None:
-        if self.role in ROW_CHANGING_ROLES:
-            pairable = sorted(set(ROLES) - ROW_CHANGING_ROLES)
+        if self.role in ROW_CHANGING_FACTORS:
+            pairable = sorted(set(FACTORS) - ROW_CHANGING_FACTORS)
             raise ValueError(
-                f"comparison over role {self.role!r} would pair different populations: "
+                f"contrast over role {self.role!r} would pair different subsets: "
                 f"that role changes which rows exist, so only {pairable} give a paired delta"
             )
 
@@ -364,103 +364,103 @@ class Comparison:
 class Experiment:
     """A declaration of what to sweep. A value: building one runs nothing.
 
-    ``history`` is an **override**, not an option. Whether the cumulative history columns are
+    ``history`` is an **override**, not an option. Whether the cumulative temporal columns are
     present is derived from the dataset's ``ordering()`` and from whether the split shuffles
-    (``splits.Split.effective_ordering``); the harness warns when a caller overrides it. It is
-    exposed because the study's recorded arm does override it deliberately, and the warning
-    travels with the cell.
+    (``splits.Split.effective_order``); the harness warns when a caller overrides it. It is
+    exposed because the study's recorded condition does override it deliberately, and the diagnostic
+    travels with the design point.
     """
 
     name: str
-    datasets: Axis
-    features: Axis
-    models: Axis
-    populations: Axis
-    splits: Axis
-    knobs: Knobs = Knobs()
-    comparisons: tuple[Comparison, ...] = ()
-    history: bool | None = None
+    datasets: Factor
+    features: Factor
+    models: Factor
+    subsets: Factor
+    splits: Factor
+    controls: Controls = Controls()
+    contrasts: tuple[Contrast, ...] = ()
+    temporal: bool | None = None
     tier_order: tuple[str, ...] = ("cpu", "gpu")
     note: str = ""
 
     def __post_init__(self) -> None:
-        for role, axis in self.axes().items():
-            if axis.role != role:
+        for role, factor in self.factors().items():
+            if factor.role != role:
                 raise ValueError(
-                    f"experiment {self.name!r}: axis for {role!r} declares role {axis.role!r}"
+                    f"experiment {self.name!r}: factor for {role!r} declares role {factor.role!r}"
                 )
         if not self.tier_order:
             raise ValueError(f"experiment {self.name!r}: tier_order is empty")
-        for comparison in self.comparisons:
-            axis = self.axes()[comparison.role]
-            if not axis.has(comparison.reference):
+        for contrast in self.contrasts:
+            factor = self.factors()[contrast.role]
+            if not factor.has(contrast.reference):
                 raise KeyError(
-                    f"experiment {self.name!r}: comparison reference "
-                    f"{comparison.reference!r} is not an element of the {comparison.role!r} "
-                    f"axis; have {list(axis.names())}"
+                    f"experiment {self.name!r}: contrast reference "
+                    f"{contrast.reference!r} is not a level of the {contrast.role!r} "
+                    f"factor; have {list(factor.names())}"
                 )
 
-    def axes(self) -> dict[str, Axis]:
+    def factors(self) -> dict[str, Factor]:
         return {
-            ROLE_DATASET: self.datasets,
-            ROLE_FEATURES: self.features,
-            ROLE_MODEL: self.models,
-            ROLE_POPULATION: self.populations,
-            ROLE_SPLIT: self.splits,
+            FACTOR_DATASET: self.datasets,
+            FACTOR_FEATURES: self.features,
+            FACTOR_MODEL: self.models,
+            FACTOR_SUBSET: self.subsets,
+            FACTOR_SPLIT: self.splits,
         }
 
-    def axis_for(self, role: str) -> Axis:
+    def factor_for(self, role: str) -> Factor:
         try:
-            return self.axes()[role]
+            return self.factors()[role]
         except KeyError:
-            raise KeyError(f"unknown role {role!r}; known roles: {list(ROLES)}") from None
+            raise KeyError(f"unknown role {role!r}; known roles: {list(FACTORS)}") from None
 
     def probe_budgets(self) -> tuple[float, ...]:
-        return tuple(sorted({c.probe_budget for c in self.comparisons}))
+        return tuple(sorted({c.probe_budget for c in self.contrasts}))
 
-    def cells(self) -> list[Cell]:
-        """Every cell, ordered cheap-first by declared cost tier.
+    def design_points(self) -> list[DesignPoint]:
+        """Every design point, ordered cheap-first by declared cost tier.
 
-        The order is stable within a tier, so a cell's position is a function of the axis
-        declaration rather than of anything measured.
+        The order is stable within a tier, so a design point's position is a function of the
+        factor declaration rather than of anything measured.
         """
-        axes = self.axes()
+        factors = self.factors()
         rank = {tier: i for i, tier in enumerate(self.tier_order)}
-        for axis in axes.values():
-            for element in axis.elements:
-                if element.tier not in rank:
+        for factor in factors.values():
+            for level in factor.levels:
+                if level.tier not in rank:
                     raise ValueError(
-                        f"experiment {self.name!r}: element {element.name!r} declares tier "
-                        f"{element.tier!r}, which is not in tier_order {list(self.tier_order)}"
+                        f"experiment {self.name!r}: level {level.name!r} declares tier "
+                        f"{level.tier!r}, which is not in tier_order {list(self.tier_order)}"
                     )
-        cells: list[Cell] = []
-        for combo in itertools.product(*(axes[role].elements for role in ROLES)):
+        design_points: list[DesignPoint] = []
+        for combo in itertools.product(*(factors[role].levels for role in FACTORS)):
             seconds = [e.estimated_seconds for e in combo if e.estimated_seconds is not None]
-            cells.append(
-                Cell(
-                    factors=tuple((role, e.name) for role, e in zip(ROLES, combo)),
+            design_points.append(
+                DesignPoint(
+                    factors=tuple((role, e.name) for role, e in zip(FACTORS, combo)),
                     tier=max((e.tier for e in combo), key=lambda t: rank[t]),
                     estimated_seconds=sum(seconds) if seconds else None,
                 )
             )
-        cells.sort(key=lambda c: rank[c.tier])
-        return cells
+        design_points.sort(key=lambda c: rank[c.tier])
+        return design_points
 
-    def declaration(self) -> dict:
+    def metadata(self) -> dict:
         return {
             "name": self.name,
             "note": self.note,
-            "knobs": self.knobs.to_dict(),
-            "history": self.history,
+            "controls": self.controls.to_dict(),
+            "temporal": self.temporal,
             "tier_order": list(self.tier_order),
-            "axes": {role: axis.declaration() for role, axis in self.axes().items()},
-            "comparisons": [
+            "factors": {role: factor.metadata() for role, factor in self.factors().items()},
+            "contrasts": [
                 {
                     "role": c.role,
                     "reference": c.reference,
                     "probe_budget": c.probe_budget,
                     "note": c.note,
                 }
-                for c in self.comparisons
+                for c in self.contrasts
             ],
         }

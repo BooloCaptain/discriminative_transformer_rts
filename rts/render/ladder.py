@@ -17,23 +17,23 @@ crosses the classical baselines.
 
 What this module is, after the experiment layer
 ----------------------------------------------
-The sweep is *declared* in :mod:`rts.studies` (``ladder_arm``): the rungs, the selector set, the
-two averaging populations, the budget grid and the resample counts are all values there. This
-module runs that arm and renders ``artifacts/ladder.json``, whose shape predates the layer and is
+The sweep is *declared* in :mod:`rts.studies` (``ladder_condition``): the rungs, the ranker set, the
+two averaging subsets, the budget grid and the resample counts are all values there. This
+module runs that condition and renders ``artifacts/ladder.json``, whose shape predates the layer and is
 kept because the recorded numbers, ``docs/implementation.md`` §12.2 and the figures are written
 against it. It contains no experiment logic.
 
 Two things the layer expresses that the old driver had to hand-code:
 
-* **a rung is a block with a family withheld**, so withholding takes the same unmeasured path a
+* **a rung is a block with a family withheld**, so withholding takes the same undefined path a
   genuinely absent capability takes -- a typo in a family name raises instead of quietly
   ablating nothing, which is the bug that motivated ``docs/refactor.md``;
-* **SemIf is inapplicable to one of the two populations.** Its cache covers only the changes
-  ``starved141`` selects, and ``semif.load_scores`` fills every uncached pair with a sentinel
-  rather than reporting that it has no score, so evaluating it on the other population would
+* **SemIf is inapplicable to one of the two subsets.** Its cache covers only the changes
+  ``cache_covered`` selects, and ``semif.load_scores`` fills every uncached pair with a sentinel
+  rather than reporting that it has no score, so evaluating it on the other subset would
   produce a number that looks like a measurement and is not. The old driver avoided that by not
-  tabulating SemIf there; the arm declares it with ``Element.applies``, so the cell is reported
-  unmeasured with a reason instead of vanishing.
+  tabulating SemIf there; the condition declares it with ``Level.applies``, so the design point is reported
+  undefined with a reason instead of vanishing.
 
 Usage
 -----
@@ -47,28 +47,28 @@ import argparse
 import json
 
 from .. import config, studies
-from ..data.contract import Unmeasured
-from ..experiment import ROLE_FEATURES, ROLE_MODEL, ROLE_POPULATION, run
+from ..data.contract import Undefined
+from ..experiment import FACTOR_FEATURES, FACTOR_MODEL, FACTOR_SUBSET, run
 
-#: The key the recorded artifact files the paired comparison under. Its name states which
-#: population the pairing happened on, which is what makes the delta interpretable.
-COMPARISON_KEY = "starved141_vs_semif_b0.05"
+#: The key the recorded artifact files the paired contrast under. Its name states which
+#: subset the pairing happened on, which is what makes the delta interpretable.
+COMPARISON_KEY = "cache_covered_vs_semif_b0.05"
 
 
-def _rung_tables(report, rung: str, population: str) -> dict:
-    """One population's selector table for one rung, in the recorded shape.
+def _rung_tables(report, rung: str, subset: str) -> dict:
+    """One subset's ranker table for one rung, in the recorded shape.
 
-    Unmeasured cells are omitted rather than tabulated, because a table entry is a claim that
-    the number exists; the population's own availability is reported separately, and the cells
+    Undefined design points are omitted rather than tabulated, because a table entry is a claim that
+    the number exists; the subset's own availability is reported separately, and the design points
     that could not be measured are in the report.
     """
     table: dict[str, dict] = {}
-    for cell in report.cells:
-        factors = cell.cell.factors_dict()
-        if factors[ROLE_FEATURES] != rung or factors[ROLE_POPULATION] != population:
+    for result in report.design_points:
+        factors = result.design_point.factors_dict()
+        if factors[FACTOR_FEATURES] != rung or factors[FACTOR_SUBSET] != subset:
             continue
-        results = cell.results
-        table[cell.cell.name(ROLE_MODEL)] = {
+        results = result.results
+        table[result.design_point.name(FACTOR_MODEL)] = {
             "recall": {f"{r['budget']:.2f}": round(r["recall"], 4) for r in results},
             "k": {f"{r['budget']:.2f}": r["k"] for r in results},
             "n_faults": results[0]["n_faults"] if results else 0,
@@ -76,21 +76,21 @@ def _rung_tables(report, rung: str, population: str) -> dict:
     return table
 
 
-def _semif_comparisons(report, rung: str) -> dict:
-    """The paired comparison against SemIf on the ``starved141`` population.
+def _semif_contrasts(report, rung: str) -> dict:
+    """The paired contrast against SemIf on the ``cache_covered`` subset.
 
     ``evaluate.paired_bootstrap(a, b)`` returns ``recall(a) - recall(b)`` with ``a`` the
     baseline, so a **negative** delta means SemIf is ahead -- which the recorded key spells out.
     """
     out: dict[str, dict] = {}
-    for record in report.comparisons:
+    for record in report.contrasts:
         if not record.get("measured"):
             continue
-        if record["group"].get(ROLE_FEATURES) != rung:
+        if record["group"].get(FACTOR_FEATURES) != rung:
             continue
-        if record["group"].get(ROLE_POPULATION) != "starved141":
+        if record["group"].get(FACTOR_SUBSET) != "cache_covered":
             continue
-        out[record["cell"]] = {
+        out[record["design_point"]] = {
             "delta_baseline_minus_semif": round(record["delta"], 4),
             "lo": round(record["lo"], 4),
             "hi": round(record["hi"], 4),
@@ -103,15 +103,15 @@ def _semif_comparisons(report, rung: str) -> dict:
 def run_label_source(label_source: str, verbose: bool = True) -> dict:
     """Run the ladder for one label source and return the recorded artifact's shape.
 
-    The dataset is rebuilt for exactly one thing: ``ladder_populations`` builds the two
-    populations *from* the dataset, and a population is a value rather than a run statistic
+    The dataset is rebuilt for exactly one thing: ``ladder_subsets`` builds the two
+    subsets *from* the dataset, and a subset is a value rather than a run statistic
     (``docs/refactor.md`` §7 permits two datasets to coexist, so rebuilding is cheap). Everything
-    else -- the dataset's shape, its declaration and the two population sizes -- comes from the
+    else -- the dataset's shape, its declaration and the two subset sizes -- comes from the
     report, so this cannot describe a dataset the run did not measure.
     """
     ds = studies.dataset(label_source)
-    declared = studies.ladder_populations(ds)
-    report = run(studies.ladder_arm(label_source), save=False, verbose=verbose)
+    declared = studies.ladder_subsets(ds)
+    report = run(studies.ladder_condition(label_source), save=False, verbose=verbose)
     margins = studies.semif_margins(report)
     described = report.describe()
 
@@ -123,67 +123,67 @@ def run_label_source(label_source: str, verbose: bool = True) -> dict:
             f"  changes {described['changes']}  tests {described['tests']}  "
             f"held-out faults {described['held_out_faults']}"
         )
-        print(f"  measured {len(report.cells)} of {report.n_cells} cells")
-        for entry in report.unmeasured:
-            print(f"  [unmeasured] {entry['key']}: {entry['note']}")
+        print(f"  measured {len(report.design_points)} of {report.n_cells} design_points")
+        for entry in report.undefined:
+            print(f"  [undefined] {entry['key']}: {entry['note']}")
 
     payload: dict = {
         "labels": label_source,
         "n_changes": described["changes"],
         "n_tests": described["tests"],
         "held_out_faults": described["held_out_faults"],
-        "populations": {
-            k: (None if isinstance(v, Unmeasured) else report.population_size(k)[0])
+        "subsets": {
+            k: (None if isinstance(v, Undefined) else report.subset_size(k)[0])
             for k, v in declared.items()
         },
-        "populations_unmeasured": {
-            k: v.to_dict() for k, v in declared.items() if isinstance(v, Unmeasured)
+        "subsets_undefined": {
+            k: v.to_dict() for k, v in declared.items() if isinstance(v, Undefined)
         },
-        "dataset_declaration": report.declaration(),
+        "dataset_metadata": report.metadata(),
         "rungs": {},
     }
 
     for rung, removed in studies.RUNGS:
         rung_cells = [
-            c for c in report.cells if c.cell.factors_dict()[ROLE_FEATURES] == rung
+            c for c in report.design_points if c.design_point.factors_dict()[FACTOR_FEATURES] == rung
         ]
         sample = rung_cells[0] if rung_cells else None
         rung_report: dict = {
             "removed": list(removed),
-            # The withheld columns and the derivation's warnings come from the same block the
-            # cells were built from, so they describe the run rather than being restated here.
-            "withheld": [u["column"] for u in sample.features["unmeasured"]] if sample else [],
-            "warnings": list(sample.warnings) if sample else [],
-            "selectors": {},
-            "comparisons": {},
+            # The withheld columns and the derivation's diagnostics come from the same block the
+            # design points were built from, so they describe the run rather than being restated here.
+            "withheld": [u["column"] for u in sample.features["undefined"]] if sample else [],
+            "diagnostics": list(sample.diagnostics) if sample else [],
+            "rankers": {},
+            "contrasts": {},
         }
 
-        for population, spec in declared.items():
-            if isinstance(spec, Unmeasured):
-                rung_report["selectors"][population] = {"unmeasured": spec.to_dict()}
+        for subset, spec in declared.items():
+            if isinstance(spec, Undefined):
+                rung_report["rankers"][subset] = {"undefined": spec.to_dict()}
                 continue
-            rung_report["selectors"][population] = _rung_tables(report, rung, population)
+            rung_report["rankers"][subset] = _rung_tables(report, rung, subset)
 
-        comparisons = _semif_comparisons(report, rung)
-        if comparisons:
-            rung_report["comparisons"][COMPARISON_KEY] = comparisons
+        contrasts = _semif_contrasts(report, rung)
+        if contrasts:
+            rung_report["contrasts"][COMPARISON_KEY] = contrasts
             rung_report["semif_margin"] = margins.get(rung, {})
 
         payload["rungs"][rung] = rung_report
 
         if verbose:
             print(f"\n  [{rung}] removed={list(removed) or 'nothing'}")
-            for population, table in rung_report["selectors"].items():
-                if "unmeasured" in table:
-                    print(f"    {population}: unmeasured")
+            for subset, table in rung_report["rankers"].items():
+                if "undefined" in table:
+                    print(f"    {subset}: undefined")
                     continue
-                print(f"    {population}:")
+                print(f"    {subset}:")
                 for name, row in table.items():
-                    cells = "  ".join(f"b{k}={v:.3f}" for k, v in row["recall"].items())
-                    print(f"      {name:26s} {cells}")
-            if comparisons:
+                    design_points = "  ".join(f"b{k}={v:.3f}" for k, v in row["recall"].items())
+                    print(f"      {name:26s} {design_points}")
+            if contrasts:
                 print("    SemIf vs baseline @b0.05 (negative delta = SemIf ahead):")
-                for name, c in comparisons.items():
+                for name, c in contrasts.items():
                     flag = "*" if c["p"] < 0.05 else " "
                     print(
                         f"      {name:26s} {c['delta_baseline_minus_semif']:+.3f} "

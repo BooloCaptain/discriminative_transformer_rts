@@ -33,7 +33,7 @@ repeats the banner once per child. It is cosmetic here, but the production runne
 
 Modes
 -----
-``killed`` / ``survived`` / ``all``  sample the mutant population; ``baseline`` forks a single
+``killed`` / ``survived`` / ``all``  sample the mutant subset; ``baseline`` forks a single
 child with no mutant active, which is validation gate 1 (expect 1190 collected, 0 failed).
 
 Usage
@@ -168,20 +168,20 @@ def main() -> None:
     verdicts = load_verdicts()
     old = load_old_killers()
     if mode == "survived":
-        population = [m for m, e in verdicts.items() if e == 0]
+        subset = [m for m, e in verdicts.items() if e == 0]
     elif mode == "all":
-        population = list(verdicts)
+        subset = list(verdicts)
     elif mode == "baseline":
         # Validation gate 1: no mutant active, so every trampoline calls its original.
         # Must be 1190 collected / 0 failed, using the same fork path as a real mutant.
-        population = [BASELINE]
+        subset = [BASELINE]
     else:
-        population = [m for m, e in verdicts.items() if e in (1, 3)]
+        subset = [m for m, e in verdicts.items() if e in (1, 3)]
 
     random.seed(7)
-    n = min(n, len(population))
-    sample = population if mode == "baseline" else random.sample(population, n)
-    print(f"mode={mode} population={len(population)} sample={len(sample)}")
+    n = min(n, len(subset))
+    sample = subset if mode == "baseline" else random.sample(subset, n)
+    print(f"mode={mode} subset={len(subset)} sample={len(sample)}")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -274,11 +274,11 @@ def main() -> None:
     # The headline: do killers lie outside the mutated function's coverage set?
     cov = load_coverage()
     pool = load_pool()
-    fault_bearing = [d for _, _, d in results if d["failures"]]
+    detectable = [d for _, _, d in results if d["failures"]]
     out_of_cov = []
     off_pool_total = 0
     off_pool_mutants = 0
-    for d in fault_bearing:
+    for d in detectable:
         key = MUTANT_SUFFIX_RE.sub("", d["mutant"])
         covering = set(cov.get(key, []))
         off_pool = [t for t in d["failures"] if t not in pool]
@@ -287,8 +287,8 @@ def main() -> None:
             off_pool_mutants += 1
         if not set(d["failures"]) <= covering:
             out_of_cov.append(d)
-    print(f"fault-bearing in sample            : {len(fault_bearing)}")
-    print(f"  with an OUT-OF-COVERAGE killer   : {len(out_of_cov)} ({len(out_of_cov)/max(len(fault_bearing),1):.1%})")
+    print(f"fault-bearing in sample            : {len(detectable)}")
+    print(f"  with an OUT-OF-COVERAGE killer   : {len(out_of_cov)} ({len(out_of_cov)/max(len(detectable),1):.1%})")
     print(f"  killers NOT in candidate pool    : {off_pool_total} across {off_pool_mutants} mutants")
     for d in out_of_cov[:8]:
         key = MUTANT_SUFFIX_RE.sub("", d["mutant"])

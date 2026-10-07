@@ -1,13 +1,13 @@
 """Panels A and C of the sparsity story, plus figures.
 
-Panel A -- recall against change-population sparsity. Held-out faults are binned
+Panel A -- recall against change-subset sparsity. Held-out faults are binned
 into equal-count deciles by how much failure history their killing ``(file, test)``
 pair has (1 = sparsest, i.e. the pair has essentially never failed before). Every
 model is evaluated on the same bins.
 
 Panel C -- the mechanism. For the same bins, what fraction of killing tests lie
-inside the cheap structural funnel (``covers_function AND
-filename_stem_match``), and what fraction the structural models actually
+inside the cheap structural funnel (``function_coverage AND
+filename_match``), and what fraction the structural models actually
 recover. If the funnel fraction collapses as sparsity rises while SemIf's recall
 does not, that is *why* the crossover happens: structural methods fail exactly
 where the killer is not the file's usual suspect.
@@ -16,15 +16,15 @@ Note on coverage: every SemIf score currently ranks within the ``covered``
 candidate mask (~155 tests), so this compares ordering *within* the coverage set,
 not selection from the full suite. See docs/implementation.md.
 
-Why this is not an experiment-layer arm
+Why this is not an experiment-layer condition
 ---------------------------------------
-A panel is a *reading*, not a sweep, and two of its properties are not cell semantics:
+A panel is a *reading*, not a sweep, and two of its properties are not design point annotations:
 
 * the deciles are cut from the **dataset** -- equal-count bins over the fault changes by the
   failure history of their killing ``(file, test)`` pair -- so they are dataset-derived
-  populations rather than declared axes;
+  subsets rather than declared factors;
 * each model is evaluated on the subset of the bin it actually has scores for, a per-*row*
-  availability filter. ``Element.applies`` is per-*cell*, so the layer cannot express it, and
+  availability filter. ``Level.applies`` is per-*design point*, so the layer cannot express it, and
   evaluating the unscored rows anyway would score them with ``semif.load_scores``'s sentinel
   and report a number that looks like a measurement and is not.
 
@@ -45,7 +45,7 @@ import numpy as np
 
 from .. import config, evaluate, features
 from ..data import accessors, contract, datasets, splits
-from ..model import selectors, semif
+from ..model import rankers, semif
 
 BUDGETS = (0.01, 0.05)
 N_BINS = 10
@@ -101,16 +101,16 @@ def panel_a(
     ds: contract.Dataset,
     bins: list[np.ndarray],
     budget: float,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     held: set[int],
     min_faults: int = 3,
 ) -> dict[str, list[float]]:
-    """Recall per sparsity bin, per model, on the shared held-out population.
+    """Recall per sparsity bin, per model, on the shared held-out subset.
 
     Every model is evaluated on exactly the held-out fault changes inside the bin.
     Filtering by per-model score availability instead would let the classical
     models -- which have finite scores everywhere, including the training changes
-    they were fit on -- be scored on a different, easier population than SemIf.
+    they were fit on -- be scored on a different, easier subset than SemIf.
     """
     out: dict[str, list[float]] = {}
     for name, score in scores.items():
@@ -124,7 +124,7 @@ def panel_a(
                 row.append(float("nan"))
                 continue
             res = evaluate.evaluate(
-                score, ds, usable, budgets=(budget,), n_bootstrap=0, candidates=candidates
+                score, ds, usable, budgets=(budget,), n_bootstrap=0, candidate_sets=candidate_sets
             )[0]
             row.append(res.recall)
         out[name] = row
@@ -136,14 +136,14 @@ def panel_c(
     bins: list[np.ndarray],
     score_set: dict[str, np.ndarray],
     budget: float,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     held: set[int],
     min_faults: int = 3,
 ) -> dict[str, list[float]]:
     """Mechanistic quantities per sparsity bin."""
-    matrix = features.structured(ds, history=True)
-    covered = matrix.column("covers_function")
-    name_match = matrix.column("filename_stem_match")
+    matrix = features.structured(ds, temporal=True)
+    covered = matrix.column("function_coverage")
+    name_match = matrix.column("filename_match")
 
     funnel, cov_only, median_rank = [], [], []
     funnel_size, rank_in_funnel = [], []
@@ -161,8 +161,8 @@ def panel_c(
             kill = ds.test_index[sorted(ds.killing_tests(ds.changes[i]))[0]]
             in_cov += int(covered[i, kill] > 0.5)
             in_funnel += int(covered[i, kill] > 0.5 and name_match[i, kill] > 0.5)
-            # Rank of the killer under the lexical model, within candidates.
-            cols = np.flatnonzero(candidates[i])
+            # Rank of the killer under the lexical model, within candidate sets.
+            cols = np.flatnonzero(candidate_sets[i])
             score = score_set["bm25_lexical"][i, cols]
             order = np.argsort(-score, kind="stable")
             pos = int(np.flatnonzero(cols[order] == kill)[0]) + 1
@@ -198,7 +198,7 @@ def panel_c(
                 recalls[name].append(float("nan"))
                 continue
             res = evaluate.evaluate(
-                score, ds, usable, budgets=(budget,), n_bootstrap=0, candidates=candidates
+                score, ds, usable, budgets=(budget,), n_bootstrap=0, candidate_sets=candidate_sets
             )[0]
             recalls[name].append(res.recall)
 
@@ -233,10 +233,10 @@ def _plot(
     x = np.arange(1, len(meta) + 1)
     xticks = [f"{m['bin']}\n{m['failures_median']:.0f}" for m in meta]
 
-    fig, axes = plt.subplots(1, 2, figsize=(15.5, 6.4))
+    fig, subplot_axes = plt.subplots(1, 2, figsize=(15.5, 6.4))
 
     # --- Panel A ---
-    ax = axes[0]
+    ax = subplot_axes[0]
     highlight = {
         "semif_textonly": ("#d62728", "-", 2.6),
         "semif_after_doc": ("#ff7f0e", "--", 2.6),
@@ -261,19 +261,19 @@ def _plot(
     ax.set_xticklabels(xticks, fontsize=8)
     ax.set_xlabel("sparsity decile  (1 = sparsest)\nmedian failures of the killing (file, test) pair")
     ax.set_ylabel(f"recall @ budget {budget}")
-    ax.set_title("Panel A — recall vs change-population sparsity\n(all 464 held-out faults; SemIf arms are dashed/dotted where partial)")
+    ax.set_title("Panel A — recall vs change-subset sparsity\n(all 464 held-out faults; SemIf conditions are dashed/dotted where partial)")
     ax.grid(alpha=0.25)
     ax.legend(fontsize=8, loc="upper left")
     ax.set_ylim(-0.02, 1.02)
 
     # --- Panel C ---
-    ax = axes[1]
+    ax = subplot_axes[1]
     ax.plot(x, panel_c_data["frac_in_structural_funnel"], "-o", color="#bcbd22",
             linewidth=2.2, markersize=5,
             label="killer is inside the structural funnel")
     ax.plot(x, panel_c_data["median_normalized_killer_rank_bm25"], "-o",
             color="#e377c2", linewidth=1.8, markersize=4,
-            label="median killer rank / candidates (BM25)")
+            label="median killer rank / candidate_sets (BM25)")
     ax.set_xticks(x)
     ax.set_xticklabels(xticks, fontsize=8)
     ax.set_xlabel("sparsity decile  (1 = sparsest)\nmedian failures of the killing (file, test) pair")
@@ -309,7 +309,7 @@ def _plot(
     ax.set_title("Panel C — the mechanism\nstructural funnel availability vs model recall")
 
     fig.suptitle(
-        "RTS feasibility: as per-test history becomes sparse, structural methods lose their footing "
+        "RTS feasibility: as per-test history becomes low_cooccurrence, structural methods lose their footing "
         "and SemIf does not",
         fontsize=13,
     )
@@ -341,7 +341,7 @@ def _write_csv(rows: list[dict], path: Path) -> None:
 def run(n_bins: int = N_BINS) -> dict:
     ds = datasets.marshmallow()
     split = splits.make_split(ds)
-    candidates = accessors.candidates(ds, "covered")
+    candidate_sets = accessors.candidate_sets(ds, "coverage_restricted")
     held = set(int(i) for i in accessors.test_fault_idx(ds, split.test_idx))
 
     bins, meta = sparsity_bins(ds, n_bins)
@@ -355,14 +355,14 @@ def run(n_bins: int = N_BINS) -> dict:
               f"(median {m['failures_median']:.0f})")
 
     bm25 = features.text.build_bm25_scores(ds)
-    ctx = selectors.Context(
+    ctx = rankers.Context(
         ds=ds,
-        features=features.structured(ds, history=True),
+        features=features.structured(ds, temporal=True),
         split=split,
         bm25=bm25,
     )
     classical = {
-        s.name: s.scores(ctx) for s in selectors.default_selectors(include_semif=False)
+        s.name: s.scores(ctx) for s in rankers.default_rankers(include_semif=False)
     }
 
     semif_arms = {
@@ -376,8 +376,8 @@ def run(n_bins: int = N_BINS) -> dict:
     summary: dict = {"bins": meta, "budgets": {}}
 
     for budget in BUDGETS:
-        pa = panel_a(all_scores, ds, bins, budget, candidates, held)
-        pc = panel_c(ds, bins, all_scores, budget, candidates, held)
+        pa = panel_a(all_scores, ds, bins, budget, candidate_sets, held)
+        pc = panel_c(ds, bins, all_scores, budget, candidate_sets, held)
 
         fig_path = figures_dir / f"panel_A_C_budget{budget:.2f}.png"
         _plot(pa, pc, meta, budget, fig_path)

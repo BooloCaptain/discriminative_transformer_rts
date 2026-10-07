@@ -3,7 +3,7 @@
 The package splits three ways, and the split is the fix for "adding a feature means
 editing a central function":
 
-``derived``   one function per quantity, pure over the material it reads.
+``derived``   one function per quantity, pure over the inputs it reads.
 ``block``     the machinery for declaring a block of columns and building a matrix.
 ``structured``/``bundle``  the two blocks the study actually uses, declared as data.
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from . import derived, text
 from .block import FeatureBlock, FeatureColumn, FeatureGroup, FeatureMatrix
-from .bundle import BUNDLE, base_material
+from .bundle import BUNDLE, base_inputs
 from .bundle import bundle as bundle_features
 from .structured import FAMILIES, STRUCTURED, structured
 
@@ -37,7 +37,7 @@ __all__ = [
     "FeatureColumn",
     "FeatureGroup",
     "FeatureMatrix",
-    "base_material",
+    "base_inputs",
     "bundle_features",
     "derived",
     "structured",

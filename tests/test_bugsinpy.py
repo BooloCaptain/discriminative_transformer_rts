@@ -1,8 +1,8 @@
-"""Tests for the BugsInPy arm: the real labels, and the semantics of a pooled corpus.
+"""Tests for the BugsInPy condition: the real labels, and the annotations of a pooled corpus.
 
 These need the built per-project datasets under ``artifacts/bugsinpy/`` (no checkout, no test
 execution, no GPU), and they load them once per module. What is pinned is the contract *between*
-the arm's declarations and the recorded artifact, plus two invariants that would make the arm
+the condition's declarations and the recorded artifact, plus two invariants that would make the condition
 meaningless if they broke: the candidate pool must contain every failing test, and a bug must not
 be rankable against another project's tests.
 """
@@ -18,8 +18,8 @@ from rts import config, studies
 from rts.data import accessors
 
 # Aliased so pytest does not try to collect the enum as a test class.
-from rts.data.contract import TestUnit as Unit
-from rts.model import selectors
+from rts.data.contract import Granularity as Unit
+from rts.model import rankers
 from rts.render import bugsinpy
 
 
@@ -27,7 +27,7 @@ from rts.render import bugsinpy
 def corpus():
     projects = bugsinpy.load_datasets()
     pooled = bugsinpy.pooled_dataset(projects)
-    return projects, pooled, accessors.candidates(pooled, "own")
+    return projects, pooled, accessors.candidate_sets(pooled, "own")
 
 
 def _recorded() -> dict:
@@ -67,7 +67,7 @@ def test_a_bug_is_only_rankable_within_its_own_project(corpus):
 
 
 def test_the_pool_reproduces_the_legacy_candidate_matrix(corpus):
-    """The declaration is the value the arm was always measured against, not a re-description.
+    """The declaration is the value the condition was always measured against, not a re-description.
 
     ``bugsinpy.candidate_matrix`` built this mask inline before the contraction moved it onto the
     dataset. Comparing against it is the only check that the layout (rows per project, columns
@@ -86,66 +86,66 @@ def test_the_pool_reproduces_the_legacy_candidate_matrix(corpus):
     assert np.array_equal(pool, legacy)
 
 
-# --- the semantics of a pool -------------------------------------------------
+# --- the annotations of a pool -------------------------------------------------
 
 
 def test_the_projects_agree_on_what_a_test_is_and_the_declaration_says_so(corpus):
-    """A pool flattens ``test_unit``; when the constituents disagree, that has to be recorded.
+    """A pool flattens ``test_granularity``; when the constituents disagree, that has to be recorded.
 
     Here they agree (every project enumerates test *cases*), so the pool must not emit the
-    ``pool.mixed_test_unit`` note -- a warning that fired unconditionally would be noise, and one
+    ``pool.mixed_test_unit`` note -- a diagnostic that fired unconditionally would be noise, and one
     that never fired would leave the flattening unstated.
     """
     projects, pooled, _ = corpus
-    assert {ds.test_unit() for ds in projects} == {Unit.CASE}
-    assert pooled.test_unit() is Unit.CASE
+    assert {ds.test_granularity() for ds in projects} == {Unit.CASE}
+    assert pooled.test_granularity() is Unit.CASE
     assert pooled.mixed_test_units() == ()
     assert [w.code for w in pooled.integrity_notes()] == []
 
 
-def test_the_arm_has_no_coverage_or_history_to_trust(corpus):
-    """The arm's whole claim: no feature is circular with respect to the labels."""
+def test_the_condition_has_no_coverage_or_temporal_features_to_trust(corpus):
+    """The condition's whole claim: no feature is circular with respect to the labels."""
     _, pooled, _ = corpus
     assert pooled.capabilities() == frozenset()
-    assert pooled.ordering().value == "imposed"
-    # And the arm must not silently acquire history features from a future shuffling split.
-    assert studies.bugsinpy_arm(0.05).history is False
+    assert pooled.ordering().value == "synthetic"
+    # And the condition must not silently acquire temporal features from a future shuffling split.
+    assert studies.bugsinpy_condition(0.05).temporal is False
 
 
-# --- the arm against the recorded artifact ----------------------------------
+# --- the condition against the recorded artifact ----------------------------------
 
 
 def test_the_arm_declares_the_recorded_selector_keys():
-    assert list(studies.bugsinpy_arm(0.05).models.names()) == list(
+    assert list(studies.bugsinpy_condition(0.05).models.names()) == list(
         _recorded()["results"]
     )
     assert studies.bugsinpy.MODEL_ORDER == tuple(_recorded()["results"])
 
 
 def test_the_arm_populations_are_the_recorded_projects():
-    names = set(studies.bugsinpy_arm(0.05).populations.names())
-    assert names == {"fault_bearing"} | set(_recorded()["per_project_recall_at_0.05"])
+    names = set(studies.bugsinpy_condition(0.05).subsets.names())
+    assert names == {"detectable"} | set(_recorded()["per_project_recall_at_0.05"])
 
 
 def test_the_arm_pairs_at_every_recorded_budget():
-    """The recorded keys name the pairing (``semif_vs_x``); the arm names the reference.
+    """The recorded keys name the pairing (``semif_vs_x``); the condition names the reference.
 
-    The *cell* is SemIf, because the recorded convention is "SemIf minus baseline" -- positive
-    when SemIf is better -- and ``_compare`` computes ``cell - reference``.
+    The *design point* is SemIf, because the recorded convention is "SemIf minus baseline" -- positive
+    when SemIf is better -- and ``_compare`` computes ``design_point - reference``.
     """
-    recorded = _recorded()["comparisons"]
+    recorded = _recorded()["contrasts"]
     for budget in studies.BUGSINPY_BUDGETS:
-        arm = studies.bugsinpy_arm(budget)
-        assert list(arm.knobs.budgets) == [budget]
-        assert {c.reference for c in arm.comparisons} == {"bm25_lexical", "random"}
+        condition = studies.bugsinpy_condition(budget)
+        assert list(condition.controls.budgets) == [budget]
+        assert {c.reference for c in condition.contrasts} == {"bm25_lexical", "random"}
         assert set(recorded[f"{budget:.2f}"]) == {"semif_vs_bm25", "semif_vs_random"}
 
 
-def test_the_arm_holds_nothing_out(corpus):
+def test_the_condition_holds_nothing_out(corpus):
     """A zero-shot model has nothing to fit, so the split is every bug with an empty prefix."""
     _, pooled, _ = corpus
-    arms = studies.bugsinpy_arm(0.05)
-    assert arms.splits.names() == ("split0",)
+    conditions = studies.bugsinpy_condition(0.05)
+    assert conditions.splits.names() == ("split0",)
     from rts.data import splits
 
     split = splits.make_split(pooled, train_fraction=0.0)
@@ -156,19 +156,19 @@ def test_the_arm_holds_nothing_out(corpus):
 def test_a_project_selection_is_a_different_corpus():
     """A corpus of one project is a different experiment, not a filter on the results.
 
-    The selection has to reach the *dataset element*, or a subset run would audit one project
+    The selection has to reach the *dataset level*, or a subset run would audit one project
     while measuring all eight -- and that is silent, because every number produced would still
     be a number.
     """
-    from rts.experiment import ROLE_DATASET
+    from rts.experiment import FACTOR_DATASET
 
-    arm = studies.bugsinpy_arm(0.05, projects=["black"])
-    assert set(arm.populations.names()) == {"fault_bearing", "black"}
+    condition = studies.bugsinpy_condition(0.05, projects=["black"])
+    assert set(condition.subsets.names()) == {"detectable", "black"}
     built = studies.bugsinpy.pooled_dataset(["black"])
     assert built.n_changes == 19
     assert built.n_tests == 145
     assert studies.bugsinpy.project_names(["black"]) == ("black",)
-    assert arm.axes()[ROLE_DATASET].names() == ("bugsinpy_pooled",)
+    assert condition.factors()[FACTOR_DATASET].names() == ("bugsinpy_pooled",)
 
 
 def test_an_unknown_project_is_an_error_not_an_empty_corpus():
@@ -183,17 +183,17 @@ def test_the_cache_loader_resolves_columns_through_each_bugs_pool(corpus):
     assert matrix.shape == (pooled.n_changes, pooled.n_tests)
     scored = int((matrix > -1e8).sum())
     # Every candidate pair is cached; nothing outside a pool is.
-    assert scored == int(accessors.candidates(pooled, "own").sum())
+    assert scored == int(accessors.candidate_sets(pooled, "own").sum())
 
 
-# --- the per-change-scope selectors -----------------------------------------
+# --- the per-change-scope rankers -----------------------------------------
 
 
 def _context(pooled):
     from rts.data import splits
-    from rts.model import selectors
+    from rts.model import rankers
 
-    return selectors.Context(
+    return rankers.Context(
         ds=pooled,
         features=None,
         split=splits.make_split(pooled, train_fraction=0.0),
@@ -206,7 +206,7 @@ def test_a_per_pool_random_baseline_only_ranks_within_a_pool(corpus):
     """Outside a change's pool the score is the sentinel, so a bug cannot be credited with a
     test from another project -- which is what makes the baseline comparable across projects."""
     _, pooled, pool = corpus
-    scores = selectors.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
+    scores = rankers.PerPoolRandomRanker(candidate_policy="own").scores(_context(pooled))
     inside = scores[pool]
     assert ((inside >= 0.0) & (inside < 1.0)).all()
     assert (scores[~pool] < -1e8).all()
@@ -215,22 +215,22 @@ def test_a_per_pool_random_baseline_only_ranks_within_a_pool(corpus):
 def test_a_per_pool_random_baseline_is_reproducible(corpus):
     """The draw sequence is part of a recorded baseline, so it may not be re-derived per row."""
     _, pooled, _ = corpus
-    selector = selectors.PerPoolRandomSelector(candidates_mode="own")
-    first = selector.scores(_context(pooled))
-    second = selectors.PerPoolRandomSelector(candidates_mode="own").scores(_context(pooled))
+    ranker = rankers.PerPoolRandomRanker(candidate_policy="own")
+    first = ranker.scores(_context(pooled))
+    second = rankers.PerPoolRandomRanker(candidate_policy="own").scores(_context(pooled))
     assert np.array_equal(first, second)
 
 
 def test_the_bm25_query_choice_is_recorded_rather_than_assumed(corpus):
-    """The raw diff and the extracted change lines are different queries, and this arm's
+    """The raw diff and the extracted change lines are different queries, and this condition's
     recorded numbers used the raw diff. The parameter is what makes that reviewable."""
     _, pooled, _ = corpus
-    diff = selectors.PerPoolLexicalSelector(candidates_mode="own", query="diff").scores(
+    diff = rankers.PerPoolLexicalRanker(candidate_policy="own", query="diff").scores(
         _context(pooled)
     )
-    change = selectors.PerPoolLexicalSelector(candidates_mode="own", query="change").scores(
+    change = rankers.PerPoolLexicalRanker(candidate_policy="own", query="change").scores(
         _context(pooled)
     )
     assert not np.array_equal(diff, change)
     with pytest.raises(ValueError, match="query must be"):
-        selectors.PerPoolLexicalSelector(query="whatever")
+        rankers.PerPoolLexicalRanker(query="whatever")

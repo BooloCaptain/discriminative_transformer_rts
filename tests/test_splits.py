@@ -33,7 +33,7 @@ def test_make_split_partitions_every_change():
 
 
 def test_make_split_with_a_zero_train_fraction_holds_nothing_out():
-    """The shape a zero-shot arm needs: every change in the window, nothing to train on."""
+    """The shape a zero-shot condition needs: every change in the window, nothing to train on."""
     split = stub_split(train_fraction=0.0)
     assert split.train_idx.size == 0
     assert sorted(split.test_idx.tolist()) == [0, 1, 2, 3]
@@ -49,7 +49,7 @@ def test_a_hand_built_split_that_overlaps_is_rejected():
             fraction=0.75,
             shuffle=False,
             seed=0,
-            ordering=Ordering.IMPOSED,
+            ordering=Ordering.SYNTHETIC,
         )
 
 
@@ -98,7 +98,7 @@ def test_evaluate_accepts_the_window_it_was_given():
 
 
 def test_evaluate_without_a_split_is_unchecked():
-    """A zero-shot arm over every change has no split to be inside of."""
+    """A zero-shot condition over every change has no split to be inside of."""
     ds = StubDataset()
     results = evaluate.evaluate(
         scores_for(ds), ds, np.arange(ds.n_changes), budgets=(0.5,)

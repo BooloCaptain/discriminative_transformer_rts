@@ -1,4 +1,4 @@
-"""Reproduction checks for the marshmallow arm ("keep the existing numbers intact").
+"""Reproduction checks for the marshmallow condition ("keep the existing numbers intact").
 
 The documented numbers are the deliverable, so the refactor is verified against them rather
 than trusted. These checks are cheap: they read the recorded artifacts and assert the
@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 
 from rts import config, features
-from rts.data import accessors, datasets, populations, reporting, splits
-from rts.data.contract import Capability, Ordering, TestUnit
+from rts.data import accessors, datasets, reporting, splits, subsets
+from rts.data.contract import Capability, Granularity, Ordering
 
 pytestmark = pytest.mark.skipif(
     not config.SUT.exists() or not (config.MUTANTS_DIR / "mutmut-stats.json").exists(),
@@ -37,14 +37,14 @@ def split(ds):
 
 
 def test_dataset_declares_its_limits_rather_than_only_documenting_them(ds):
-    assert ds.ordering() is Ordering.IMPOSED
-    assert ds.test_unit() is TestUnit.FUNCTION
+    assert ds.ordering() is Ordering.SYNTHETIC
+    assert ds.test_granularity() is Granularity.FUNCTION
     assert ds.capabilities() == frozenset({Capability.COVERAGE, Capability.DURATIONS})
-    notes = ds.semantics()
+    notes = ds.annotations()
     # The three study limitations are machine-readable, not prose-only.
-    assert "imposed" in notes["ordering"]
+    assert "synthetic" in notes["ordering"]
     assert "defined by coverage" in notes["killing_tests"]
-    assert notes["ran_tests"].startswith("tests mutmut actually executed")
+    assert notes["executed_tests"].startswith("tests mutmut actually executed")
 
 
 def test_describe_matches_the_recorded_artifact(ds, split):
@@ -56,39 +56,39 @@ def test_describe_matches_the_recorded_artifact(ds, split):
 
 
 def test_structured_matrix_reproduces_the_recorded_shapes(ds):
-    matrix = features.structured(ds, history=True)
+    matrix = features.structured(ds, temporal=True)
     assert matrix.X.shape == (ds.n_changes, ds.n_tests, len(features.STRUCTURED.columns))
     assert matrix.columns == tuple(features.STRUCTURED.columns)
-    assert not matrix.unmeasured
+    assert not matrix.undefined
     # A coverage indicator holds only 0/1, and the prior is 1/n_covering where covered.
-    covered = matrix.column("covers_function")
+    covered = matrix.column("function_coverage")
     assert set(np.unique(covered)) <= {0.0, 1.0}
-    n_covering = matrix.column("n_covering_tests")
-    prior = matrix.column("coverage_rank_prior")
+    n_covering = matrix.column("coverage_set_size")
+    prior = matrix.column("coverage_set_size_prior")
     assert np.allclose(prior[covered > 0.5], 1.0 / n_covering[covered > 0.5], atol=1e-6)
     # Exactly one change size per change, replicated across the row.
-    assert np.allclose(matrix.column("change_size").std(axis=1), 0.0)
+    assert np.allclose(matrix.column("code_churn").std(axis=1), 0.0)
 
 
 def test_history_default_is_off_and_leaves_every_other_column_alone(ds):
     off = features.structured(ds)
-    on = features.structured(ds, history=True)
-    history = features.STRUCTURED.family("history")
+    on = features.structured(ds, temporal=True)
+    history = features.STRUCTURED.family("temporal")
     for name in history:
         assert off.column(name).max() == 0.0
-        assert off.is_unmeasured(name)
+        assert off.is_undefined(name)
     for name in features.STRUCTURED.columns:
         if name in history:
             continue
         assert np.array_equal(off.column(name), on.column(name)), name
     # The opt-in is what raises the caveat, and it travels with the matrix that needed it.
-    assert "feature.history_on_imposed_order" in [w.code for w in on.warnings]
-    assert "feature.history_on_imposed_order" not in [w.code for w in off.warnings]
+    assert "feature.temporal_on_synthetic_order" in [w.code for w in on.diagnostics]
+    assert "feature.temporal_on_synthetic_order" not in [w.code for w in off.diagnostics]
 
 
 def test_every_killing_test_is_inside_the_coverage_set(ds):
     """The invariant the ``covered`` candidate mask relies on to be lossless."""
-    covered = accessors.covered(ds)
+    covered = accessors.coverage_sets(ds)
     outside = sum(
         1
         for i, change in enumerate(ds.changes)
@@ -106,10 +106,10 @@ def test_bm25_matches_the_previously_recorded_value(ds):
 
 
 def test_recorded_population_sizes_are_reproduced(ds, split):
-    """The starved and sparse arms' sizes, which several recorded tables rest on."""
-    assert len(populations.population("fault_bearing").rows(ds, split.test_idx)) == 464
-    assert len(populations.population("starved").rows(ds, split.test_idx)) == 43
-    assert int(populations.sparse_mask(ds).sum()) == 2
+    """The cold start and low_cooccurrence conditions' sizes, which several recorded tables rest on."""
+    assert len(subsets.subset("detectable").rows(ds, split.test_idx)) == 464
+    assert len(subsets.subset("cold_start").rows(ds, split.test_idx)) == 43
+    assert int(subsets.low_cooccurrence_mask(ds).sum()) == 2
 
 
 def test_label_source_is_a_source_property_not_a_global(ds):

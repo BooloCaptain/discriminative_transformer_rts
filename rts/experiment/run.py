@@ -1,10 +1,10 @@
-"""Measuring an experiment: requirement resolution, the cell loop, the comparison.
+"""Measuring an experiment: requirement resolution, the design point loop, the contrast.
 
 One resolution site for requirements (``unresolved``), then the loop that materialises each
-cell's five values, measures it or records why it could not be, and pairs the results. The
+design point's five values, measures it or records why it could not be, and pairs the results. The
 parts of the design that are decisions rather than mechanics are stated where they happen --
-materialising an element once per run, keying a score matrix on the cell's *context* rather
-than its population, and capturing importances where the scoring actually occurred.
+materialising a level once per run, keying a score matrix on the design point's *context* rather
+than its subset, and capturing importances where the scoring actually occurred.
 """
 
 from __future__ import annotations
@@ -18,24 +18,31 @@ from typing import Any
 import numpy as np
 
 from .. import config, evaluate, features
-from ..data import accessors, populations, reporting, splits
-from ..data.contract import Dataset, Ordering, Requirement, Unmeasured, is_unmeasured
-from ..model import selectors
+from ..data import accessors, reporting, splits, subsets
+from ..data.contract import (
+    Dataset,
+    Diagnostic,
+    Ordering,
+    Requirement,
+    Undefined,
+    is_undefined,
+)
+from ..model import rankers
 from .declaration import (
     ARTIFACT_PREFIX,
-    ROLE_DATASET,
-    ROLE_FEATURES,
-    ROLE_MODEL,
-    ROLE_POPULATION,
-    ROLE_SPLIT,
-    ROLES,
+    FACTOR_DATASET,
+    FACTOR_FEATURES,
+    FACTOR_MODEL,
+    FACTOR_SPLIT,
+    FACTOR_SUBSET,
+    FACTORS,
     Binding,
-    Cell,
+    Controls,
+    DesignPoint,
     Environment,
     Experiment,
-    Knobs,
 )
-from .report import CellResult, RunReport
+from .report import DesignPointResult, RunReport
 
 # --- availability ----------------------------------------------------------
 
@@ -54,10 +61,10 @@ def unresolved(
     requirement: str,
     ds: Dataset | None,
     caches: Mapping[str, Path],
-) -> Unmeasured | None:
-    """Why ``requirement`` cannot be met for this cell, or ``None`` if it can.
+) -> Undefined | None:
+    """Why ``requirement`` cannot be met for this design point, or ``None`` if it can.
 
-    One resolution site, mirroring ``accessors.MATERIAL`` being the one catalogue: the two
+    One resolution site, mirroring ``accessors.INPUTS`` being the one catalogue: the two
     spellings are ``artifact:<path>`` and a :class:`~rts.data.contract.Requirement` value, and
     anything else raises rather than quietly resolving to "absent", for the same reason
     ``has_capability("coverge")`` raises.
@@ -67,7 +74,7 @@ def unresolved(
         path = _artifact_path(reference, caches)
         if path.exists():
             return None
-        return Unmeasured(
+        return Undefined(
             requirement=requirement,
             note=f"required artifact {path} does not exist",
         )
@@ -81,7 +88,7 @@ def unresolved(
         ) from None
     if ds is None or needed not in ds.available_requirements():
         name = ds.name if ds is not None else "<no dataset>"
-        return Unmeasured(
+        return Undefined(
             requirement=needed.value,
             note=f"needs {needed.value}, which dataset {name!r} does not provide",
         )
@@ -89,8 +96,8 @@ def unresolved(
 
 
 
-def _model_requirement(selector: selectors.Selector, ds: Dataset, env: Environment) -> Unmeasured | None:
-    requirements = getattr(selector, "requirements", None)
+def _model_requirement(ranker: rankers.Ranker, ds: Dataset, env: Environment) -> Undefined | None:
+    requirements = getattr(ranker, "requirements", None)
     if requirements is None:
         return None
     for requirement in requirements():
@@ -104,32 +111,32 @@ def _model_requirement(selector: selectors.Selector, ds: Dataset, env: Environme
 def _build_values(
     experiment: Experiment,
     env: Environment,
-    cell: Cell,
+    design_point: DesignPoint,
     cache: dict[tuple[str, str], Any],
-) -> dict[str, Any] | Unmeasured:
-    """Materialise the cell's five values, reusing anything already built this run.
+) -> dict[str, Any] | Undefined:
+    """Materialise the design point's five values, reusing anything already built this run.
 
-    The dataset is built first because every other role reads it. Element values are cached by
-    ``(role, element name)``, so a dataset is built once however many models sweep over it.
+    The dataset is built first because every other role reads it. Level values are cached by
+    ``(role, level name)``, so a dataset is built once however many models sweep over it.
     """
-    factors = cell.factors_dict()
+    factors = design_point.factors_dict()
     values: dict[str, Any] = {}
-    for role in ROLES:
-        key = (role, cell.name(role))
+    for role in FACTORS:
+        key = (role, design_point.name(role))
         if key not in cache:
-            element = experiment.axis_for(role).get(cell.name(role))
-            cache[key] = element.build(
-                Binding(env=env, dataset=values.get(ROLE_DATASET))
+            level = experiment.factor_for(role).get(design_point.name(role))
+            cache[key] = level.build(
+                Binding(env=env, dataset=values.get(FACTOR_DATASET))
             )
         value = cache[key]
-        if is_unmeasured(value):
+        if is_undefined(value):
             return value
         values[role] = value
-    # Applicability can depend on an interaction between roles, so it is asked per cell, once
-    # every value is in hand. This is the only place the cell's factors are visible.
-    for role in ROLES:
-        element = experiment.axis_for(role).get(cell.name(role))
-        reason = element.check(Binding(env=env, dataset=values[ROLE_DATASET], factors=factors))
+    # Applicability can depend on an interaction between roles, so it is asked per design point, once
+    # every value is in hand. This is the only place the design point's factors are visible.
+    for role in FACTORS:
+        level = experiment.factor_for(role).get(design_point.name(role))
+        reason = level.check(Binding(env=env, dataset=values[FACTOR_DATASET], factors=factors))
         if reason is not None:
             return reason
     return values
@@ -139,120 +146,120 @@ def _build_values(
 def _measure(
     experiment: Experiment,
     env: Environment,
-    cell: Cell,
+    design_point: DesignPoint,
     values: Mapping[str, Any],
     matrix: features.FeatureMatrix,
-    audit: Sequence[Warning],
-    selector: selectors.Selector,
+    audit: Sequence[Diagnostic],
+    ranker: rankers.Ranker,
     bm25: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     probes: Sequence[float],
     scores_cache: dict[tuple, np.ndarray],
     score_key: tuple,
-) -> tuple[CellResult | Unmeasured, dict[float, dict[int, bool]]]:
-    """Measure one cell. Returns the result (or why it is unmeasured) and the probe hits."""
-    ds: Dataset = values[ROLE_DATASET]
-    block: features.FeatureBlock = values[ROLE_FEATURES]
-    population: populations.Population = values[ROLE_POPULATION]
-    split: splits.Split = values[ROLE_SPLIT]
+) -> tuple[DesignPointResult | Undefined, dict[float, dict[int, bool]]]:
+    """Measure one design point. Returns the result (or why it is undefined) and the probe hits."""
+    ds: Dataset = values[FACTOR_DATASET]
+    block: features.FeatureBlock = values[FACTOR_FEATURES]
+    subset: subsets.Subset = values[FACTOR_SUBSET]
+    split: splits.Split = values[FACTOR_SPLIT]
 
-    unavailable_population = population.unavailable(ds)
+    unavailable_population = subset.unavailable(ds)
     if unavailable_population is not None:
         return unavailable_population, {}
 
-    external = block.external_material
+    external = block.external_inputs
     if external:
         return (
-            Unmeasured(
-                requirement="feature.external_material",
+            Undefined(
+                requirement="feature.external_inputs",
                 note=(
-                    f"feature block {block.name!r} needs caller-supplied material "
+                    f"feature block {block.name!r} needs caller-supplied inputs "
                     f"{sorted(external)}, which a run does not supply"
                 ),
             ),
             {},
         )
 
-    ctx = selectors.Context(
+    ctx = rankers.Context(
         ds=ds,
         features=matrix,
         split=split,
         bm25=bm25,
-        seed=env.knobs.effective_model_seed,
+        seed=env.controls.effective_model_seed,
     )
     if score_key in scores_cache:
         # A score matrix is a function of the *context*, and the context is (dataset, features,
-        # model, split). Population is deliberately not in it: a population restricts which rows
-        # a metric is averaged over, not which pairs get scored, so re-scoring per population
-        # would double the cost of every population sweep to produce an identical matrix.
+        # model, split). Subset is deliberately not in it: a subset restricts which rows
+        # a metric is averaged over, not which pairs get scored, so re-scoring per subset
+        # would double the cost of every subset sweep to produce an identical matrix.
         scores = scores_cache[score_key]
         seconds = 0.0
         importances: dict = {}
     else:
         started = time.perf_counter()
-        scores = selector.scores(ctx)
+        scores = ranker.scores(ctx)
         seconds = time.perf_counter() - started
         scores_cache[score_key] = scores
-        # Captured here, on the cell that actually scored, rather than read back off the
-        # selector afterwards: the element is shared, so a later cell in another context would
+        # Captured here, on the design point that actually scored, rather than read back off the
+        # ranker afterwards: the level is shared, so a later design point in another context would
         # have overwritten it.
-        importances = dict(getattr(selector, "importances_", None) or {})
+        importances = dict(getattr(ranker, "importances_", None) or {})
 
     evaluation = evaluate.evaluate_rows(
         scores,
         ds,
         split.test_idx,
-        budgets=env.knobs.budgets,
-        n_bootstrap=env.knobs.n_bootstrap,
-        seed=env.knobs.seed,
-        candidates=candidates,
-        population=population,
+        budgets=env.controls.budgets,
+        n_bootstrap=env.controls.n_bootstrap,
+        seed=env.controls.seed,
+        candidate_sets=candidate_sets,
+        subset=subset,
         # The layer always evaluates exactly the split's window, so this guard holds by
         # construction -- which is the point: it is the boundary a direct-rows caller would
         # cross, and it is asserted rather than assumed.
         split=split,
     )
     if not evaluation.measured:
-        return (evaluation.unmeasured or Unmeasured("population", "unmeasured")), {}
+        return (evaluation.undefined or Undefined("subset", "undefined")), {}
 
-    # Paired hits are computed over the *population's* rows, not the whole evaluation window.
-    # A comparison pairs two cells within one group, and the group names a population; pairing
+    # Paired hits are computed over the *subset's* rows, not the whole evaluation window.
+    # A contrast pairs two design points within one group, and the group names a subset; pairing
     # over the wider window would silently include changes the group's metric never averaged
     # over, which changes the delta and its interval.
-    _, positions = evaluate.population_rows(ds, split.test_idx, population)
-    if is_unmeasured(positions):
+    _, positions = evaluate.subset_rows(ds, split.test_idx, subset)
+    if is_undefined(positions):
         return positions, {}
-    # The population's size in the window *before* the fault filter, which ``evaluation.n_rows``
+    # The subset's size in the window *before* the fault filter, which ``evaluation.n_rows``
     # no longer records. Reported alongside it so a renderer cannot present the averaged count
-    # as the population's size.
-    population_rows = population.rows(ds, split.test_idx)
-    if is_unmeasured(population_rows):
-        return population_rows, {}
+    # as the subset's size.
+    subset_rows = subset.rows(ds, split.test_idx)
+    if is_undefined(subset_rows):
+        return subset_rows, {}
     hits = {
-        probe: evaluate.per_change_hits(scores, ds, split.test_idx[positions], probe, candidates)
+        probe: evaluate.per_change_hits(scores, ds, split.test_idx[positions], probe, candidate_sets)
         for probe in probes
     }
-    collected = matrix.warnings
-    result = CellResult(
-        cell=cell,
-        selector=selector.name,
-        population=evaluation.population,
+    collected = matrix.diagnostics
+    result = DesignPointResult(
+        design_point=design_point,
+        ranker=ranker.name,
+        subset=evaluation.subset,
         n_rows=evaluation.n_rows,
         n_changes=evaluation.n_changes,
-        n_population_rows=int(len(population_rows)),
-        dataset_declaration=ds.declaration(),
+        n_population_rows=int(len(subset_rows)),
+        dataset_metadata=ds.metadata(),
         split={
             "fraction": split.fraction,
             "shuffle": split.shuffle,
             "seed": split.seed,
-            "effective_ordering": split.effective_ordering.value,
+            "effective_order": split.effective_order.value,
         },
         features=matrix.audit(),
-        # Two vocabularies, kept apart: ``warnings`` are the *derivation's* caveats (a block
-        # whose history family was withheld, a history feature on an imposed order), while
+        # Two vocabularies, kept apart: ``diagnostics`` are the *derivation's* caveats (a block
+        # whose temporal family was withheld, a temporal feature on a synthetic order), while
         # ``audit`` is what the dataset and split say about trusting a number at all. Merging
         # them loses the distinction a consumer acts on.
-        warnings=tuple(w.to_dict() for w in collected),
+        diagnostics=tuple(w.to_dict() for w in collected),
         audit=tuple(w.to_dict() for w in audit),
         results=evaluate.results_to_dicts(evaluation.results or []),
         seconds=seconds,
@@ -265,58 +272,58 @@ def _measure(
 def _compare(
     experiment: Experiment,
     env: Environment,
-    results: Sequence[CellResult],
+    results: Sequence[DesignPointResult],
     hits: Mapping[str, Mapping[float, dict[int, bool]]],
-    unmeasured_keys: Mapping[str, Unmeasured],
+    unmeasured_keys: Mapping[str, Undefined],
 ) -> list[dict]:
-    """Paired deltas, grouped by every role except the one the comparison varies."""
+    """Paired deltas, grouped by every role except the one the contrast varies."""
     out: list[dict] = []
-    for comparison in experiment.comparisons:
-        groups: dict[tuple[tuple[str, str], ...], dict[str, Cell]] = defaultdict(dict)
+    for contrast in experiment.contrasts:
+        groups: dict[tuple[tuple[str, str], ...], dict[str, DesignPoint]] = defaultdict(dict)
         for result in results:
             group = tuple(
-                (role, name) for role, name in result.cell.factors if role != comparison.role
+                (role, name) for role, name in result.design_point.factors if role != contrast.role
             )
-            groups[group][result.cell.name(comparison.role)] = result.cell
+            groups[group][result.design_point.name(contrast.role)] = result.design_point
         for group, at_role in groups.items():
             record = {
-                "role": comparison.role,
-                "reference": comparison.reference,
-                "probe_budget": comparison.probe_budget,
+                "role": contrast.role,
+                "reference": contrast.reference,
+                "probe_budget": contrast.probe_budget,
                 "group": dict(group),
             }
-            reference_cell = at_role.get(comparison.reference)
+            reference_cell = at_role.get(contrast.reference)
             if reference_cell is None:
                 out.append(
                     {
                         **record,
-                        "cell": None,
+                        "design_point": None,
                         "measured": False,
-                        "note": f"reference {comparison.reference!r} is not measured in this group",
+                        "note": f"reference {contrast.reference!r} is not measured in this group",
                     }
                 )
                 continue
-            for name, cell in at_role.items():
-                if name == comparison.reference:
+            for name, design_point in at_role.items():
+                if name == contrast.reference:
                     continue
-                if cell.key not in hits:
-                    reason = unmeasured_keys.get(cell.key)
+                if design_point.key not in hits:
+                    reason = unmeasured_keys.get(design_point.key)
                     out.append(
                         {
                             **record,
-                            "cell": name,
+                            "design_point": name,
                             "measured": False,
-                            "note": reason.note if reason else "cell was not measured",
+                            "note": reason.note if reason else "design_point was not measured",
                         }
                     )
                     continue
                 stat = evaluate.paired_bootstrap(
-                    hits[cell.key][comparison.probe_budget],
-                    hits[reference_cell.key][comparison.probe_budget],
-                    env.knobs.paired_resamples,
-                    env.knobs.seed,
+                    hits[design_point.key][contrast.probe_budget],
+                    hits[reference_cell.key][contrast.probe_budget],
+                    env.controls.paired_resamples,
+                    env.controls.seed,
                 )
-                out.append({**record, "cell": name, "measured": True, **stat})
+                out.append({**record, "design_point": name, "measured": True, **stat})
     return out
 
 
@@ -325,7 +332,7 @@ def run(
     experiment: Experiment,
     out_dir: Path | str | None = None,
     *,
-    knobs: Knobs | None = None,
+    controls: Controls | None = None,
     shared: Mapping[str, Any] | None = None,
     caches: Mapping[str, Path] | None = None,
     tiers: Sequence[str] | None = None,
@@ -333,21 +340,21 @@ def run(
     save: bool = True,
     verbose: bool = True,
 ) -> RunReport:
-    """Measure every cell of ``experiment`` and return the report.
+    """Measure every design point of ``experiment`` and return the report.
 
     The parameters are the free choices a *run* makes as opposed to the ones the experiment
-    declares: where to write, which knobs to use if not the declared ones, what to inject, and
+    declares: where to write, which controls to use if not the declared ones, what to inject, and
     which cost tiers to spend. All of them are recorded in the report.
 
     ``scores`` lets a caller share score matrices *between* runs, which matters when one
-    experiment is split into two because a knob differs -- the headline arm and the sparse arm
-    report different budget sets, and budgets are a knob, so they cannot be one run. Reuse is
-    sound because a score matrix is a function of the cell's context, which is what the key
-    records; it is not a function of the averaging population, which is why the sparse corners
+    experiment is split into two because a control differs -- the headline condition and the low-co-occurrence condition
+    report different budget sets, and budgets are a control, so they cannot be one run. Reuse is
+    sound because a score matrix is a function of the design point's context, which is what the key
+    records; it is not a function of the averaging subset, which is why the low_cooccurrence corners
     cost nothing to add.
     """
     env = Environment(
-        knobs=knobs or experiment.knobs,
+        controls=controls or experiment.controls,
         out_dir=Path(out_dir) if out_dir is not None else config.ARTIFACTS,
         caches=dict(caches or {}),
         shared=dict(shared or {}),
@@ -360,9 +367,9 @@ def run(
         print("=" * 78)
         print(f"experiment: {experiment.name}")
         print("=" * 78)
-        for role, axis in experiment.axes().items():
-            print(f"  {role:>11}: {', '.join(axis.names())}")
-        print(f"  {'knobs':>11}: {env.knobs.to_dict()}")
+        for role, factor in experiment.factors().items():
+            print(f"  {role:>11}: {', '.join(factor.names())}")
+        print(f"  {'controls':>11}: {env.controls.to_dict()}")
         if enabled is not None:
             print(f"  {'tiers':>11}: {sorted(enabled)}")
 
@@ -370,7 +377,7 @@ def run(
         experiment=experiment.name,
         note=experiment.note,
         environment=env,
-        axes={role: axis.declaration() for role, axis in experiment.axes().items()},
+        factors={role: factor.metadata() for role, factor in experiment.factors().items()},
         comparisons_declared=[
             {
                 "role": c.role,
@@ -378,77 +385,77 @@ def run(
                 "probe_budget": c.probe_budget,
                 "note": c.note,
             }
-            for c in experiment.comparisons
+            for c in experiment.contrasts
         ],
     )
 
     built: dict[tuple[str, str], Any] = {}
     matrices: dict[tuple, features.FeatureMatrix] = {}
-    audits: dict[tuple[str, str], tuple[Warning, ...]] = {}
+    audits: dict[tuple[str, str], tuple[Diagnostic, ...]] = {}
     score_cache: dict[tuple, np.ndarray] = {} if scores is None else scores
     bm25s: dict[str, np.ndarray] = {}
     candidate_masks: dict[str, np.ndarray] = {}
     hits: dict[str, dict[float, dict[int, bool]]] = {}
-    unmeasured_keys: dict[str, Unmeasured] = {}
+    unmeasured_keys: dict[str, Undefined] = {}
 
-    for cell in experiment.cells():
-        if enabled is not None and cell.tier not in enabled:
-            reason = Unmeasured(
-                requirement=f"tier:{cell.tier}",
-                note=f"cost tier {cell.tier!r} was not enabled for this run",
+    for design_point in experiment.design_points():
+        if enabled is not None and design_point.tier not in enabled:
+            reason = Undefined(
+                requirement=f"tier:{design_point.tier}",
+                note=f"cost tier {design_point.tier!r} was not enabled for this run",
             )
-            unmeasured_keys[cell.key] = reason
-            report.unmeasured.append(
-                {**cell.to_dict(), "measured": False, **reason.to_dict()}
+            unmeasured_keys[design_point.key] = reason
+            report.undefined.append(
+                {**design_point.to_dict(), "measured": False, **reason.to_dict()}
             )
             continue
 
-        values = _build_values(experiment, env, cell, built)
-        if is_unmeasured(values):
-            unmeasured_keys[cell.key] = values
-            report.unmeasured.append(
-                {**cell.to_dict(), "measured": False, **values.to_dict()}
+        values = _build_values(experiment, env, design_point, built)
+        if is_undefined(values):
+            unmeasured_keys[design_point.key] = values
+            report.undefined.append(
+                {**design_point.to_dict(), "measured": False, **values.to_dict()}
             )
             if verbose:
-                print(f"\n[unmeasured] {cell.key}\n  {values.note}")
+                print(f"\n[undefined] {design_point.key}\n  {values.note}")
             continue
 
-        ds: Dataset = values[ROLE_DATASET]
-        model_reason = _model_requirement(values[ROLE_MODEL], ds, env)
+        ds: Dataset = values[FACTOR_DATASET]
+        model_reason = _model_requirement(values[FACTOR_MODEL], ds, env)
         if model_reason is not None:
-            unmeasured_keys[cell.key] = model_reason
-            report.unmeasured.append(
-                {**cell.to_dict(), "measured": False, **model_reason.to_dict()}
+            unmeasured_keys[design_point.key] = model_reason
+            report.undefined.append(
+                {**design_point.to_dict(), "measured": False, **model_reason.to_dict()}
             )
             if verbose:
-                print(f"\n[unmeasured] {cell.key}\n  {model_reason.note}")
+                print(f"\n[undefined] {design_point.key}\n  {model_reason.note}")
             continue
 
-        split: splits.Split = values[ROLE_SPLIT]
-        dataset_name = cell.name(ROLE_DATASET)
-        features_name = cell.name(ROLE_FEATURES)
+        split: splits.Split = values[FACTOR_SPLIT]
+        dataset_name = design_point.name(FACTOR_DATASET)
+        features_name = design_point.name(FACTOR_FEATURES)
         # ``history`` is derived, not configured: the effective ordering of the run is the
-        # dataset's unless the split shuffles, and it is the cell's split that decides. It is
-        # part of the matrix key because a block with the history family withheld keeps the
+        # dataset's unless the split shuffles, and it is the design point's split that decides. It is
+        # part of the matrix key because a block with the temporal family withheld keeps the
         # same column list as one without.
-        derived = split.effective_ordering is Ordering.OBSERVED
-        use_history = derived if experiment.history is None else experiment.history
-        matrix_key = (dataset_name, features_name, cell.name(ROLE_SPLIT), use_history)
+        derived = split.effective_order is Ordering.NATURAL
+        use_temporal = derived if experiment.temporal is None else experiment.temporal
+        matrix_key = (dataset_name, features_name, design_point.name(FACTOR_SPLIT), use_temporal)
         if matrix_key not in matrices:
             matrices[matrix_key] = features.structured(
-                ds, history=use_history, block=values[ROLE_FEATURES]
+                ds, temporal=use_temporal, block=values[FACTOR_FEATURES]
             )
         matrix = matrices[matrix_key]
 
         if dataset_name not in bm25s:
             bm25s[dataset_name] = features.text.build_bm25_scores(ds)
         if dataset_name not in candidate_masks:
-            candidate_masks[dataset_name] = accessors.candidates(ds, env.knobs.candidates)
-        audit_key = (dataset_name, cell.name(ROLE_SPLIT))
+            candidate_masks[dataset_name] = accessors.candidate_sets(ds, env.controls.candidate_policy)
+        audit_key = (dataset_name, design_point.name(FACTOR_SPLIT))
         if audit_key not in audits:
             audits[audit_key] = reporting.audit(ds, split)
             report.dataset_stats[f"{dataset_name}|{audit_key[1]}"] = {
-                "declaration": ds.declaration(),
+                "metadata": ds.metadata(),
                 "describe": reporting.describe(ds, split),
                 # Recorded rather than recomputed by a renderer. ``None`` when the dataset
                 # declares no coverage, because the statistic is not defined without it --
@@ -463,11 +470,11 @@ def run(
         result, cell_hits = _measure(
             experiment,
             env,
-            cell,
+            design_point,
             values,
             matrix,
             audits[audit_key],
-            values[ROLE_MODEL],
+            values[FACTOR_MODEL],
             bm25s[dataset_name],
             candidate_masks[dataset_name],
             probes,
@@ -476,36 +483,36 @@ def run(
                 dataset_name,
                 ds.name,
                 features_name,
-                cell.name(ROLE_MODEL),
-                cell.name(ROLE_SPLIT),
+                design_point.name(FACTOR_MODEL),
+                design_point.name(FACTOR_SPLIT),
                 round(split.fraction, 6),
                 split.shuffle,
                 split.seed,
-                use_history,
-                env.knobs.candidates,
+                use_temporal,
+                env.controls.candidate_policy,
                 # The *model's* seed is part of the context, because it changes what the model
                 # computes. Without it, re-fitting one model under several seeds would silently
-                # reuse the first fit -- which is precisely the comparison a seed sweep is for.
-                env.knobs.effective_model_seed,
+                # reuse the first fit -- which is precisely the contrast a seed sweep is for.
+                env.controls.effective_model_seed,
             ),
         )
-        if is_unmeasured(result):
-            unmeasured_keys[cell.key] = result
-            report.unmeasured.append(
-                {**cell.to_dict(), "measured": False, **result.to_dict()}
+        if is_undefined(result):
+            unmeasured_keys[design_point.key] = result
+            report.undefined.append(
+                {**design_point.to_dict(), "measured": False, **result.to_dict()}
             )
             if verbose:
-                print(f"\n[unmeasured] {cell.key}\n  {result.note}")
+                print(f"\n[undefined] {design_point.key}\n  {result.note}")
             continue
 
-        report.cells.append(result)
-        hits[cell.key] = cell_hits
-        # Every cell of one (dataset, population) reports the same two counts, so first-seen
-        # wins and the map stays a description of the population rather than of a cell. The
-        # key carries the dataset element as well, because the same population name under two
-        # datasets is two populations -- see ``population_sizes``.
-        report.population_sizes.setdefault(
-            f"{cell.name(ROLE_DATASET)}|{result.population}",
+        report.design_points.append(result)
+        hits[design_point.key] = cell_hits
+        # Every design point of one (dataset, subset) reports the same two counts, so first-seen
+        # wins and the map stays a description of the subset rather than of a design point. The
+        # key carries the dataset level as well, because the same subset name under two
+        # datasets is two subsets -- see ``subset_sizes``.
+        report.subset_sizes.setdefault(
+            f"{design_point.name(FACTOR_DATASET)}|{result.subset}",
             {"changes": result.n_population_rows, "faults": result.n_rows},
         )
         if verbose:
@@ -515,28 +522,28 @@ def run(
                 row = next((r for r in result.results if r["budget"] == probe), None)
                 if row is not None:
                     probe_note = f"  b{probe:.2f}={row['recall']:.3f}"
-            print(f"  {result.cell.key}  ({result.seconds:.1f}s){probe_note}")
+            print(f"  {result.design_point.key}  ({result.seconds:.1f}s){probe_note}")
 
-    report.comparisons = _compare(experiment, env, report.cells, hits, unmeasured_keys)
+    report.contrasts = _compare(experiment, env, report.design_points, hits, unmeasured_keys)
     report.seconds = time.perf_counter() - started
 
     if verbose:
         print("\n" + report.format_table())
-        if report.comparisons:
+        if report.contrasts:
             print("\nPaired deltas:")
-            for record in report.comparisons:
+            for record in report.contrasts:
                 if not record.get("measured"):
                     continue
                 print(
-                    f"  {record['cell']:>28} vs {record['reference']:<12} "
+                    f"  {record['design_point']:>28} vs {record['reference']:<12} "
                     f"b{record['probe_budget']:.2f} delta {record['delta']:+.3f} "
                     f"[{record['lo']:+.3f}, {record['hi']:+.3f}] "
                     f"p={record['p_value']:.4f} n={record['n']}"
                 )
-        n_unmeasured = len(report.unmeasured)
+        n_unmeasured = len(report.undefined)
         print(
-            f"\n{len(report.cells)} cell(s) measured"
-            + (f", {n_unmeasured} unmeasured" if n_unmeasured else "")
+            f"\n{len(report.design_points)} design_point(s) measured"
+            + (f", {n_unmeasured} undefined" if n_unmeasured else "")
             + f"  [{report.seconds:.1f}s]"
         )
 

@@ -21,7 +21,7 @@ Cost
 ----
 The full grid is ``n_changes x n_tests`` pairs and is not affordable: at the
 measured 1.86 decisions/s, 2651 x 1187 = 3.1M pairs is roughly 19 days. Scoring
-can be restricted to the covered candidate set (mean ~155 tests per change)
+can be restricted to the coverage-restricted candidate set (mean ~155 tests per change)
 without losing any fault, because every killing test covers the mutated function.
 Use ``estimate_cost`` before committing.
 """
@@ -64,7 +64,7 @@ def build_state(change_text: str, test_text: str) -> str:
 def build_pairs(
     ds: contract.Dataset,
     change_rows: np.ndarray | None = None,
-    candidates: np.ndarray | None = None,
+    candidate_sets: np.ndarray | None = None,
     shuffle: bool = False,
     seed: int = config.SEED,
 ) -> tuple[list[dict], list[tuple[int, int]]]:
@@ -75,8 +75,8 @@ def build_pairs(
     """
     if change_rows is None:
         change_rows = np.arange(ds.n_changes)
-    if candidates is None:
-        candidates = accessors.candidates(ds, "covered")
+    if candidate_sets is None:
+        candidate_sets = accessors.candidate_sets(ds, "coverage_restricted")
 
     texts = [features.derived.change_query_text(ds, c) for c in ds.changes]
     if shuffle:
@@ -88,7 +88,7 @@ def build_pairs(
     index: list[tuple[int, int]] = []
     for r in change_rows:
         row = int(r)
-        for j in np.flatnonzero(candidates[row]):
+        for j in np.flatnonzero(candidate_sets[row]):
             j = int(j)
             test_text = ds.test_source(ds.test_ids[j]) or ""
             rows.append(
@@ -193,7 +193,7 @@ def load_scores(path: Path, ds: contract.Dataset) -> np.ndarray:
     """Load cached scores into a ``[n_changes, n_tests]`` matrix.
 
     Unscored pairs get a very low score so they sort last. Restricting to the
-    covered candidate set cannot lose a fault, since every killing test covers the
+    coverage-restricted candidate set cannot lose a fault, since every killing test covers the
     mutated function.
     """
     if not Path(path).exists():
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", action="store_true", help="write pair file and report cost")
     parser.add_argument("--score", action="store_true", help="invoke semif-score on the pair file")
-    parser.add_argument("--candidates", default="covered", choices=["covered", "full"])
+    parser.add_argument("--candidate-policy", default="coverage_restricted", choices=["coverage_restricted", "full"])
     parser.add_argument("--max-changes", type=int, default=None)
     parser.add_argument("--shuffle", action="store_true", help="change-shuffle ablation")
     parser.add_argument("--suffix", default="", help="suffix for output filenames")
@@ -252,13 +252,13 @@ if __name__ == "__main__":
     rows_n = np.arange(ds.n_changes)
     if args.max_changes:
         rows_n = rows_n[: args.max_changes]
-    cand = accessors.candidates(ds, args.candidates)
+    cand = accessors.candidate_sets(ds, args.candidate_policy)
 
     rows, index = build_pairs(
-        ds, change_rows=rows_n, candidates=cand, shuffle=args.shuffle
+        ds, change_rows=rows_n, candidate_sets=cand, shuffle=args.shuffle
     )
     cost = estimate_cost(len(rows))
-    print(f"candidates      : {args.candidates}")
+    print(f"candidate_policy    : {args.candidate_policy}")
     print(f"changes         : {len(rows_n)}")
     print(f"pairs           : {cost['pairs']:,}")
     print(f"estimated cost  : {cost['hours']:.1f} h ({cost['days']:.1f} d) at {DECISIONS_PER_SECOND}/s")

@@ -1,6 +1,6 @@
 """Concrete datasets: three pieces of machinery behind the contract.
 
-A concrete dataset is a **source** (raw material for one SUT or revision), a **sample
+A concrete dataset is a **source** (raw inputs for one SUT or revision), a **sample
 generator** (turns source records into samples) and the dataset itself (implements the
 primitives over those samples). One pair of generators per data format; **one dataset
 per evaluation unit** -- so the eight BugsInPy projects are eight datasets sharing one
@@ -30,10 +30,10 @@ from .contract import (
     Capability,
     CapabilityMissing,
     Dataset,
+    Diagnostic,
+    Granularity,
     Ordering,
     TestId,
-    TestUnit,
-    Warning,
 )
 from .sources import Bug, BugsInPySource, MutmutSource, available_bugsinpy_projects
 
@@ -43,8 +43,8 @@ class DerivedDataset(Dataset):
 
     A derived dataset **states its own ordering rather than inheriting one**: a
     transformation that maps each derived sample to exactly one point in its base's
-    sequence may declare ``observed``; one that draws its parts from anywhere in the base
-    is ``imposed``. The harness cannot verify either claim, so the declaration carries
+    sequence may declare ``natural``; one that draws its parts from anywhere in the base
+    is ``synthetic``. The harness cannot verify either claim, so the declaration carries
     the responsibility.
     """
 
@@ -55,8 +55,8 @@ class DerivedDataset(Dataset):
     def base(self) -> Dataset:
         return self._base
 
-    def semantics(self) -> Mapping[str, str]:
-        notes = dict(self._base.semantics())
+    def annotations(self) -> Mapping[str, str]:
+        notes = dict(self._base.annotations())
         notes["derived_from"] = self._base.name
         return notes
 
@@ -70,9 +70,9 @@ class MarshmallowDataset(Dataset):
     Three properties are stated as declarations rather than only in prose, because they
     are the study's documented limitations:
 
-    * **The change order is imposed.** The mutant population has no intrinsic temporal
+    * **The change order is synthetic.** The mutant subset has no intrinsic temporal
       order, so a fixed-seed permutation defines the sequence. The seed is recorded in
-      :meth:`semantics`, and history features are off by default for exactly this reason.
+      :meth:`annotations`, and temporal features are off by default for exactly this reason.
     * **``killing_tests`` is mutmut's label, and under the ``mutmut`` label source it is
       defined by coverage.** mutmut executes only the tests associated with the mutated
       function, so a test outside that set is *assumed* not to fail.
@@ -89,8 +89,8 @@ class MarshmallowDataset(Dataset):
         self._source = MutmutSource(labels=labels, sut=sut)
         change_set = self._source.changes()
 
-        # Impose a synthetic temporal order. For an imposed dataset a permutation is free
-        # -- every order is equally valid, and the seed is only a reproducibility knob --
+        # Impose a synthetic temporal order. For a synthetic-order dataset a permutation is free
+        # -- every order is equally valid, and the seed is only a reproducibility control --
         # so applying it at construction is honest and is what makes a run reproduce
         # without threading a seed through every consumer.
         rng = np.random.default_rng(order_seed)
@@ -119,11 +119,11 @@ class MarshmallowDataset(Dataset):
     def killing_tests(self, change: Any) -> frozenset[TestId]:
         return frozenset(change.killing_tests)
 
-    def ran_tests(self, change: Any) -> frozenset[TestId]:
-        return frozenset(change.ran_tests)
+    def executed_tests(self, change: Any) -> frozenset[TestId]:
+        return frozenset(change.executed_tests)
 
     @property
-    def test_pool(self) -> Sequence[TestId]:
+    def test_suite(self) -> Sequence[TestId]:
         return self._pool
 
     def test_source(self, test: TestId) -> str | None:
@@ -145,10 +145,10 @@ class MarshmallowDataset(Dataset):
     # --- declarations -----------------------------------------------------
 
     def ordering(self) -> Ordering:
-        return Ordering.IMPOSED
+        return Ordering.SYNTHETIC
 
-    def test_unit(self) -> TestUnit:
-        return TestUnit.FUNCTION
+    def test_granularity(self) -> Granularity:
+        return Granularity.FUNCTION
 
     def coverage_key(self, change: Any) -> str:
         return change.func_key
@@ -167,16 +167,16 @@ class MarshmallowDataset(Dataset):
             "survived": int(sum(c.survived for c in self._changes)),
         }
 
-    def semantics(self) -> Mapping[str, str]:
+    def annotations(self) -> Mapping[str, str]:
         notes = {
             "change": "one mutant; the diff is reconstructed by diffing generated source",
-            "ordering": "imposed: mutant population has no intrinsic temporal order; "
+            "ordering": "synthetic: the mutants have no intrinsic temporal order; "
             f"canonical order is a permutation at seed {self._order_seed}",
             "killing_tests": "tests that failed; under the mutmut label source these are the "
             "tests mutmut selected, so the label is defined by coverage",
-            "ran_tests": "tests mutmut actually executed; the complement of killing_tests "
+            "executed_tests": "tests mutmut actually executed; the complement of killing_tests "
             "inside this set passed, and everything outside it never ran",
-            "test_unit": "one test function; pytest parametrization is collapsed to the base id",
+            "test_granularity": "one test function; pytest parametrization is collapsed to the base id",
             "survivors": "retained as negative training signal, excluded from the recall denominator",
             "coverage": "mutmut's function-level test association",
             "durations": "wall-clock from the mutmut stats file; hardware-dependent, so "
@@ -203,14 +203,14 @@ class MarshmallowDataset(Dataset):
 class BugsInPyDataset(Dataset):
     """One BugsInPy project: real bugs, real failing tests, no synthetic history.
 
-    This is the arm whose **labels are not defined by coverage**. BugsInPy's failing tests
+    This is the condition whose **labels are not defined by coverage**. BugsInPy's failing tests
     come from the projects' own bug reports, so no feature is circular with respect to
     them -- which is what makes it structurally the traceability ladder's hardest rung on
     real data.
 
     What it does *not* have is coverage and durations: obtaining them would mean running
     every project's suite at every bug commit. So it declares neither capability, and the
-    harness reports those feature columns as unmeasured rather than as an all-zero column
+    harness reports those feature columns as undefined rather than as an all-zero column
     a model would happily split on.
     """
 
@@ -242,21 +242,21 @@ class BugsInPyDataset(Dataset):
     def killing_tests(self, change: Any) -> frozenset[TestId]:
         return frozenset(change.failing)
 
-    def ran_tests(self, change: Any) -> frozenset[TestId]:
+    def executed_tests(self, change: Any) -> frozenset[TestId]:
         # No execution record survives in the built dataset: the failing tests came from
         # the project's own bug report, and nothing re-ran the suite. Every pooled test is
         # therefore an eligible candidate, and none of them is known to have passed.
         return frozenset(self._pool)
 
     @property
-    def test_pool(self) -> Sequence[TestId]:
+    def test_suite(self) -> Sequence[TestId]:
         return self._pool
 
     def test_source(self, test: TestId) -> str | None:
         return self._sources.get(test)
 
     def own_candidate_pool(self) -> np.ndarray:
-        """A bug's candidates are its own project's enumerated tests.
+        """A bug's candidate sets are its own project's enumerated tests.
 
         Not the whole suite: pooling eight projects means a budget of a fraction of their
         union would mean eight different things.
@@ -274,26 +274,26 @@ class BugsInPyDataset(Dataset):
 
     def capabilities(self) -> frozenset[Capability]:
         # Deliberately empty: no coverage, no durations. A dataset that faked either would
-        # make the arm's central claim ("no circular feature") false.
+        # make the condition's central claim ("no circular feature") false.
         return frozenset()
 
     def ordering(self) -> Ordering:
-        return Ordering.IMPOSED
+        return Ordering.SYNTHETIC
 
-    def test_unit(self) -> TestUnit:
-        return TestUnit.CASE
+    def test_granularity(self) -> Granularity:
+        return Granularity.CASE
 
     def change_id(self, change: Any) -> str:
         return change.bug_id
 
-    def integrity_notes(self) -> Sequence[Warning]:
+    def integrity_notes(self) -> Sequence[Diagnostic]:
         # ``files`` may be empty or name several paths, so the single-file derived features
         # flatten it. Declared here rather than inferred, because it is a fact about this
         # source's schema rather than about one change.
         if not any(len(b.changed_files) != 1 for b in self._bugs):
             return ()
         return (
-            Warning(
+            Diagnostic(
                 code="dataset.multi_file_changes_flattened",
                 requirement="diff_text",
                 note="bug commits may touch several files or none; single-file derived "
@@ -302,17 +302,17 @@ class BugsInPyDataset(Dataset):
             ),
         )
 
-    def semantics(self) -> Mapping[str, str]:
+    def annotations(self) -> Mapping[str, str]:
         return {
             "change": "one bug-inducing commit; diff_text is the commit's unified diff, "
             "source files only",
-            "ordering": "imposed: the builder emits bugs in file order, which is not a "
+            "ordering": "synthetic: the builder emits bugs in file order, which is not a "
             "temporal sequence",
             "killing_tests": "the bug report's failing tests; NOT defined by coverage, "
-            "which is the arm's whole point",
-            "ran_tests": "every pooled test, because nothing was executed; the dataset "
+            "which is the condition's whole point",
+            "executed_tests": "every pooled test, because nothing was executed; the dataset "
             "records no passed/never-ran distinction",
-            "test_unit": "one test case as named by the project's run_test.sh or enumerated "
+            "test_granularity": "one test case as named by the project's run_test.sh or enumerated "
             "from the suite; parametrization is not collapsed",
             "pool": "tests enumerated by parsing the project's test files with ast, plus any "
             "failing test the enumeration missed",
@@ -336,16 +336,16 @@ class Bundle:
     ``signal`` is the change whose killing tests are the bundle's label, so the label is
     exact rather than approximated: survived distractors have no killing tests by
     construction, and the union of the bundle's kill set is therefore exactly the
-    signal's.
+    focal's.
     """
 
     rung: int
-    signal: int
+    focal: int
     members: tuple[int, ...]
 
     @property
     def change_id(self) -> str:
-        return f"rung{self.rung}#{self.signal}"
+        return f"rung{self.rung}#{self.focal}"
 
 
 class BundleDataset(DerivedDataset):
@@ -370,12 +370,12 @@ class BundleDataset(DerivedDataset):
         base: Dataset,
         bundles: Sequence[Bundle],
         rung: int,
-        pool: str = "signal",
+        pool: str = "focal",
         name: str | None = None,
     ):
         super().__init__(base)
-        if pool not in ("signal", "union"):
-            raise ValueError(f"unknown pool {pool!r}; expected 'signal' or 'union'")
+        if pool not in ("focal", "union"):
+            raise ValueError(f"unknown pool {pool!r}; expected 'focal' or 'union'")
         self._bundles = tuple(bundles)
         self._rung = rung
         self._pool_mode = pool
@@ -404,15 +404,15 @@ class BundleDataset(DerivedDataset):
             out.update(self._base.killing_tests(self._base.changes[m]))
         return frozenset(out)
 
-    def ran_tests(self, change: Any) -> frozenset[TestId]:
+    def executed_tests(self, change: Any) -> frozenset[TestId]:
         out: set[str] = set()
         for m in change.members:
-            out.update(self._base.ran_tests(self._base.changes[m]))
+            out.update(self._base.executed_tests(self._base.changes[m]))
         return frozenset(out)
 
     @property
-    def test_pool(self) -> Sequence[TestId]:
-        return self._base.test_pool
+    def test_suite(self) -> Sequence[TestId]:
+        return self._base.test_suite
 
     def test_source(self, test: TestId) -> str | None:
         return self._base.test_source(test)
@@ -427,7 +427,7 @@ class BundleDataset(DerivedDataset):
     def coverage(self, change: Any) -> frozenset[TestId]:
         if not self._base.has_capability(Capability.COVERAGE):
             raise CapabilityMissing(self.name, Capability.COVERAGE)
-        members = change.members if self._pool_mode == "union" else (change.signal,)
+        members = change.members if self._pool_mode == "union" else (change.focal,)
         out: set[str] = set()
         for m in members:
             out.update(self._base.coverage(self._base.changes[m]))
@@ -436,10 +436,10 @@ class BundleDataset(DerivedDataset):
     def ordering(self) -> Ordering:
         # Declared, never inherited: a bundle draws its parts from anywhere in the base,
         # so it does not map to one point in the base's sequence.
-        return Ordering.IMPOSED
+        return Ordering.SYNTHETIC
 
-    def test_unit(self) -> TestUnit:
-        return self._base.test_unit()
+    def test_granularity(self) -> Granularity:
+        return self._base.test_granularity()
 
     def change_id(self, change: Any) -> str:
         return change.change_id
@@ -452,9 +452,9 @@ class BundleDataset(DerivedDataset):
     def pool_mode(self) -> str:
         return self._pool_mode
 
-    def integrity_notes(self) -> Sequence[Warning]:
+    def integrity_notes(self) -> Sequence[Diagnostic]:
         return (
-            Warning(
+            Diagnostic(
                 code="derived.concatenated_diff",
                 requirement="diff_text",
                 note=(
@@ -465,16 +465,16 @@ class BundleDataset(DerivedDataset):
             ),
         )
 
-    def semantics(self) -> Mapping[str, str]:
-        notes = super().semantics()
+    def annotations(self) -> Mapping[str, str]:
+        notes = super().annotations()
         notes.update(
             {
-                "change": "a bundle of mutations; the signal's diff first",
-                "ordering": "imposed: bundling draws members from anywhere in the base order",
+                "change": "a bundle of mutations; the focal change's diff first",
+                "ordering": "synthetic: bundling draws members from anywhere in the base order",
                 "candidate_pool": (
-                    "the signal change's covered set"
-                    if self._pool_mode == "signal"
-                    else "the union of the members' covered sets"
+                    "the focal change's coverage set"
+                    if self._pool_mode == "focal"
+                    else "the union of the members' coverage sets"
                 ),
                 "durations": "not transferred from the base; a bundle has no wall-clock of its own",
             }
@@ -504,7 +504,7 @@ def bugsinpy_all(root: Path | None = None) -> list[BugsInPyDataset]:
 
 
 def bugsinpy_pooled(root: Path | None = None) -> Dataset:
-    """Every project as one evaluation population. Pooling is iteration, so it composes."""
+    """Every project as one evaluation subset. Pooling is iteration, so it composes."""
     return pool(bugsinpy_all(root=root), name="bugsinpy")
 
 
@@ -512,7 +512,7 @@ def bundles(
     base: Dataset,
     rung: int,
     seed: int = config.SEED,
-    pool: str = "signal",
+    pool: str = "focal",
 ) -> BundleDataset:
     """Build the rung's bundles over ``base``. Rung definitions live in ``rts.bundles``.
 

@@ -10,8 +10,8 @@ module broadens the *change* while holding the *answer* fixed.
 Why survived distractors
 ------------------------
 A bundle is "caught" if a selected test is sensitive to any edit in it (union
-semantics). Survived mutants have no killing tests by construction, so the union
-of the bundle's kill set is exactly the signal mutant's kill set. **The label is
+annotations). Survived mutants have no killing tests by construction, so the union
+of the bundle's kill set is exactly the focal mutant's kill set. **The label is
 therefore exact, not approximated** -- no re-running the suite is needed. Killed
 distractors would break exactness and, worse, inflate the number of killing tests,
 which makes RTS *easier* rather than harder. Rung 4 includes them deliberately, as
@@ -19,8 +19,8 @@ a separate control for that effect.
 
 Why the candidate pool is held fixed
 ------------------------------------
-Candidates are the signal mutant's covered set. The killing test always covers the
-signal's mutated function, so this is lossless, and it keeps the ranking pool
+Candidates are the focal mutant's coverage set. The killing test always covers the
+focal's mutated function, so this is lossless, and it keeps the ranking pool
 identical across rungs. Bundling then varies only the change *description*, which
 is the manipulation of interest.
 
@@ -82,7 +82,7 @@ def _coverage_matrix(ds: contract.Dataset) -> np.ndarray:
     if not ds.has_capability("coverage"):
         raise contract.CapabilityMissing(ds.name, "coverage")
     C = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
-    for i, covered in enumerate(accessors.covered(ds)):
+    for i, covered in enumerate(accessors.coverage_sets(ds)):
         for test in covered:
             j = ds.test_index.get(test)
             if j is not None:
@@ -164,15 +164,15 @@ def make_bundles(
             distractors = tuple(int(x) for x in picks)
 
         members = (i,) + distractors
-        bundles.append(Bundle(rung=rung, signal=i, members=members))
+        bundles.append(Bundle(rung=rung, focal=i, members=members))
     return bundles
 
 
 def bundle_text(ds: contract.Dataset, bundle: Bundle, token_budget: int | None = None) -> str:
-    """Change text: the signal's diff first, then distractors'.
+    """Change text: the focal change's diff first, then distractors'.
 
     ``token_budget`` truncates on whitespace tokens so a rung can be compared
-    against the single-mutant arm at matched query length.
+    against the single-mutant condition at matched query length.
     """
     parts = [features.derived.change_query_text(ds, ds.changes[m]) for m in bundle.members]
     text = "\n".join(parts)
@@ -185,18 +185,18 @@ def bundle_text(ds: contract.Dataset, bundle: Bundle, token_budget: int | None =
 # --- features --------------------------------------------------------------
 
 
-def bundle_matrix(bundle_ds, *, history: bool = True):
+def bundle_matrix(bundle_ds, *, temporal: bool = True):
     """The bundle feature matrix, from the declared block in rts.features.bundle."""
-    return features.bundle_features(bundle_ds, history=history)
+    return features.bundle_features(bundle_ds, temporal=temporal)
 
 
 def bundle_arrays(base, bundle_ds):
-    """Return (matrix, labels, candidates, signals) for a rung."""
-    matrix = bundle_matrix(bundle_ds, history=True)
+    """Return (matrix, labels, candidate sets, focals) for a rung."""
+    matrix = bundle_matrix(bundle_ds, temporal=True)
     labels = accessors.labels(bundle_ds)
-    candidates = accessors.candidates(bundle_ds, "covered")
-    signals = np.array([b.signal for b in bundle_ds.changes])
-    return matrix, labels, candidates, signals
+    candidate_sets = accessors.candidate_sets(bundle_ds, "coverage_restricted")
+    focals = np.array([b.focal for b in bundle_ds.changes])
+    return matrix, labels, candidate_sets, focals
 
 
 def bundle_bm25(
@@ -219,10 +219,10 @@ def bundle_bm25(
 def bundle_curve(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     rows: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    masked = np.where(candidates[rows], scores[rows], -np.inf)
+    masked = np.where(candidate_sets[rows], scores[rows], -np.inf)
     order = np.argsort(-masked, axis=1, kind="stable")
     lab = labels[rows][np.arange(len(rows))[:, None], order]
     return lab, np.maximum.accumulate(lab, axis=1), np.cumsum(lab, axis=1)
@@ -231,7 +231,7 @@ def bundle_curve(
 def evaluate_rung(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     rows: np.ndarray,
     budgets: tuple[float, ...] = (0.01, 0.05, 0.1, 0.2),
     n_bootstrap: int = 500,
@@ -244,7 +244,7 @@ def evaluate_rung(
     the point of the evaluation contract is that it cannot drift from it.
     """
     return evaluate.sweep_matrices(
-        scores, labels, candidates, rows, labels.shape[1],
+        scores, labels, candidate_sets, rows, labels.shape[1],
         budgets=budgets, n_bootstrap=n_bootstrap, seed=seed,
     )
 
@@ -252,12 +252,12 @@ def evaluate_rung(
 def bundle_hits(
     scores: np.ndarray,
     labels: np.ndarray,
-    candidates: np.ndarray,
+    candidate_sets: np.ndarray,
     rows: np.ndarray,
     budget: float,
 ) -> np.ndarray:
-    """Per-bundle caught/not at one budget, for paired comparisons."""
-    return evaluate.per_change_hit_matrix(scores, labels, candidates, rows, budget)
+    """Per-bundle caught/not at one budget, for paired contrasts."""
+    return evaluate.per_change_hit_matrix(scores, labels, candidate_sets, rows, budget)
 
 
 def _xgb_scores(
@@ -297,7 +297,7 @@ def run_cpu(
     n_held_out: int = 200,
     seed: int = config.SEED,
     rungs: tuple[int, ...] | None = None,
-    pool: str = "signal",
+    pool: str = "focal",
 ) -> dict:
     ds = datasets.marshmallow()
     summary: dict = {}
@@ -315,24 +315,24 @@ def run_cpu(
 
     for rung in sorted(rungs or RUNGS):
         bundle_ds = datasets.bundles(ds, rung, seed, pool=pool)
-        matrix, labels, candidates, signals = bundle_arrays(ds, bundle_ds)
+        matrix, labels, candidate_sets, signals = bundle_arrays(ds, bundle_ds)
         bm25 = bundle_bm25(ds, list(bundle_ds.changes))
 
         # Train on candidate pairs only. Training over the whole suite lets the
         # model spend its capacity learning the candidate mask (which is constant
         # inside the pool at evaluation time) instead of learning to rank within it.
-        train_mask = candidates[:split]
+        train_mask = candidate_sets[:split]
         X_train = matrix.X[:split][train_mask]
         y_train = labels[:split][train_mask]
-        held_rows, held_cols = np.nonzero(candidates[held])
+        held_rows, held_cols = np.nonzero(candidate_sets[held])
         X_eval = matrix.X[held][held_rows, held_cols]
         pred, importances = _xgb_scores(X_train, y_train, X_eval, matrix.columns)
         xgb_scores = np.full((n_b, ds.n_tests), -1e9, dtype=np.float32)
         xgb_scores[held[held_rows], held_cols] = pred
 
         structural = (
-            matrix.column("name_match_any") * 2.0
-            + 1.0 / (1.0 + matrix.column("test_n_lines"))
+            matrix.column("filename_match_any") * 2.0
+            + 1.0 / (1.0 + matrix.column("test_lines"))
         )
         model_scores = {
             "bundled_xgboost": xgb_scores,
@@ -350,11 +350,11 @@ def run_cpu(
         )
         print(f"  files per bundle: mean {n_files.mean():.2f}, "
               f"all-single-file {np.mean(n_files == 1):.2f}, "
-              f"mean candidate pool {candidates.sum(axis=1).mean():.0f}")
+              f"mean candidate pool {candidate_sets.sum(axis=1).mean():.0f}")
         print(f"{'=' * 78}")
         print(f"{'model':>24}  " + "  ".join(f"b{b:<5}" for b in (0.01, 0.05, 0.1, 0.2)))
         for name, s in model_scores.items():
-            res = evaluate_rung(s, labels, candidates, held)
+            res = evaluate_rung(s, labels, candidate_sets, held)
             print(f"{name:>24}  " + "  ".join(f"{r.recall:.3f}" for r in res))
         print("  xgboost top features: "
               + ", ".join(f"{k}={v:.3f}" for k, v in list(importances.items())[:5]))
@@ -363,15 +363,15 @@ def run_cpu(
             "n_bundles": n_b,
             "pool": pool,
             "n_held_out": int(len(held)),
-            "mean_candidates": float(candidates.sum(axis=1).mean()),
+            "mean_candidate_count": float(candidate_sets.sum(axis=1).mean()),
             "mean_files_per_bundle": float(n_files.mean()),
             "frac_single_file": float(np.mean(n_files == 1)),
             "results": {
-                name: evaluate.results_to_dicts(evaluate_rung(s, labels, candidates, held))
+                name: evaluate.results_to_dicts(evaluate_rung(s, labels, candidate_sets, held))
                 for name, s in model_scores.items()
             },
             "hits": {
-                name: bundle_hits(s, labels, candidates, held, 0.05).astype(int).tolist()
+                name: bundle_hits(s, labels, candidate_sets, held, 0.05).astype(int).tolist()
                 for name, s in model_scores.items()
             },
             "importances": importances,
@@ -408,26 +408,26 @@ def plot_ladder(
     hits: dict[int, dict[str, np.ndarray]] = {}
     for rung in rungs:
         bundle_ds = datasets.bundles(ds, rung, seed)
-        matrix, labels, candidates, _ = bundle_arrays(ds, bundle_ds)
+        matrix, labels, candidate_sets, _ = bundle_arrays(ds, bundle_ds)
         bm = bundle_bm25(ds, list(bundle_ds.changes))
         sf = load_bundle_scores(
-            config.ARTIFACTS / f"semif_bundles_rung{rung}_signal.jsonl", n_b, ds.n_tests
+            config.ARTIFACTS / f"semif_bundles_rung{rung}_focal.jsonl", n_b, ds.n_tests
         )
-        train_mask = candidates[:split]
+        train_mask = candidate_sets[:split]
         pred, _ = _xgb_scores(matrix.X[:split][train_mask], labels[:split][train_mask],
-                              matrix.X[held][candidates[held]], matrix.columns)
+                              matrix.X[held][candidate_sets[held]], matrix.columns)
         xg = np.full((n_b, ds.n_tests), -1e9, dtype=np.float32)
-        r, c = np.nonzero(candidates[held])
+        r, c = np.nonzero(candidate_sets[held])
         xg[held[r], c] = pred
         model_scores = {
             "SemIf (text)": sf,
             "BM25 (text)": bm,
             "XGBoost (structural)": xg,
-            "structural rule": matrix.column("name_match_any") * 2.0
-            + 1.0 / (1.0 + matrix.column("test_n_lines")),
+            "structural rule": matrix.column("filename_match_any") * 2.0
+            + 1.0 / (1.0 + matrix.column("test_lines")),
             "random": np.random.default_rng(seed).random((n_b, ds.n_tests)).astype(np.float32),
         }
-        hits[rung] = {name: bundle_hits(s, labels, candidates, held, budget)
+        hits[rung] = {name: bundle_hits(s, labels, candidate_sets, held, budget)
                       for name, s in model_scores.items()}
         for name, h in hits[rung].items():
             curves.setdefault(name, []).append(float(h.mean()))
@@ -446,8 +446,8 @@ def plot_ladder(
         5: "6 mutations\n2.6 files\n(coherent)",
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.6))
-    ax = axes[0]
+    fig, factors = plt.subplots(1, 2, figsize=(14, 5.6))
+    ax = factors[0]
     for name, vals in curves.items():
         colour, style, width = styles[name]
         ax.plot(range(len(rungs)), vals, style, color=colour, linewidth=width,
@@ -461,7 +461,7 @@ def plot_ladder(
     ax.legend(fontsize=9)
     ax.set_ylim(0, 0.65)
 
-    ax = axes[1]
+    ax = factors[1]
     rng = np.random.default_rng(seed)
     for name, _vals in curves.items():
         if name == "random":
@@ -518,12 +518,12 @@ def score_semif(
     n_held_out: int = 200,
     batch_size: int = 8,
     seed: int = config.SEED,
-    pool: str = "signal",
+    pool: str = "focal",
 ) -> dict:
     """Score SemIf on bundled changes for the given rungs (held-out bundles only).
 
     SemIf is zero-shot, so only the held-out bundles need scoring. The candidate
-    pool matches the CPU ladder so the arms are comparable.
+    pool matches the CPU ladder so the conditions are comparable.
     """
     from .model import semif_runner as sr
 
@@ -540,14 +540,14 @@ def score_semif(
     out_stats: dict = {}
     for rung in rungs:
         bundle_ds = datasets.bundles(ds, rung, seed, pool=pool)
-        _, labels, candidates, _ = bundle_arrays(ds, bundle_ds)
+        _, labels, candidate_sets, _ = bundle_arrays(ds, bundle_ds)
 
         pairs: list[tuple[str, str]] = []
         index: list[tuple[int, int]] = []
         for b in held:
             b = int(b)
             text = bundle_text(ds, bundle_ds.changes[b])
-            for j in np.flatnonzero(candidates[b]):
+            for j in np.flatnonzero(candidate_sets[b]):
                 j = int(j)
                 pairs.append((text, _test_source(ds, j)))
                 index.append((b, j))
@@ -589,7 +589,7 @@ if __name__ == "__main__":
                         help="held-out bundles to evaluate")
     parser.add_argument("--rungs", default=None,
                         help="comma-separated rungs, e.g. 0,1,2,3")
-    parser.add_argument("--pool", default="signal", choices=["signal", "union"])
+    parser.add_argument("--pool", default="focal", choices=["focal", "union"])
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
 

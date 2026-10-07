@@ -1,4 +1,4 @@
-"""Sources: the raw material for one SUT or revision, holding no module-level state.
+"""Sources: the raw inputs for one SUT or revision, holding no module-level state.
 
 A *source* is the first of the three pieces a concrete dataset is assembled from
 (§3 of the refactor design). It knows how to read one on-disk format and nothing
@@ -26,7 +26,7 @@ BUGSINPY_SUMMARY = "summary.json"
 
 
 class MutmutSource:
-    """Raw material for one mutmut checkout, under one label source.
+    """Raw inputs for one mutmut checkout, under one label source.
 
     ``labels`` selects which outcome log defines the fault labels:
 
@@ -34,7 +34,7 @@ class MutmutSource:
     * ``full``   -- every collected test (the corrected labels)
 
     This used to be a process-wide global (``config.LABELS``), on the argument that
-    every selector, feature and evaluation must agree on it. The argument is right;
+    every ranker, feature and evaluation must agree on it. The argument is right;
     the mechanism was not. Agreement is now achieved by handing *one source* to every
     consumer of a run, which cannot disagree with itself and does not prevent a second
     source existing beside it.
@@ -56,8 +56,8 @@ class MutmutSource:
         """Every mutant as a change, plus the pool it was run against."""
         return self.artifacts.build_changes(self.labels, require_outcomes=require_outcomes)
 
-    def test_pool(self) -> tuple[str, ...]:
-        return self.artifacts.test_pool(self.labels)
+    def test_suite(self) -> tuple[str, ...]:
+        return self.artifacts.test_suite(self.labels)
 
     def coverage_map(self) -> dict[str, list[str]]:
         return self.artifacts.coverage_map(self.labels)
@@ -99,7 +99,7 @@ class Bug:
 
 
 class BugsInPySource:
-    """Raw material for one BugsInPy project.
+    """Raw inputs for one BugsInPy project.
 
     One project is one dataset, because a project's suite is what tests are run
     against and pooling is a decision an experiment makes rather than a property of
@@ -134,7 +134,7 @@ class BugsInPySource:
         failing tests directly and the pool is enumerated by parsing test files with
         ``ast``, so the two can disagree -- a parametrized variant, or a test file the
         enumeration skipped. Dropping such a label would silently make a bug uncaught
-        by every selector, so it is added instead.
+        by every ranker, so it is added instead.
         """
         tests = self.test_sources()
         out: list[Bug] = []

@@ -1,4 +1,4 @@
-"""Figures for the SemIf variation study and the full-suite starved correction.
+"""Figures for the SemIf variation study and the full-suite cold start correction.
 
 Everything is read from ``artifacts/variations.json``, which the experiment driver
 writes incrementally, so the figures never re-run an experiment and can never drift
@@ -7,12 +7,12 @@ matplotlib only, 150 dpi, saved under ``artifacts/figures/``.
 
 Three figures:
 
-``fig_starved_full_suite``  The correction. Recall against budget for the starved
-    population on the full 1187-test suite, at both population sizes (n=43 and
-    n=141), with SemIf against the classical selectors. This is the figure that
+``fig_cold_start_full_suite``  The correction. Recall against budget for the cold start
+    subset on the full 1187-test suite, at both subset sizes (n=43 and
+    n=141), with SemIf against the classical rankers. This is the figure that
     shows the one positive result failing to survive.
 ``fig_history_coverage``    The mechanism. The history x coverage decomposition at
-    b0.05, which shows coverage is the whole effect and history is harmful.
+    b0.05, which shows coverage is the whole effect and temporal features are harmful.
 ``fig_variation_levers``    The forest plot. Every paired delta from P1, P2, P3 and
     P5, against the baseline each proposal was designed to beat, with 95% CIs. One
     picture of "all four text-side levers fail".
@@ -84,7 +84,7 @@ def _draw_curves(ax, group: dict, names: list[str], title: str, subtitle: str) -
     ax.set_xscale("log")
     ax.set_xticks(list(BUDGETS))
     ax.set_xticklabels([f"{b:g}" for b in BUDGETS])
-    ax.set_xlabel("budget (fraction of that change's 1187 candidates)")
+    ax.set_xlabel("budget (fraction of that change's 1187 candidate_sets)")
     ax.set_ylabel("recall of held-out faults")
     ax.set_ylim(-0.02, 1.04)
     ax.grid(alpha=0.25)
@@ -92,13 +92,13 @@ def _draw_curves(ax, group: dict, names: list[str], title: str, subtitle: str) -
     ax.legend(fontsize=7.5, loc="lower right")
 
 
-def fig_starved_full_suite(data: dict) -> Path | None:
-    """The correction: starved population, full candidate set, both population sizes."""
+def fig_cold_start_full_suite(data: dict) -> Path | None:
+    """The correction: cold start subset, full candidate set, both subset sizes."""
     panels = []
-    if "full_starved" in data:
-        panels.append(("full_starved", "n=43 held-out faults (failures <= 2)"))
-    if "full_starved5" in data:
-        panels.append(("full_starved5", "n=141 held-out faults (failures <= 5)"))
+    if "cold_start" in data:
+        panels.append(("cold_start", "n=43 held-out faults (failures <= 2)"))
+    if "cold_start5" in data:
+        panels.append(("cold_start5", "n=141 held-out faults (failures <= 5)"))
     if not panels:
         return None
 
@@ -106,19 +106,21 @@ def fig_starved_full_suite(data: dict) -> Path | None:
         "xgboost_static_lex", "xgboost_struct_lex", "structural_rule",
         "xgboost_static_nocov_lex", "bm25_lexical", "semif_textonly_full",
     ]
-    fig, axes = plt.subplots(1, len(panels), figsize=(7.8 * len(panels), 6.0), squeeze=False)
-    for ax, (key, subtitle) in zip(axes[0], panels):
+    fig, subplot_axes = plt.subplots(
+        1, len(panels), figsize=(7.8 * len(panels), 6.0), squeeze=False
+    )
+    for ax, (key, subtitle) in zip(subplot_axes[0], panels):
         _draw_curves(
             ax, data[key], names,
-            "Starved arm on the full 1187-test suite", subtitle,
+            "Starved condition on the full 1187-test_suite", subtitle,
         )
     fig.suptitle(
         "The one positive result does not survive the full candidate set\n"
-        "the `covered` mask made `covers_function` constant, removing the tree's best feature",
+        "the `covered` mask made `function_coverage` constant, removing the tree's best feature",
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    out = config.ARTIFACTS / "figures" / "fig_starved_full_suite.png"
+    out = config.ARTIFACTS / "figures" / "fig_cold_start_full_suite.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -128,17 +130,17 @@ def fig_starved_full_suite(data: dict) -> Path | None:
 
 def fig_history_coverage(data: dict) -> Path | None:
     """The mechanism: history x coverage decomposition, BM25 always on."""
-    group = data.get("full_starved") or data.get("full_starved5")
+    group = data.get("cold_start") or data.get("cold_start5")
     if not group:
         return None
-    cells = [
+    design_points = [
         ("xgboost_static_lex", "coverage + BM25\n(no history)", "#1f77b4"),
         ("xgboost_struct_lex", "coverage + history\n+ BM25", "#17becf"),
         ("xgboost_static_nocov_lex", "BM25 only\n(no coverage, no history)", "#8c564b"),
         ("xgboost_struct_nocov_lex", "history + BM25\n(no coverage)", "#e377c2"),
     ]
     labels, values, colours = [], [], []
-    for name, label, colour in cells:
+    for name, label, colour in design_points:
         if name not in group["results"]:
             continue
         xs, ys, _ = _series(group, name)
@@ -169,8 +171,8 @@ def fig_history_coverage(data: dict) -> Path | None:
     ax.grid(alpha=0.25, axis="y")
     ax.legend(fontsize=8.5, loc="upper right")
     ax.set_title(
-        "Mechanism: coverage is the entire effect and history is harmful\n"
-        f"starved population, full 1187-test suite (n={group.get('faults', '?')} faults)",
+        "Mechanism: coverage is the entire effect and temporal features are harmful\n"
+        f"cold_start subset, full 1187-test suite (n={group.get('faults', '?')} faults)",
         fontsize=11,
     )
     fig.tight_layout()
@@ -193,7 +195,7 @@ def fig_variation_levers(data: dict) -> Path | None:
     # (group label, row label, delta, lo, hi, p, colour)
 
     def add(group: dict, key: str, glabel: str, rlabel: str, colour: str) -> None:
-        stat = group.get("comparisons", {}).get(key)
+        stat = group.get("contrasts", {}).get(key)
         if stat is None:
             return
         rows.append((glabel, rlabel, stat["delta"], stat["lo"], stat["hi"],
@@ -217,8 +219,8 @@ def fig_variation_levers(data: dict) -> Path | None:
                 "#2ca02c")
     if "p3" in data:
         for section, label in [
-            ("covered", "codebert cosine  (vs BM25, 464 faults)"),
-            ("starved_full", "codebert cosine  (vs BM25, starved/full)"),
+            ("coverage_restricted", "codebert cosine  (vs BM25, 464 faults)"),
+            ("cold_start_full", "codebert cosine  (vs BM25, cold_start/full)"),
         ]:
             grp = data["p3"].get(section)
             if grp:
@@ -276,7 +278,7 @@ def fig_variation_levers(data: dict) -> Path | None:
 def run() -> list[Path]:
     data = _load()
     made = [
-        fig_starved_full_suite(data),
+        fig_cold_start_full_suite(data),
         fig_history_coverage(data),
         fig_variation_levers(data),
     ]

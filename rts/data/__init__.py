@@ -5,16 +5,16 @@ Everything here speaks the contract in :mod:`.contract`, and the division is the
 different type:
 
 * :mod:`.contract` -- the primitives, the declarations, and the values they speak in
-  (``Unmeasured``, ``Warnings``, ``Requirement``). Nothing computed from them.
+  (``Undefined``, ``Diagnostics``, ``Requirement``). Nothing computed from them.
 * :mod:`.accessors` -- the derived quantities, as harness functions over the contract, plus
-  the one :data:`~rts.data.accessors.MATERIAL` catalogue that a group's or a population's
+  the one :data:`~rts.data.accessors.INPUTS` catalogue that a group's or a subset's
   ``needs`` resolves through.
 * :mod:`.splits` -- the train/test split, which is evaluation configuration rather than a
   property of the data, and the window guard that ties a metric to it.
-* :mod:`.populations` -- named subsets of the evaluation window.
+* :mod:`.subsets` -- named subsets of the evaluation window.
 * :mod:`.composition` -- namespacing, pooling and derived datasets, all iteration.
 * :mod:`.datasets` -- the concrete datasets: three pieces of machinery behind the contract.
-* :mod:`.sources` -- the raw material for one SUT or revision, holding no module-level state.
+* :mod:`.sources` -- the raw inputs for one SUT or revision, holding no module-level state.
 * :mod:`.mutmut` -- mutmut's raw artifacts and the sample generator that turns them into
   changes (the ``mutmut`` and ``full`` label sources).
 * :mod:`.test_source` -- test-function source text by pytest node id, cached per checkout.

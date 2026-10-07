@@ -1,13 +1,13 @@
 {
   "probe_dir": "artifacts/probe_full_suite",
   "mutants_summarised": 2651,
-  "population": 2651,
+  "subset": 2651,
   "zero_outcome": 0,
   "zero_outcome_mutants": [],
   "wrong_outcome_count": 0,
   "gate2_subset_ok": 2651,
   "gate2_violations": [],
-  "fault_bearing": 2327,
+  "detectable": 2327,
   "killers": {
     "median": 8.0,
     "mean": 58.379028792436614,
@@ -19,7 +19,7 @@
     "total_killers": 135848
   },
   "killed": {
-    "fault_bearing": 2311,
+    "detectable": 2311,
     "with_out_of_coverage_killer": 113,
     "share_out_of_coverage": 0.04889658156642146,
     "killers_not_in_pool": 275,
@@ -129,10 +129,10 @@
     ]
   },
   "survivors": {
-    "population": 340,
+    "subset": 340,
     "sampled": 340,
     "converted_to_fault": 16,
-    "fault_bearing": 16,
+    "detectable": 16,
     "with_out_of_coverage_killer": 15,
     "share_out_of_coverage": 0.9375,
     "killers_not_in_pool": 37,

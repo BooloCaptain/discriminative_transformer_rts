@@ -1,14 +1,14 @@
-"""RTS selectors: statistical baselines, XGBoost, and the SemIf reranker.
+"""RTS rankers: statistical baselines, XGBoost, and the SemIf reranker.
 
-Every selector implements ``scores(ctx) -> [n_changes, n_tests]``. Higher is better;
+Every ranker implements ``scores(ctx) -> [n_changes, n_tests]``. Higher is better;
 evaluation takes the top ``k`` per change. Selectors never see labels for changes they
 are being evaluated on -- the structured features are already cumulative, and XGBoost is
 fit on the training window only.
 
 The context carries a :class:`~rts.features.block.FeatureMatrix` rather than a bare
-``(X, names)`` pair. That is what lets a selector ask for a column by name and fail
+``(X, names)`` pair. That is what lets a ranker ask for a column by name and fail
 loudly if it was renamed, instead of doing ``names.index(...)`` and silently reading
-whatever moved into that slot. It also carries the matrix's warnings, so a model-input
+whatever moved into that slot. It also carries the matrix's diagnostics, so a model-input
 coercion -- a column that could not be measured and was zeroed -- travels to the layer
 that produced the number rather than being printed and forgotten.
 """
@@ -23,23 +23,23 @@ import numpy as np
 
 from .. import config, features
 from ..data import accessors, splits
-from ..data.contract import Dataset, Warning
+from ..data.contract import Dataset, Diagnostic
 from . import semif
 
 # Feature families, taken from the block's own declaration so there is one definition of
-# what "the history family" is rather than a second list here that can drift from it.
-HISTORY_FEATURES = features.STRUCTURED.family("history")
+# what "the temporal family" is rather than a second list here that can drift from it.
+TEMPORAL_FEATURES = features.STRUCTURED.family("temporal")
 COVERAGE_FEATURES = features.STRUCTURED.family("coverage")
-TRACEABILITY_FEATURES = features.STRUCTURED.family("traceability")
+PROXIMITY_FEATURES = features.STRUCTURED.family("proximity")
 
 
 @dataclass
 class Context:
-    """Everything a selector may read.
+    """Everything a ranker may read.
 
-    The split is here rather than derived inside a selector because it is evaluation
-    configuration: the experiment chooses it, every selector in a run must see the same
-    one, and a selector that invented its own would train and be evaluated on different
+    The split is here rather than derived inside a ranker because it is evaluation
+    configuration: the experiment chooses it, every ranker in a run must see the same
+    one, and a ranker that invented its own would train and be evaluated on different
     partitions without saying so.
     """
 
@@ -48,7 +48,7 @@ class Context:
     split: splits.Split
     bm25: np.ndarray  # [n_changes, n_tests]
     extras: dict = field(default_factory=dict)
-    #: The run's seed. A selector that needs randomness reads it here rather than from
+    #: The run's seed. A ranker that needs randomness reads it here rather than from
     #: ``config``, so that a run-level seed override reaches the model instead of stopping at
     #: the experiment layer.
     seed: int = config.SEED
@@ -65,28 +65,28 @@ class Context:
         return self.features.column(name)
 
     @property
-    def warnings(self) -> tuple[Warning, ...]:
-        """Warnings raised while materialising the features for this context."""
-        return self.features.warnings
+    def diagnostics(self) -> tuple[Diagnostic, ...]:
+        """Diagnostics raised while materialising the features for this context."""
+        return self.features.diagnostics
 
 
-class Selector:
-    name = "selector"
+class Ranker:
+    name = "ranker"
 
     def scores(self, ctx: Context) -> np.ndarray:  # pragma: no cover - interface
         raise NotImplementedError
 
     def requirements(self) -> tuple[str, ...]:
-        """Material beyond the dataset contract that this selector reads.
+        """Inputs beyond the dataset contract that this ranker reads.
 
-        The selector half of the declaration the dataset contract already has: the entity
-        that reads the material says what it needs, so the need cannot drift from the code.
-        The experiment layer resolves these at the cell boundary, and an unresolved
-        requirement makes the cell *unmeasured* rather than raising from inside ``scores``.
+        The ranker half of the declaration the dataset contract already has: the entity
+        that reads the inputs says what it needs, so the need cannot drift from the code.
+        The experiment layer resolves these at the design point boundary, and an unresolved
+        requirement makes the design point *undefined* rather than raising from inside ``scores``.
 
-        Two spellings are understood: ``"artifact:<path>"`` for a file the selector reads
+        Two spellings are understood: ``"artifact:<path>"`` for a file the ranker reads
         (a score cache), and a :class:`rts.data.contract.Requirement` value (``"coverage"``,
-        ``"durations"``, ...) for material that comes from the dataset. An unrecognised
+        ``"durations"``, ...) for inputs that come from the dataset. An unrecognised
         spelling raises where it is resolved, for the same reason
         :meth:`rts.data.contract.Dataset.has_capability` does.
         """
@@ -103,11 +103,11 @@ class Selector:
         return np.where(covered > 0, 1e6, 0.0) - n_covering
 
 
-class RandomSelector(Selector):
+class RandomRanker(Ranker):
     name = "random"
 
     def __init__(self, seed: int | None = None):
-        # ``None`` means "the run's seed", so an experiment's seed knob reaches the model.
+        # ``None`` means "the run's seed", so an experiment's seed control reaches the model.
         self.seed = seed
 
     def scores(self, ctx: Context) -> np.ndarray:
@@ -115,7 +115,7 @@ class RandomSelector(Selector):
         return rng.random((ctx.ds.n_changes, ctx.ds.n_tests)).astype(np.float32)
 
 
-class RecencySelector(Selector):
+class RecencyRanker(Ranker):
     """Select tests that failed most recently. Expected to be uninformative.
 
     The synthetic history has no real temporal structure, so this baseline exists to be
@@ -125,32 +125,32 @@ class RecencySelector(Selector):
     name = "recency"
 
     def scores(self, ctx: Context) -> np.ndarray:
-        return -ctx.feature("test_last_failure_age")
+        return -ctx.feature("failure_recency")
 
 
-class FailureRateSelector(Selector):
+class FailureRateRanker(Ranker):
     name = "failure_rate"
 
     def scores(self, ctx: Context) -> np.ndarray:
-        return ctx.feature("test_failure_rate_cum")
+        return ctx.feature("cumulative_failure_rate")
 
 
-class CoverageSelector(Selector):
+class CoverageRanker(Ranker):
     """Select tests that cover the mutated function (mutmut's own association)."""
 
     name = "coverage"
 
     def scores(self, ctx: Context) -> np.ndarray:
         return self._prefer_small_coverage(
-            ctx.feature("covers_function"), ctx.feature("n_covering_tests")
+            ctx.feature("function_coverage"), ctx.feature("coverage_set_size")
         )
 
 
-class StructuralRuleSelector(Selector):
+class StructuralRuleRanker(Ranker):
     """Hand-built rule: covered tests whose file name matches the changed module.
 
     This exists because it turns out to explain most of the achievable recall. The
-    conjunction ``covers_function AND filename_stem_match`` narrows the suite to a median
+    conjunction ``function_coverage AND filename_match`` narrows the suite to a median
     of 9 candidate tests, so most of the task is solved by cheap structural funneling
     rather than by anything semantic. Any model claiming to work must be measured against
     this, not just against random.
@@ -159,20 +159,20 @@ class StructuralRuleSelector(Selector):
     name = "structural_rule"
 
     def scores(self, ctx: Context) -> np.ndarray:
-        covered = ctx.feature("covers_function")
-        name_match = ctx.feature("filename_stem_match")
-        n_lines = ctx.feature("test_n_lines")
+        covered = ctx.feature("function_coverage")
+        name_match = ctx.feature("filename_match")
+        n_lines = ctx.feature("test_lines")
         # Covered first, then name-matching, then shortest test first.
         return covered * 2.0 + name_match + 1.0 / (1.0 + n_lines)
 
 
-class LexicalSelector(Selector):
+class LexicalRanker(Ranker):
     """BM25 between the changed lines and the test source.
 
     The two shuffle flags produce a *shuffled* BM25 instead of reading the context's canonical
     one, which is the change-shuffle ablation ``docs/plan.md`` specifies: if recall barely drops when
     the change text is shuffled, the lexical signal is a change-independent test prior rather
-    than a match between the change and the test. Expressing the probe as a selector keeps it in
+    than a match between the change and the test. Expressing the probe as a ranker keeps it in
     the same grid as everything else, with the same provenance, instead of in a driver's second
     loop with its own bookkeeping.
     """
@@ -200,10 +200,10 @@ class LexicalSelector(Selector):
         )
 
 
-class PerPoolRandomSelector(Selector):
+class PerPoolRandomRanker(Ranker):
     """Uniform scores drawn per change over that change's **own** candidate pool.
 
-    :class:`RandomSelector` draws over the whole matrix, which is the right baseline when every
+    :class:`RandomRanker` draws over the whole matrix, which is the right baseline when every
     change is ranked against one suite. When each change has its own pool, drawing over the
     union gives each change a different set of ranks, so the baseline would move for a reason
     that has nothing to do with the method under test.
@@ -214,27 +214,27 @@ class PerPoolRandomSelector(Selector):
 
     name = "random"
 
-    def __init__(self, candidates_mode: str = "full", seed: int | None = None):
-        self.candidates_mode = candidates_mode
-        # ``None`` means "the run's seed", the same rule the other selectors follow.
+    def __init__(self, candidate_policy: str = "full", seed: int | None = None):
+        self.candidate_policy = candidate_policy
+        # ``None`` means "the run's seed", the same rule the other rankers follow.
         self.seed = seed
 
     def scores(self, ctx: Context) -> np.ndarray:
-        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
+        candidate_sets = accessors.candidate_sets(ctx.ds, self.candidate_policy)
         rng = np.random.default_rng(ctx.seed if self.seed is None else self.seed)
         out = np.full((ctx.ds.n_changes, ctx.ds.n_tests), -1e9, dtype=np.float32)
         for row in range(ctx.ds.n_changes):
-            cols = np.flatnonzero(candidates[row])
+            cols = np.flatnonzero(candidate_sets[row])
             if cols.size == 0:
                 continue
             out[row, cols] = rng.random(cols.size).astype(np.float32)
         return out
 
 
-class PerPoolLexicalSelector(Selector):
+class PerPoolLexicalRanker(Ranker):
     """BM25 fitted once per change, over that change's own candidate documents.
 
-    :class:`LexicalSelector` scores every pair against one index fitted over the whole suite,
+    :class:`LexicalRanker` scores every pair against one index fitted over the whole suite,
     which makes a term's idf depend on every other change's tests. That is right when one suite
     serves every change. With per-change pools it is a different quantity -- and for a pooled
     multi-project corpus it would let one project's vocabulary move another project's scores.
@@ -243,25 +243,25 @@ class PerPoolLexicalSelector(Selector):
 
     * ``"change"`` -- the added-and-removed-lines extraction the study's own BM25 uses;
     * ``"diff"`` -- the raw unified diff, ``+``/``-`` markers and hunk headers included, which
-      is what the BugsInPy arm's recorded numbers used.
+      is what the BugsInPy condition's recorded numbers used.
 
     The two are recorded as a choice rather than reconciled: they differ, and which one a model
-    is entitled to see is a decision about the arm, not a spelling of one idea.
+    is entitled to see is a decision about the condition, not a spelling of one idea.
     """
 
     name = "bm25_lexical"
 
-    def __init__(self, candidates_mode: str = "full", query: str = "change"):
+    def __init__(self, candidate_policy: str = "full", query: str = "change"):
         if query not in ("diff", "change"):
             raise ValueError(f"query must be 'diff' or 'change', not {query!r}")
-        self.candidates_mode = candidates_mode
+        self.candidate_policy = candidate_policy
         self.query = query
 
     def scores(self, ctx: Context) -> np.ndarray:
-        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
+        candidate_sets = accessors.candidate_sets(ctx.ds, self.candidate_policy)
         out = np.full((ctx.ds.n_changes, ctx.ds.n_tests), -1e9, dtype=np.float32)
         for row, change in enumerate(ctx.ds.changes):
-            cols = np.flatnonzero(candidates[row])
+            cols = np.flatnonzero(candidate_sets[row])
             if cols.size == 0:
                 continue
             docs = [ctx.ds.test_source(ctx.ds.test_ids[int(c)]) or "" for c in cols]
@@ -275,16 +275,16 @@ class PerPoolLexicalSelector(Selector):
         return out
 
 
-class XGBoostSelector(Selector):
+class XGBoostRanker(Ranker):
     """Gradient-boosted trees on the structured features.
 
     Three independent switches:
 
-    * ``include_lexical`` adds the BM25 score as an input column. This is the cell that
+    * ``include_lexical`` adds the BM25 score as a input column. This is the design point that
       separates "the features matter" from "the model matters": if trees given the lexical
       signal match the transformer, the transformer's semantic machinery is not doing the
       work.
-    * ``exclude_history`` drops the cumulative history features. This isolates how much of
+    * ``exclude_temporal`` drops the cumulative temporal features. This isolates how much of
       the score is failure-history memorisation rather than coverage or static structure
       -- important here because mutation testing revisits the same function many times, so
       a (function, killing-test) pair recurs far more often than it would in real
@@ -298,7 +298,7 @@ class XGBoostSelector(Selector):
     def __init__(
         self,
         include_lexical: bool = False,
-        exclude_history: bool = False,
+        exclude_temporal: bool = False,
         exclude_coverage: bool = False,
         exclude: tuple[str, ...] = (),
         n_estimators: int = 300,
@@ -306,17 +306,17 @@ class XGBoostSelector(Selector):
         learning_rate: float = 0.15,
         seed: int | None = None,
         extra_score_files: dict[str, Path] | None = None,
-        candidates_mode: str | None = None,
+        candidate_policy: str | None = None,
     ):
         self.include_lexical = include_lexical
-        self.exclude_history = exclude_history
+        self.exclude_temporal = exclude_temporal
         self.exclude_coverage = exclude_coverage
         self.exclude = tuple(exclude)
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
-        # ``None`` means "the run's seed", so an experiment's seed knob reaches the model
-        # rather than stopping at ``config``. The same rule as ``RandomSelector``.
+        # ``None`` means "the run's seed", so an experiment's seed control reaches the model
+        # rather than stopping at ``config``. The same rule as ``RandomRanker``.
         self.seed = seed
         # P5: extra per-(change, test) score columns supplied by another model. The
         # canonical use is adding the SemIf reranker score to the structured features to
@@ -325,11 +325,11 @@ class XGBoostSelector(Selector):
         # When set, XGBoost trains only on the candidate pairs it will actually be asked to
         # rank. Training over the whole suite (the historical default) lets it spend its
         # capacity learning the candidate mask, which is constant at evaluation time -- that
-        # is what produced the once-reported 0.71 importance on ``covers_function``. None
+        # is what produced the once-reported 0.71 importance on ``function_coverage``. None
         # preserves the old behaviour so existing documented numbers stay reproducible.
-        self.candidates_mode = candidates_mode
+        self.candidate_policy = candidate_policy
         parts = ["xgboost"]
-        parts.append("struct" if not exclude_history else "static")
+        parts.append("struct" if not exclude_temporal else "static")
         if exclude_coverage:
             parts.append("nocov")
         if include_lexical:
@@ -347,8 +347,8 @@ class XGBoostSelector(Selector):
 
     def _dropped(self) -> set[str]:
         dropped: set[str] = set(self.exclude)
-        if self.exclude_history:
-            dropped |= set(HISTORY_FEATURES)
+        if self.exclude_temporal:
+            dropped |= set(TEMPORAL_FEATURES)
         if self.exclude_coverage:
             dropped |= set(COVERAGE_FEATURES)
         return dropped
@@ -392,8 +392,8 @@ class XGBoostSelector(Selector):
 
         train_rows = ctx.split.train_idx
         train_mask = None
-        if self.candidates_mode is not None:
-            train_mask = accessors.candidates(ctx.ds, self.candidates_mode)[train_rows]
+        if self.candidate_policy is not None:
+            train_mask = accessors.candidate_sets(ctx.ds, self.candidate_policy)[train_rows]
         X_train = self._design(ctx, train_rows, train_mask)
         labels = accessors.labels(ctx.ds)[train_rows]
         y_train = (labels[train_mask] if train_mask is not None else labels).reshape(-1)
@@ -430,21 +430,21 @@ class XGBoostSelector(Selector):
         return model.predict_proba(X_all)[:, 1].reshape(ctx.ds.n_changes, ctx.ds.n_tests)
 
 
-def normalised_rank(scores: np.ndarray, candidates: np.ndarray) -> np.ndarray:
+def normalised_rank(scores: np.ndarray, candidate_sets: np.ndarray) -> np.ndarray:
     """Per-change descending rank, normalised to ``[0, 1]``; 0 is best.
 
-    Non-candidates get ``inf`` so they can never win. This is what lets two selectors on
-    different scales be averaged without fitting a weight: each change's candidates are ranked
+    Non-candidate sets get ``inf`` so they can never win. This is what lets two rankers on
+    different scales be averaged without fitting a weight: each change's candidate sets are ranked
     independently, so the result is invariant to either input's units -- which is what makes the
     combination below leakage-safe.
     """
-    masked = np.where(candidates, scores, -np.inf)
+    masked = np.where(candidate_sets, scores, -np.inf)
     order = np.argsort(-masked, axis=1, kind="stable")
     ranks = np.empty_like(order)
     rows = np.arange(scores.shape[0])[:, None]
     ranks[rows, order] = np.arange(scores.shape[1])[None, :]
     denom = max(scores.shape[1] - 1, 1)
-    return np.where(candidates, ranks / denom, np.inf)
+    return np.where(candidate_sets, ranks / denom, np.inf)
 
 
 #: A score loader: ``(cache path, dataset) -> [n_changes, n_tests]``. The dataset is a
@@ -461,13 +461,13 @@ def load_matrix(path: Path, _ds: Dataset) -> np.ndarray:
     return np.load(path)
 
 
-class CachedScores(Selector):
+class CachedScores(Ranker):
     """Scores read from a precomputed ``[n_changes, n_tests]`` artifact.
 
     This is the general form of every cached model in the study: the reranker caches, the five
     instruction-wording caches, the direct-mode cache and the embedding baseline all differ only
     in which file they read and how it is parsed. Declaring the cache as a *requirement* is what
-    matters: an absent one makes the cell unmeasured with the path rather than raising from
+    matters: an absent one makes the design point undefined with the path rather than raising from
     inside ``scores``, which is the difference between a hole in the report and a dead run when
     a study has a dozen caches of which any may be missing.
     """
@@ -478,14 +478,14 @@ class CachedScores(Selector):
         self._loader = loader or semif.load_scores
 
     def requirements(self) -> tuple[str, ...]:
-        """The precomputed cache. Producing it is a precondition, not something a cell does."""
+        """The precomputed cache. Producing it is a precondition, not something a design point does."""
         return (f"artifact:{self.path}",)
 
     def scores(self, ctx: Context) -> np.ndarray:
         return self._loader(self.path, ctx.ds)
 
 
-class SemIfSelector(CachedScores):
+class SemIfRanker(CachedScores):
     """Frozen SemIf + Qwen reranker scores, read from a precomputed cache.
 
     Scoring is expensive and needs the SemIf checkout plus the checkpoint, so it is computed
@@ -501,8 +501,8 @@ class SemIfSelector(CachedScores):
         return self.path
 
 
-class RankAverageSelector(Selector):
-    """The fitted-free combination of several selectors: mean normalised rank position.
+class RankAverageRanker(Ranker):
+    """The fitted-free combination of several rankers: mean normalised rank position.
 
     Nothing is fitted, so it cannot leak across the train/evaluation boundary the way a blend
     weight fitted on the rows being evaluated would. The reason to include it is the
@@ -517,58 +517,58 @@ class RankAverageSelector(Selector):
     def __init__(
         self,
         name: str,
-        selectors: Sequence[Selector],
-        candidates_mode: str = "full",
+        rankers: Sequence[Ranker],
+        candidate_policy: str = "full",
     ):
-        if len(selectors) < 2:
+        if len(rankers) < 2:
             raise ValueError(f"{name!r} averages rank positions, so it needs two or more parents")
         self.name = name
-        self.selectors = tuple(selectors)
-        self.candidates_mode = candidates_mode
+        self.rankers = tuple(rankers)
+        self.candidate_policy = candidate_policy
 
     def requirements(self) -> tuple[str, ...]:
         """Whatever the parents read, in first-seen order and without repeats."""
         seen: list[str] = []
-        for selector in self.selectors:
-            for requirement in selector.requirements():
+        for ranker in self.rankers:
+            for requirement in ranker.requirements():
                 if requirement not in seen:
                     seen.append(requirement)
         return tuple(seen)
 
     def scores(self, ctx: Context) -> np.ndarray:
-        candidates = accessors.candidates(ctx.ds, self.candidates_mode)
-        norms = [normalised_rank(s.scores(ctx), candidates) for s in self.selectors]
+        candidate_sets = accessors.candidate_sets(ctx.ds, self.candidate_policy)
+        norms = [normalised_rank(s.scores(ctx), candidate_sets) for s in self.rankers]
         return -np.mean(norms, axis=0)
 
 
-class ProducedScores(Selector):
+class ProducedScores(Ranker):
     """Scores read from a cache, **produced on first use** if the cache is absent.
 
-    :class:`CachedScores` treats its artifact as a precondition: absent means the cell is
-    unmeasured with the path. This treats it as an *output*. That is the right shape for the
+    :class:`CachedScores` treats its artifact as a precondition: absent means the design point is
+    undefined with the path. This treats it as an *output*. That is the right shape for the
     study's most expensive step -- scoring (change, test) pairs with a 4B reranker -- where the
-    artifact is exactly what the cell would compute, and where leaving production outside the
-    layer made a stale cache indistinguishable from a fresh one and the GPU arm invisible.
+    artifact is exactly what the design point would compute, and where leaving production outside the
+    layer made a stale cache indistinguishable from a fresh one and the GPU condition invisible.
 
     It is a *general* form rather than a SemIf one: the scorer is a callable, so the pinned
-    model, its prompt configuration and the rows to score are supplied by whichever element
+    model, its prompt configuration and the rows to score are supplied by whichever level
     declares the capability. That also makes the produce path testable without a GPU.
 
-    ``requirements()`` is deliberately empty. Declaring the cache would make the cell
-    unmeasured *before* it could produce it, which is the trap this class exists to avoid; the
-    element that wraps it declares ``tier="gpu"`` instead, so a run that is not spending the
-    GPU tier reports the cell as unmeasured rather than silently reading a half-built cache.
+    ``requirements()`` is deliberately empty. Declaring the cache would make the design point
+    undefined *before* it could produce it, which is the trap this class exists to avoid; the
+    level that wraps it declares ``tier="gpu"`` instead, so a run that is not spending the
+    GPU tier reports the design point as undefined rather than silently reading a half-built cache.
 
     A cache is identified by its **path**, so "it exists" is not the same claim as "it is the
-    one this cell needs": the file may have been produced for other rows, another candidate
-    pool or another prompt wording, or torn mid-write. ``verifier`` is the element's chance to
+    one this design point needs": the file may have been produced for other rows, another candidate
+    pool or another prompt wording, or torn mid-write. ``verifier`` is the level's chance to
     refuse such a file -- it is handed the context and the path and raises if the cache cannot
     serve it. Without one the file is trusted, which is the documented contract rather than a
-    guarantee, and it is why the SemIf production element supplies
+    guarantee, and it is why the SemIf production level supplies
     :func:`rts.model.semif_runner.missing_pairs`.
 
-    A verifier *raises* rather than producing an unmeasured cell, and that is deliberate: the
-    element declared that it can produce this cache, so a file at the path that cannot serve
+    A verifier *raises* rather than producing a undefined design point, and that is deliberate: the
+    level declared that it can produce this cache, so a file at the path that cannot serve
     the context is a broken invocation with one remedy, not a hole in the grid.
     """
 
@@ -586,12 +586,12 @@ class ProducedScores(Selector):
         self._loader = loader or semif.load_scores
         self._verify = verifier
         #: What the last production did -- pairs scored, throughput, whether it resumed.
-        #: Recorded on the cell so a produced number carries its cost, the same way a
-        #: measured cell carries its seconds.
+        #: Recorded on the design point so a produced number carries its cost, the same way a
+        #: measured design point carries its seconds.
         self.last_stats: dict = {}
 
     def requirements(self) -> tuple[str, ...]:
-        """None: the cache is this selector's output, not its precondition."""
+        """None: the cache is this ranker's output, not its precondition."""
         return ()
 
     def scores(self, ctx: Context) -> np.ndarray:
@@ -605,20 +605,20 @@ class ProducedScores(Selector):
         return self._loader(self.path, ctx.ds)
 
 
-def default_selectors(include_semif: bool = True) -> list[Selector]:
-    selectors: list[Selector] = [
-        RandomSelector(),
-        RecencySelector(),
-        FailureRateSelector(),
-        CoverageSelector(),
-        StructuralRuleSelector(),
-        LexicalSelector(),
-        XGBoostSelector(include_lexical=False),
-        XGBoostSelector(include_lexical=True),
-        XGBoostSelector(exclude_history=True, include_lexical=False),
-        XGBoostSelector(exclude_history=True, exclude_coverage=True),
-        XGBoostSelector(exclude_history=True, exclude_coverage=True, include_lexical=True),
+def default_rankers(include_semif: bool = True) -> list[Ranker]:
+    rankers: list[Ranker] = [
+        RandomRanker(),
+        RecencyRanker(),
+        FailureRateRanker(),
+        CoverageRanker(),
+        StructuralRuleRanker(),
+        LexicalRanker(),
+        XGBoostRanker(include_lexical=False),
+        XGBoostRanker(include_lexical=True),
+        XGBoostRanker(exclude_temporal=True, include_lexical=False),
+        XGBoostRanker(exclude_temporal=True, exclude_coverage=True),
+        XGBoostRanker(exclude_temporal=True, exclude_coverage=True, include_lexical=True),
     ]
     if include_semif:
-        selectors.append(SemIfSelector())
-    return selectors
+        rankers.append(SemIfRanker())
+    return rankers

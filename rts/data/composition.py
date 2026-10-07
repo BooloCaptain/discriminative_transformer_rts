@@ -10,10 +10,10 @@ because the map happened to hold strong references to keep the ids from being re
 a guarantee that could be lost by an innocuous edit. It is now a plain dataclass, and
 pooling two projects that both contain a bug numbered ``3`` cannot confuse them.
 
-**Meaning.** Namespacing fixes collisions, not semantics. Pooling datasets whose
-:meth:`~rts.data.contract.Dataset.test_unit` differs is defensible only when the difference is
+**Meaning.** Namespacing fixes collisions, not meaning. Pooling datasets whose
+:meth:`~rts.data.contract.Dataset.test_granularity` differs is defensible only when the difference is
 immaterial, so the pool *reports* the disagreement rather than refusing it, and
-:func:`rts.data.reporting.audit` turns it into a warning.
+:func:`rts.data.reporting.audit` turns it into a diagnostic.
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ from .contract import (
     Capability,
     CapabilityMissing,
     Dataset,
+    Diagnostic,
+    Granularity,
     Ordering,
     TestId,
-    TestUnit,
-    Warning,
 )
 
 
@@ -89,9 +89,9 @@ class PooledDataset(Dataset):
     def datasets(self) -> tuple[Dataset, ...]:
         return tuple(self._datasets)
 
-    def mixed_test_units(self) -> tuple[TestUnit, ...]:
+    def mixed_test_units(self) -> tuple[Granularity, ...]:
         """The distinct test units among constituents, if they disagree."""
-        units = {d.test_unit() for d in self._datasets}
+        units = {d.test_granularity() for d in self._datasets}
         return tuple(units) if len(units) > 1 else ()
 
     # --- primitives -------------------------------------------------------
@@ -132,12 +132,12 @@ class PooledDataset(Dataset):
         ds, own = self._owner_of(change)
         return frozenset(namespace(ds, t) for t in ds.killing_tests(own))
 
-    def ran_tests(self, change: Any) -> frozenset[TestId]:
+    def executed_tests(self, change: Any) -> frozenset[TestId]:
         ds, own = self._owner_of(change)
-        return frozenset(namespace(ds, t) for t in ds.ran_tests(own))
+        return frozenset(namespace(ds, t) for t in ds.executed_tests(own))
 
     @property
-    def test_pool(self) -> Sequence[TestId]:
+    def test_suite(self) -> Sequence[TestId]:
         return self._pool
 
     def test_source(self, test: TestId) -> str | None:
@@ -147,7 +147,7 @@ class PooledDataset(Dataset):
     # --- optional primitives ---------------------------------------------
 
     def capabilities(self) -> frozenset[Capability]:
-        """The intersection: a pool has material only where every part does."""
+        """The intersection: a pool has inputs only where every part does."""
         return frozenset.intersection(*(d.capabilities() for d in self._datasets))
 
     def coverage(self, change: Any) -> frozenset[TestId]:
@@ -166,16 +166,16 @@ class PooledDataset(Dataset):
     # --- declarations -----------------------------------------------------
 
     def ordering(self) -> Ordering:
-        """Imposed unless every constituent is observed: pooling interleaves sequences."""
-        if all(d.ordering() is Ordering.OBSERVED for d in self._datasets):
-            return Ordering.OBSERVED
-        return Ordering.IMPOSED
+        """Synthetic unless every constituent is natural: pooling interleaves sequences."""
+        if all(d.ordering() is Ordering.NATURAL for d in self._datasets):
+            return Ordering.NATURAL
+        return Ordering.SYNTHETIC
 
-    def test_unit(self) -> TestUnit:
-        units = {d.test_unit() for d in self._datasets}
-        return next(iter(units)) if len(units) == 1 else TestUnit.CASE
+    def test_granularity(self) -> Granularity:
+        units = {d.test_granularity() for d in self._datasets}
+        return next(iter(units)) if len(units) == 1 else Granularity.CASE
 
-    def semantics(self) -> Mapping[str, str]:
+    def annotations(self) -> Mapping[str, str]:
         return {
             "pooled": ", ".join(d.name for d in self._datasets),
             "note": "rows are concatenated in constituent order; test ids are namespaced",
@@ -185,7 +185,7 @@ class PooledDataset(Dataset):
         """The constituents' own pools, laid out against the pooled test order.
 
         ``None`` unless *every* constituent has one: a per-change pool is only meaningful
-        when each change's candidates come from its own suite, and if one constituent cannot
+        when each change's candidate sets come from its own suite, and if one constituent cannot
         say what its pool is, a pooled answer would be a guess.
         """
         masks = [d.own_candidate_pool() for d in self._datasets]
@@ -202,16 +202,16 @@ class PooledDataset(Dataset):
             col += n_cols
         return out
 
-    def integrity_notes(self) -> Sequence[Warning]:
+    def integrity_notes(self) -> Sequence[Diagnostic]:
         units = self.mixed_test_units()
         if not units:
             return ()
         return (
-            Warning(
+            Diagnostic(
                 code="pool.mixed_test_unit",
-                requirement="test_unit",
+                requirement="test_granularity",
                 note=(
-                    "pooled datasets disagree on test_unit "
+                    "pooled datasets disagree on test_granularity "
                     f"({sorted(u.value for u in units)}); the difference is assumed "
                     "immaterial"
                 ),
@@ -250,7 +250,7 @@ class PooledDataset(Dataset):
 
 
 def pool(datasets: Sequence[Dataset], name: str | None = None) -> PooledDataset:
-    """Combine datasets into one evaluation population, namespacing test ids."""
+    """Combine datasets into one evaluation subset, namespacing test ids."""
     return PooledDataset(list(datasets), name=name)
 
 

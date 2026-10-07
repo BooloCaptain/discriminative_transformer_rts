@@ -1,6 +1,6 @@
-"""Render the BugsInPy arm (W2a in ``docs/plan_next_steps.md``) into ``artifacts/bugsinpy_results.json``.
+"""Render the BugsInPy condition (W2a in ``docs/plan_next_steps.md``) into ``artifacts/bugsinpy_results.json``.
 
-This is the arm with **real labels that are not defined by coverage**. Everything else in
+This is the condition with **real labels that are not defined by coverage**. Everything else in
 ``docs/implementation.md`` is measured on labels mutmut produced by running only the tests that cover
 the mutated function, which makes the coverage feature circular with respect to them. BugsInPy's
 failing tests come from the projects' own bug reports, so no feature is circular -- and the
@@ -10,23 +10,23 @@ rung (L3: no coverage, no traceability, no history) on real data rather than a s
 What this module is, after the experiment layer
 -----------------------------------------------
 The sweep is *declared* in :mod:`rts.studies.bugsinpy`: the pooled dataset, the three
-per-change-scope selectors, the per-project populations and the budget grid are values there.
-This module runs that arm and renders the artifact whose shape the recorded numbers and
+per-change-scope rankers, the per-project subsets and the budget grid are values there.
+This module runs that condition and renders the artifact whose shape the recorded numbers and
 ``docs/implementation.md`` are written against. It contains no experiment logic.
 
-Two things stay here because they are not cell semantics:
+Two things stay here because they are not design point annotations:
 
 * **The bridge audit (gate T0).** "Does the killing test share any token with the change?" is a
-  statistic about the *dataset* -- no scores, no split, no selector -- so it belongs beside the
+  statistic about the *dataset* -- no scores, no split, no ranker -- so it belongs beside the
   per-project declaration rather than on the layer, exactly as ``reporting.recurrence`` does.
-* **Score production.** *Measuring* SemIf is a cell; *producing* its cache is a GPU job in a
+* **Score production.** *Measuring* SemIf is a design point; *producing* its cache is a GPU job in a
   bespoke record format (a column is a position within a bug's own pool), so it remains the
-  ``--stage semif`` driver path. The model element declares the cache as a requirement either
-  way, so an absent cache is an unmeasured cell rather than a crash.
+  ``--stage semif`` driver path. The model level declares the cache as a requirement either
+  way, so an absent cache is a undefined design point rather than a crash.
 
 Usage::
 
-    python -m rts.render.bugsinpy                 # run the arm and write the artifact
+    python -m rts.render.bugsinpy                 # run the condition and write the artifact
     python -m rts.render.bugsinpy --stage audit    # the T0 gate alone
     python -m rts.render.bugsinpy --stage semif    # score the pairs (GPU, resumable)
 """
@@ -64,10 +64,10 @@ def bug_key(ds: dataset_module.BugsInPyDataset, bug) -> str:
 
 
 def pooled_dataset(project_datasets: list[dataset_module.BugsInPyDataset]) -> contract.Dataset:
-    """The given projects as one evaluation population, namespacing test ids.
+    """The given projects as one evaluation subset, namespacing test ids.
 
     Built from the datasets the caller passed rather than from every project on disk: otherwise
-    the renderer would describe a different corpus from the one the arm measured.
+    the renderer would describe a different corpus from the one the condition measured.
     """
     return composition.pool(project_datasets, name="bugsinpy")
 
@@ -162,8 +162,8 @@ def score_semif(
 
     Kept on the driver path rather than moved onto the layer: it writes a record format nothing
     else in the study uses (``{bug, col, score}``, where ``col`` is a position within that bug's
-    own pool), and the reader for it now lives with the arm's declarations. Its cost is GPU
-    hours, so a production *cell* would need the same tier story ``semif.produce`` has; that is
+    own pool), and the reader for it now lives with the condition's declarations. Its cost is GPU
+    hours, so a production *design point* would need the same tier story ``semif.produce`` has; that is
     a deliberate next step, not an oversight.
     """
     from ..model import semif_runner
@@ -204,10 +204,10 @@ def score_semif(
 # --- rendering --------------------------------------------------------------
 
 
-def _cell(report, model: str, population: str = "fault_bearing"):
-    for cell in report.cells:
-        if cell.selector == model and cell.population == population:
-            return cell
+def _cell(report, model: str, subset: str = "detectable"):
+    for result in report.design_points:
+        if result.ranker == model and result.subset == subset:
+            return result
     return None
 
 
@@ -231,13 +231,13 @@ def render(
     The numbers come from the reports -- the run's own records -- and the two quantities that are
     properties of the *data* rather than of the run come from the dataset the renderer already
     holds: the per-change pool sizes (which give ``mean_k``) and the bridge audit. The
-    declaration and the audit are the same values the arm was measured on, since both are built
+    declaration and the audit are the same values the condition was measured on, since both are built
     from the same datasets.
     """
     # ``budget_k`` is a function of the budget and that change's candidate count, so the mean
     # selected count needs the pool sizes, and the report records the *rounded* per-change figure
     # rather than the mean.
-    pools = accessors.candidates(pooled, "own")
+    pools = accessors.candidate_sets(pooled, "own")
     candidate_counts = pools.sum(axis=1)
 
     # The declared grid, restricted to what this run actually produced -- so a smoke run over one
@@ -253,8 +253,8 @@ def render(
     for model in declarations.MODEL_ORDER:
         results[model] = {}
         for budget in budgets:
-            cell = _cell(reports[budget], model)
-            row = next(r for r in cell.results if r["budget"] == budget)
+            result = _cell(reports[budget], model)
+            row = next(r for r in result.results if r["budget"] == budget)
             results[model][f"{budget:.2f}"] = {
                 "recall": row["recall"],
                 "lo": row["recall_lo"],
@@ -265,54 +265,54 @@ def render(
                 ),
             }
 
-    comparisons: dict[str, dict] = {}
+    contrasts: dict[str, dict] = {}
     for budget in budgets:
         at_reference: dict[str, dict] = {}
-        for record in reports[budget].comparisons:
+        for record in reports[budget].contrasts:
             if not record.get("measured"):
                 continue
-            if record["group"].get("population") != "fault_bearing":
+            if record["group"].get("subset") != "detectable":
                 continue
-            if record["cell"] != "semif_reranker":
+            if record["design_point"] != "semif_reranker":
                 continue
             at_reference[record["reference"]] = record
-        comparisons[f"{budget:.2f}"] = {
+        contrasts[f"{budget:.2f}"] = {
             "semif_vs_bm25": _paired_out(at_reference["bm25_lexical"]),
             "semif_vs_random": _paired_out(at_reference["random"]),
         }
 
-    # Per project, because "SemIf ties BM25" is a claim about the pooled population and it
+    # Per project, because "SemIf ties BM25" is a claim about the pooled subset and it
     # matters whether it holds everywhere or is carried by one project.
     per_project: dict[str, dict] = {}
     for ds in project_datasets:
         entry: dict[str, float] = {}
         for model in declarations.MODEL_ORDER:
-            cell = _cell(reports[PROBE], model, population=ds.name)
-            row = next(r for r in cell.results if r["budget"] == PROBE)
+            result = _cell(reports[PROBE], model, subset=ds.name)
+            row = next(r for r in result.results if r["budget"] == PROBE)
             entry[model] = round(float(row["recall"]), 4)
         per_project[ds.name] = entry
 
     return {
         "n_bugs": pooled.n_changes,
         "projects": [d.name for d in project_datasets],
-        "bridge_audit": {
+        'lexical_overlap_audit': {
             key: value for key, value in audit_bridge(project_datasets).items() if key != "rows"
         },
         "results": results,
-        "comparisons": comparisons,
-        "dataset_declaration": {
+        "contrasts": contrasts,
+        "dataset_metadata": {
             "pooled_name": pooled.name,
             "per_project": {
                 d.name: {
                     "ordering": d.ordering().value,
-                    "test_unit": d.test_unit().value,
+                    "test_granularity": d.test_granularity().value,
                     "capabilities": sorted(d.capabilities()),
                     "n_changes": d.n_changes,
                     "n_tests": d.n_tests,
                 }
                 for d in project_datasets
             },
-            "warnings": [w.to_dict() for w in pooled.integrity_notes()],
+            "diagnostics": [w.to_dict() for w in pooled.integrity_notes()],
         },
         "per_project_recall_at_0.05": per_project,
     }
@@ -325,7 +325,7 @@ def run(
     save: bool = True,
     verbose: bool = True,
 ) -> dict:
-    """Run the arm at every budget, render the artifact, and (by default) write it."""
+    """Run the condition at every budget, render the artifact, and (by default) write it."""
     project_datasets = load_datasets(projects)
     pooled = pooled_dataset(project_datasets)
     print(
@@ -336,7 +336,7 @@ def run(
         f"[bugsinpy] pooled: {pooled.n_changes} rows x {pooled.n_tests} tests; "
         f"capabilities={sorted(pooled.capabilities())} ordering={pooled.ordering().value}"
     )
-    reports = declarations.run_arm(
+    reports = declarations.run_condition(
         budgets=budgets, projects=projects, save=False, verbose=verbose
     )
     payload = render(reports, project_datasets, pooled)
@@ -349,13 +349,13 @@ def run(
 
     print("\n=== paired, SemIf minus baseline (positive = SemIf better) ===")
     for budget in budgets:
-        c = payload["comparisons"][f"{budget:.2f}"]["semif_vs_bm25"]
+        c = payload["contrasts"][f"{budget:.2f}"]["semif_vs_bm25"]
         print(
             f"  b{budget:.2f}: vs bm25 {c['delta_a_minus_b']:+.3f} "
             f"[{c['lo']:+.3f},{c['hi']:+.3f}] p={c['p']:.4f}"
         )
 
-    audit = payload["bridge_audit"]["overall"]
+    audit = payload['lexical_overlap_audit']["overall"]
     print("\n=== gate T0: textual bridge audit ===")
     print(f"  failing test shares ANY token     : {audit['share_any_token']:.1%}")
 
@@ -374,7 +374,7 @@ def main() -> None:
         choices=["audit", "semif", "report"],
         help=(
             "audit: the T0 gate only; semif: score the pairs (GPU, resumable); "
-            "report: run the arm and write the artifact"
+            "report: run the condition and write the artifact"
         ),
     )
     parser.add_argument("--projects", nargs="*", default=None)

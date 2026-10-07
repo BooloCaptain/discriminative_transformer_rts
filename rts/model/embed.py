@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-BM25 is the lexical floor and the SemIf reranker is the "strong semantic" arm. The
+BM25 is the lexical floor and the SemIf reranker is the "strong semantic" condition. The
 embedding baseline sits strictly between them: it is a *semantic* similarity model
 (so it can match paraphrases and renamed identifiers, which bag-of-words cannot)
 but it is not a task-trained reranker (so it cannot exploit an instruction or a
@@ -17,8 +17,8 @@ Method
 ------
 Mean-pooled last hidden state, L2-normalised, cosine similarity between the change
 text (the same text BM25 and SemIf receive) and each test's source. No training, no
-instruction, no prompt: the same (change, test) pairs as every other selector, on
-the same candidate mask, so the comparison is like-for-like.
+instruction, no prompt: the same (change, test) pairs as every other ranker, on
+the same candidate mask, so the contrast is like-for-like.
 
 The change and the test are both *code*, which is the regime where a code
 embedding should be at its best -- so this is a favourable test of the semantic
@@ -123,9 +123,9 @@ def run(batch_size: int = 16, max_length: int = 512, device: str = "auto") -> np
     scores = build_scores(ds, batch_size=batch_size, max_length=max_length, device=device)
     results = evaluate.evaluate(
         scores, ds, split.test_idx, budgets=(0.01, 0.05, 0.1, 0.2),
-        n_bootstrap=1000, candidates=accessors.candidates(ds, "covered"),
+        n_bootstrap=1000, candidate_sets=accessors.candidate_sets(ds, "coverage_restricted"),
     )
-    print(evaluate.format_table("embed_codebert (covered candidates)", results))
+    print(evaluate.format_table("embed_codebert (coverage-restricted candidate sets)", results))
     np.save(config.ARTIFACTS / "embed_scores.npy", scores)
     return scores
 
@@ -137,6 +137,6 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "auto"],
-                        help="CPU is the default so the arm can run alongside GPU scoring")
+                        help="CPU is the default so the condition can run alongside GPU scoring")
     args = parser.parse_args()
     run(batch_size=args.batch_size, max_length=args.max_length, device=args.device)

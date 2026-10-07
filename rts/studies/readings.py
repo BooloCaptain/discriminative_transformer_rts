@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 
-from ..experiment import ROLE_FEATURES, ROLE_MODEL, RunReport
+from ..experiment import FACTOR_FEATURES, FACTOR_MODEL, RunReport
 
 # --- reading a report back --------------------------------------------------
 
@@ -18,31 +18,31 @@ from ..experiment import ROLE_FEATURES, ROLE_MODEL, RunReport
 def semif_margins(
     report: RunReport,
     *,
-    population: str = "starved141",
+    subset: str = "cache_covered",
     reference: str = "semif_reranker",
     exclude: Sequence[str] = ("random",),
     ndigits: int = 4,
 ) -> dict:
-    """SemIf's margin over the best classical selector, per rung and per budget.
+    """SemIf's margin over the best classical ranker, per rung and per budget.
 
     The ladder's headline quantity, computed from the report rather than recorded by the
     kernel: it is a *reading* of the sweep, and the layer's job was to make the sweep data. It
     rounds as the recorded artifact does, so a tie in the argmax breaks the same way.
     """
     tables: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
-    for cell in report.cells:
-        if cell.population != population:
+    for result in report.design_points:
+        if result.subset != subset:
             continue
-        rung = cell.cell.name(ROLE_FEATURES)
-        tables[rung][cell.cell.name(ROLE_MODEL)] = {
-            f"{r['budget']:.2f}": round(r["recall"], ndigits) for r in cell.results
+        rung = result.design_point.name(FACTOR_FEATURES)
+        tables[rung][result.design_point.name(FACTOR_MODEL)] = {
+            f"{r['budget']:.2f}": round(r["recall"], ndigits) for r in result.results
         }
 
     out: dict[str, dict] = {}
     for rung, table in tables.items():
         if reference not in table:
             out[rung] = {
-                "unmeasured": f"{reference} has no measured cell in population {population!r}"
+                "undefined": f"{reference} has no measured design_point in subset {subset!r}"
             }
             continue
         margins: dict[str, dict] = {}

@@ -2,8 +2,8 @@
 
 The distinction this module exists to make:
 
-* A **derived feature** is one quantity computed from the contract (``change_size``,
-  ``path_distance``, ...). Individually addressable, individually testable.
+* A **derived feature** is one quantity computed from the contract (``code_churn``,
+  ``path_proximity``, ...). Individually addressable, individually testable.
 * A **feature block** is an ordered, named *selection* of those quantities assembled
   into one ``[n_changes, n_tests, n_columns]`` tensor for a model input.
 
@@ -17,10 +17,10 @@ reconstructions across the package. A consumer now asks the matrix for a column 
 and gets a loud failure if the column was renamed, instead of silently reading the
 neighbouring column.
 
-Gating is derived, not asserted. A group names the *material* it reads
+Gating is derived, not asserted. A group names the *inputs* it reads
 (``needs=("coverage",)``); :func:`rts.data.accessors.requirements_for` maps that onto
 requirements, and the block treats a group whose requirements the dataset cannot meet as
-**unmeasured** -- zeroed at the model-input boundary, which is the one place a lossy
+**undefined** -- zeroed at the model-input boundary, which is the one place a lossy
 coercion is legitimate, with the reason recorded and returned. Nothing hand-writes a
 requirement set that could drift from the code reading it.
 """
@@ -34,8 +34,8 @@ from typing import Any
 import numpy as np
 
 from ..data import accessors
-from ..data.accessors import MATERIAL
-from ..data.contract import Dataset, Requirement, Unmeasured, Warning, Warnings
+from ..data.accessors import INPUTS
+from ..data.contract import Dataset, Diagnostic, Diagnostics, Requirement, Undefined
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class FeatureColumn:
     """One column: a name, and the family the ablation ladder treats it as part of."""
 
     name: str
-    family: str = "intrinsic"
+    family: str = "static_size"
     note: str = ""
 
 
@@ -57,8 +57,8 @@ def _project(
     the tuple rather than re-derive it.
     """
 
-    def projected(material: Mapping[str, Any]) -> tuple[np.ndarray, ...]:
-        produced = tuple(produce(material))
+    def projected(inputs: Mapping[str, Any]) -> tuple[np.ndarray, ...]:
+        produced = tuple(produce(inputs))
         return tuple(produced[i] for i in positions)
 
     return projected
@@ -68,12 +68,12 @@ def _project(
 class FeatureGroup:
     """One computation producing one or more columns.
 
-    Grouping is by computation, not by family: the history block produces three columns
+    Grouping is by computation, not by family: the temporal block produces three columns
     from one pass and the coverage block three from one matrix, while the *traceability*
     family draws one column from each of two groups. Conflating the two would force a
     computation per column for no reason.
 
-    A need naming material the contract does not know about must be supplied by the
+    A need naming inputs the contract does not know about must be supplied by the
     caller through ``build(..., extra=...)``. That is how a block over a *derived*
     dataset -- a bundle, which needs its members and its base's own features -- declares
     what it reads without adding bundle vocabulary to the contract's global list.
@@ -91,13 +91,13 @@ class FeatureGroup:
     def requires(self, external: frozenset[str] = frozenset()) -> frozenset[Requirement]:
         out: set[Requirement] = set()
         for name in self.needs:
-            if name in MATERIAL:
-                out |= MATERIAL[name].requires
+            if name in INPUTS:
+                out |= INPUTS[name].requires
             elif name not in external:
                 raise KeyError(
-                    f"group {self.names[0]!r} needs material {name!r}, which is neither "
-                    f"contract material nor supplied by the caller; known material: "
-                    f"{sorted(MATERIAL)}"
+                    f"group {self.names[0]!r} needs inputs {name!r}, which is neither "
+                    f"contract inputs nor supplied by the caller; known inputs: "
+                    f"{sorted(INPUTS)}"
                 )
         return frozenset(out)
 
@@ -106,15 +106,15 @@ class FeatureGroup:
 class FeatureMatrix:
     """A built feature tensor, with the coercion it required.
 
-    ``unmeasured`` maps a column to why it could not be defined. Reporting it is the
+    ``undefined`` maps a column to why it could not be defined. Reporting it is the
     point: ``0.0`` from a coercion and ``0.0`` from a measurement are different claims,
     and only one of them is about the data.
     """
 
     X: np.ndarray
     columns: tuple[str, ...]
-    unmeasured: tuple[tuple[str, Unmeasured], ...] = ()
-    warnings: tuple[Warning, ...] = ()
+    undefined: tuple[tuple[str, Undefined], ...] = ()
+    diagnostics: tuple[Diagnostic, ...] = ()
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -144,13 +144,13 @@ class FeatureMatrix:
         return self.X[:, :, [i for i, c in enumerate(self.columns) if c not in dropped]]
 
     def measured(self, name: str) -> bool:
-        return not self.is_unmeasured(name)
+        return not self.is_undefined(name)
 
-    def is_unmeasured(self, name: str) -> bool:
-        return any(column == name for column, _ in self.unmeasured)
+    def is_undefined(self, name: str) -> bool:
+        return any(column == name for column, _ in self.undefined)
 
-    def reason(self, name: str) -> Unmeasured | None:
-        for column, reason in self.unmeasured:
+    def reason(self, name: str) -> Undefined | None:
+        for column, reason in self.undefined:
             if column == name:
                 return reason
         return None
@@ -158,7 +158,7 @@ class FeatureMatrix:
     def audit(self) -> dict:
         return {
             "columns": list(self.columns),
-            "unmeasured": [{"column": c, **r.to_dict()} for c, r in self.unmeasured],
+            "undefined": [{"column": c, **r.to_dict()} for c, r in self.undefined],
         }
 
 
@@ -167,8 +167,8 @@ class FeatureBlock:
     """An ordered set of feature groups, buildable against any dataset.
 
     ``suppressed`` names columns the caller withholds. The slots stay -- a rung of the
-    ablation ladder must keep a stable column list, because selectors index columns by
-    name -- but the columns are treated as unmeasured, so a suppression and a genuine
+    ablation ladder must keep a stable column list, because rankers index columns by
+    name -- but the columns are treated as undefined, so a suppression and a genuine
     absence take exactly the same path through the harness.
     """
 
@@ -224,13 +224,13 @@ class FeatureBlock:
         return frozenset(out)
 
     @property
-    def external_material(self) -> frozenset[str]:
-        """Material names this block needs that the contract does not provide."""
+    def external_inputs(self) -> frozenset[str]:
+        """Input names this block needs that the contract does not provide."""
         return frozenset(
             name
             for group in self.groups
             for name in group.needs
-            if name not in MATERIAL
+            if name not in INPUTS
         )
 
     def group_of(self, name: str) -> FeatureGroup:
@@ -299,40 +299,40 @@ class FeatureBlock:
     def build(
         self,
         ds: Dataset,
-        warnings: Warnings | None = None,
+        diagnostics: Diagnostics | None = None,
         extra: Mapping[str, Any] | None = None,
     ) -> FeatureMatrix:
         """Build ``[n_changes, n_tests, n_columns]`` against ``ds``.
 
         A group the dataset cannot satisfy, and a column the caller has withheld, both
-        produce an all-zero block and an :class:`Unmeasured` entry naming what was
+        produce an all-zero block and an :class:`Undefined` entry naming what was
         missing. Silent substitution would be the alternative, and a model will happily
         split on a column that means "we could not measure this".
 
-        ``extra`` supplies material the contract does not know about. A block that needs
-        it and is not given it is a programming error, not an unmeasured quantity, so it
-        raises rather than zeroing: the caller promised the material.
+        ``extra`` supplies inputs the contract does not know about. A block that needs
+        it and is not given it is a programming error, not a undefined quantity, so it
+        raises rather than zeroing: the caller promised the inputs.
         """
-        collected = warnings if warnings is not None else Warnings()
+        collected = diagnostics if diagnostics is not None else Diagnostics()
         supplied = dict(extra or {})
-        absent = self.external_material - frozenset(supplied)
+        absent = self.external_inputs - frozenset(supplied)
         if absent:
             raise ValueError(
-                f"block {self.name!r} needs caller-supplied material {sorted(absent)}, "
+                f"block {self.name!r} needs caller-supplied inputs {sorted(absent)}, "
                 f"which build() was not given"
             )
-        available = {**accessors.material(ds), **supplied}
+        available = {**accessors.inputs(ds), **supplied}
         n_c, n_t = ds.n_changes, ds.n_tests
         n_f = len(self.columns)
 
         X = np.zeros((n_c, n_t, n_f), dtype=np.float32)
-        unmeasured: list[tuple[str, Unmeasured]] = []
+        undefined: list[tuple[str, Undefined]] = []
         cursor = 0
 
         for group in self.groups:
-            missing = ds.missing_requirements(group.requires(self.external_material))
+            missing = ds.missing_requirements(group.requires(self.external_inputs))
             if missing:
-                reason = Unmeasured(
+                reason = Undefined(
                     requirement=missing[0].value,
                     note=(
                         f"block {self.name!r} group {group.names[0]!r} needs "
@@ -341,11 +341,11 @@ class FeatureBlock:
                     ),
                 )
                 for column in group.columns:
-                    unmeasured.append((column.name, reason))
+                    undefined.append((column.name, reason))
                 collected.add(
-                    "feature.unmeasured",
+                    "feature.undefined",
                     reason.requirement,
-                    f"{', '.join(group.names)} unmeasured: {reason.note}; coerced to 0 at "
+                    f"{', '.join(group.names)} undefined: {reason.note}; coerced to 0 at "
                     "the model-input boundary",
                     scope=f"block:{self.name}:{group.names[0]}",
                 )
@@ -374,14 +374,14 @@ class FeatureBlock:
                             f"{(n_c, n_t)}"
                         ) from None
                 if column.name in self.suppressed:
-                    reason = Unmeasured(
+                    reason = Undefined(
                         requirement="withheld",
                         note=(
                             f"column {column.name!r} was withheld by the caller (an "
-                            "ablation rung), so it is unmeasured rather than measured"
+                            "ablation rung), so it is undefined rather than measured"
                         ),
                     )
-                    unmeasured.append((column.name, reason))
+                    undefined.append((column.name, reason))
                     collected.add(
                         "feature.withheld",
                         "withheld",
@@ -396,8 +396,8 @@ class FeatureBlock:
         return FeatureMatrix(
             X=X,
             columns=self.columns,
-            unmeasured=tuple(unmeasured),
-            warnings=tuple(collected),
+            undefined=tuple(undefined),
+            diagnostics=tuple(collected),
         )
 
 

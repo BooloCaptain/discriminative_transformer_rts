@@ -126,7 +126,7 @@ class Change:
     diff_text: str
     exit_code: int | None
     killing_tests: tuple[str, ...]
-    ran_tests: tuple[str, ...]
+    executed_tests: tuple[str, ...]
 
     @property
     def killed(self) -> bool:
@@ -184,7 +184,7 @@ class MutmutArtifacts:
     def duration_by_test(self) -> dict[str, float]:
         return self.stats()["duration_by_test"]
 
-    def test_pool(self, labels: str = "mutmut") -> tuple[str, ...]:
+    def test_suite(self, labels: str = "mutmut") -> tuple[str, ...]:
         """Every collected test, which is the candidate set for every change.
 
         Under the ``full`` label source this is the canonical pool recorded by the
@@ -256,7 +256,7 @@ class MutmutArtifacts:
         verdicts = self.verdicts()
         spans_by_file = self.spans()
         outcomes = self.outcomes(labels)
-        pool = self.test_pool(labels)
+        pool = self.test_suite(labels)
 
         # Under full-suite labels every collected test ran against every mutant, so a
         # mutant with no failure records is a *survivor*, not a missing run. The run
@@ -336,7 +336,7 @@ class MutmutArtifacts:
                     diff_text=diff_text,
                     exit_code=exit_code,
                     killing_tests=killing,
-                    ran_tests=ran,
+                    executed_tests=ran,
                 )
             )
 
@@ -424,6 +424,6 @@ if __name__ == "__main__":
         print("id      :", sample.change_id)
         print("file    :", sample.file)
         print("func    :", sample.func_name)
-        print("exit    :", sample.exit_code, "| killing tests:", len(sample.killing_tests))
+        print("exit    :", sample.exit_code, "| killing_tests:", len(sample.killing_tests))
         print("diff    :")
         print(sample.diff_text)
