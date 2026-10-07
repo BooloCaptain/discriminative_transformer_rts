@@ -96,7 +96,7 @@ fits in 17 GB, so the SemIf conditions run sequentially: `scripts/run_variation_
 | [`docs/refactor.md`](docs/refactor.md) | the dataset-contract refactor: what it fixed and why |
 | [`docs/experiment.md`](docs/experiment.md) | the experiment layer's design: roles, design points, availability, cost tiers |
 | [`docs/handoff.md`](docs/handoff.md) | **status**: the study's next steps (section 1) and the harness's remaining work (section 2) |
-| [`docs/glossary.md`](docs/glossary.md) | the **nomenclature**: the meaning of every term used in the code, artifacts and docs, and the standard SE/ML term to use instead |
+| [`docs/glossary.md`](docs/glossary.md) | the **nomenclature**: the meaning of every term used in the code, artifacts and docs |
 
 Start at `docs/handoff.md` for status, and `docs/implementation.md` for what the numbers are. When
 two records overlap, the more specific one is authoritative: `experiment.md` for the layer's

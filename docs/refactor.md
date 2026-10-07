@@ -184,12 +184,12 @@ Because datasets are values behind one contract:
 
 ## 5. The evaluation contract
 
-Evaluation owns the split and the averaging averaging subset, and needs from a dataset only a
+Evaluation owns the split and the averaging subset, and needs from a dataset only a
 quadruple:
 
     (scores, labels, candidates, rows) -> recall / hits
 
-A dataset provides `labels`, `candidates` and its `rows`; a ranker provides `scores`.
+A dataset provides `labels`, `candidate_sets` and its `rows`; a ranker provides `scores`.
 Evaluation therefore never depends on the dataset type, which is what lets a wrapped dataset, a
 pooled dataset, or a bundle carrying its own label matrix be evaluated by exactly the same code.
 
@@ -309,10 +309,10 @@ boundaries. Sources are in `rts/data/sources.py` (`MutmutSource`, `BugsInPySourc
 `rts/data/datasets.py` (`MarshmallowDataset`, `BugsInPyDataset`, `BundleDataset`, `DerivedDataset`).
 
 **Derived features are inherited, not implemented per dataset.** `Dataset` supplies `labels`,
-`ran`, `change_paths`, `covered`, `test_index`, `fault_idx`, `candidates`, `pair_counts`,
-`sparse_mask`, `pair_history_counts`, `change_index`, the default `split`, `describe` and
-`describe_starved` once, and `rts.dataset.structured_features` builds the model-input tensor from
-the required operations. A concrete dataset implements only the seven required operations plus its declarations, so
+`executed_tests`, `change_paths`, `coverage_sets`, `test_index`, `fault_idx`, `candidate_sets`,
+`pair_cooccurrence_counts`, `low_cooccurrence_mask`, `pair_history_counts`, `change_index`, the
+default `split`, and `describe`/`describe_cold_start` once, and `rts.features.structured` builds
+the model-input tensor from the required operations. A concrete dataset implements only the seven required operations plus its declarations, so
 the eight BugsInPy datasets are eight constructors over one source and one generator.
 
 **Granularity.** The eight BugsInPy projects are eight datasets, and the condition's headline numbers come
@@ -408,7 +408,7 @@ bundle's derived `code_churn` equals the sum over its members.
 Known gaps, stated rather than implied:
 
 * The **model half is still out of scope** (§9), so `models.Context` still carries a
-  pre-materialised `X` rather than requesting named derived attributes. Selectors now receive the
+  pre-materialised `X` rather than requesting named derived attributes. Rankers now receive the
   dataset's diagnostics with the features, which is the minimum the §6 argument requires of them.
 * **Durations are declared but not otherwise policed.** §2.3's comparability caveat (a duration is a
   property of the machine as much as of the test) is recorded in `MarshmallowDataset.annotations` and
@@ -420,7 +420,7 @@ Known gaps, stated rather than implied:
 * The **`cold-start` averaging subset and the ladder's `cache_covered`** are declared, and the latter is now
   undefined rather than empty if its SemIf cache is absent — but §5's averaging subset vocabulary is only
   as complete as the averaging subsets actually written down. `no_prior_failure`, `cold-start` and
-  `low_pair_recurrence` are the three that exist.
+  `low_cooccurrence` are the three that exist.
 
 ## 14. Second pass: decomposition
 
@@ -434,7 +434,7 @@ where a proposal was declined, why.
 | module | lines | responsibility |
 |---|---|---|
 | `data/contract.py` | 465 | required operations, declarations, `Capability`/`Requirement`/`Policy`, `undefined`, `diagnostics` |
-| `data/accessors.py` | 393 | derived accessors as free functions, and the single `MATERIAL` catalogue |
+| `data/accessors.py` | 393 | derived accessors as free functions, and the single `INPUTS` catalogue |
 | `data/splits.py` | 120 | `Split` and `make_split` — evaluation configuration |
 | `features/block.py` | 375 | `FeatureBlock`, `FeatureGroup`, `FeatureMatrix` |
 | `features/derived.py` | 269 | one function per quantity, pure over its input |
@@ -469,7 +469,7 @@ column fail loudly instead of reading its neighbour.
 ### Gating is derived, not asserted
 
 A group or a averaging subset names the *inputs* it reads (`needs=("coverage",)`);
-`accessors.MATERIAL` — one catalogue, not the three parallel spellings the first pass had — maps that
+`accessors.INPUTS` — one catalogue, not the three parallel spellings the first pass had — maps that
 onto requirements. So a requirement set cannot disagree with the code that reads it. Declaring too
 little used to raise a capability error from inside a predicate instead of reporting undefined;
 declaring too much reported a working computation unavailable. Both are now unrepresentable.
@@ -504,7 +504,7 @@ implementation registry remains legitimate at the *experiment* layer, and exists
 * **`describe` and `save` baked in a default split**, publishing evaluation configuration as dataset
   metadata and putting it in the recorded artifacts. Both now require a `Split`. That is why
   `results_full.json` gains a `split` key.
-* **`no_prior_failure` and `starved_mask`** were two implementations of one predicate that had already
+* **`no_prior_failure` and `cold_start_mask`** were two implementations of one predicate that had already
   drifted (only one supported `max_runs`). There is one implementation, with a declared averaging subset and
   a parameterised helper as two entry points onto it.
 * **Nine copies of the memoisation idiom**, one of which (`PooledDataset`) omitted all of them, so
@@ -524,7 +524,7 @@ implementation registry remains legitimate at the *experiment* layer, and exists
   `bundles.bundle_arrays` is a thin wrapper over it.
 * **Six back-compat shims** were deleted.
 * **The ladder ablated by comparing column names against a list in its own module.** A rename would
-  have silently stopped ablating anything, with no error and a plausible number. A ablation level is now the
+  have silently stopped ablating anything, with no error and a plausible number. An ablation level is now the
   block with a family withheld, which takes the same undefined path a genuinely absent capability
   takes and reports what it withheld.
 

@@ -113,7 +113,7 @@ mutated function, so a missing (mutant, test) pair means "not selected", never "
 - **Change text** comes from mutmut's trampoline spans: each function has an `__mutmut_orig`
   block plus one block per mutant; diffing them after canonicalizing the trampoline name
   yields the real mutation. All 2651 changes have a non-empty diff.
-- **Imposed temporal order.** Mutants have no static-size order, so a fixed-seed permutation
+- **Synthetic temporal order.** Mutants have no static-size order, so a fixed-seed permutation
   defines the history. This is why `recency` is uninformative by construction — a
   limitation, not a finding.
 - **Candidate sets.** `full` = all 1187 tests (realistic RTS). `coverage_restricted` = only tests
@@ -130,9 +130,9 @@ mutated function, so a missing (mutant, test) pair means "not selected", never "
   detectable**. All temporal features are cumulative — computed from changes strictly
   before the change being scored.
 
-## 4. Selectors and the SemIf condition
+## 4. Rankers and the SemIf condition
 
-Selectors: `random`, `recency`, `failure_rate`, `coverage`, `structural_rule`
+Rankers: `random`, `recency`, `failure_rate`, `coverage`, `structural_rule`
 (function_coverage ∧ filename match, then shortest test first), `bm25_lexical`, and XGBoost
 variants over a 15-feature structured set (coverage, history, size/path) with optional BM25
 and optional feature-family exclusions.
@@ -626,7 +626,7 @@ python -m rts.render.figures        # reads variations.json, writes artifacts/fi
 - **`coverage_restricted` candidate mask** in most SemIf numbers: presupposes per-test coverage, exactly
   the data a cold-start deployment may not have. Repaired by the full-suite condition; `--candidates
   full` should be the default for any future contrast.
-- **Imposed temporal order and a single revision.** No real code evolution, no cross-revision
+- **Synthetic temporal order and a single revision.** No real code evolution, no cross-revision
   drift, and `recency` is degenerate by construction — do not report it as a result.
 - **One SUT, one language, one project.** marshmallow is well known, so pretraining
   contamination cannot be ruled out; state it as a limitation rather than trying to fix it.
@@ -697,7 +697,7 @@ The *circularity* they were meant to address is smaller than assumed — 5.5%, a
 four `class_registry` tests. `--labels {mutmut,full}` selects the source; `mutmut` reproduces
 every number in this document exactly (464 held-out faults, 1187 tests).
 
-**The cold-start filter collapses under the corrected labels.** `starved_mask` is keyed on the
+**The cold-start filter collapses under the corrected labels.** `cold_start_mask` is keyed on the
 killing `(file, test)` pair's failure count, which was itself under-counted by mutmut's
 selection. With honest labels the same thresholds give **2** held-out faults at `failures <= 2`
 (was 43) and **11** at `<= 5` (was 141). §5.7's cold-start condition therefore no longer exists as a

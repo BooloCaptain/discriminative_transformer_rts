@@ -204,7 +204,7 @@ proxy. Two things block it, both small and both a change to what an existing con
 whose evaluation window sits *inside* the held-out tail (constructible as a `Split` value -- and
 `Split` now checks its own partition invariant, so such a split is expressible safely -- but it is
 still the first split that is neither a prefix nor a shuffle), and the NaN convention for unscored
-pairs in `XGBoostSelector`'s extra columns. Cost: about an hour. Quality gate: regenerate the section,
+pairs in `XGBoostRanker`'s extra columns. Cost: about an hour. Quality gate: regenerate the section,
 expect 0 leaves, and note that the `_semif` conditions' numbers depend on the NaN rule.
 
 **2. `bundles` -- the complexity ladder.** One of the study's headline negative results (SemIf
@@ -231,8 +231,8 @@ just a claim:
   **byte-identically** by `rts/render/bugsinpy.py` (194 leaves, 0 mismatches; the artifact file does not
   change when regenerated). It needed three capabilities, each added to the *value* rather than to
   the layer: a per-change candidate pool (`Dataset.own_candidate_pool`, which reproduces the old
-  inline `candidate_matrix` exactly), per-change-scope rankers (`PerPoolRandomSelector`,
-  `PerPoolLexicalSelector` -- a global BM25 index over eight projects would let one project's
+  inline `candidate_matrix` exactly), per-change-scope rankers (`PerPoolRandomRanker`,
+  `PerPoolLexicalRanker` -- a global BM25 index over eight projects would let one project's
   vocabulary move another's scores), and a cache loader keyed by position within a bug's own pool.
   One subtlety nearly moved every interval: the recorded table intervals came from a **fresh
   bootstrap generator per budget**, so the condition is four runs (one budget each) sharing one score
@@ -271,7 +271,7 @@ just a claim:
   averaging subset sizes from the report, and the ambiguity of a multi-dataset report raises rather
   than guessing. What stays off the report is the dataset *object*, which a artifact reporter rebuilds
   when it needs one as a value.
-- **Cost is recorded, not modelled.** Elements carry an optional `estimated_seconds` that is
+- **Cost is recorded, not modelled.** Levels carry an optional `estimated_seconds` that is
   mostly unset, and tiers only distinguish `cpu` from `gpu`. There is no budget-limited execution.
   `ProducedScores.last_stats` records what a production actually cost, which is the first data a
   cost model would need -- but nothing consumes it yet.

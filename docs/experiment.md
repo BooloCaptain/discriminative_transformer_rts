@@ -62,7 +62,7 @@ The sweep itself lives in `pipeline.run`, `ladder.run_label_source`, `variations
 sub-experiments), `bugsinpy.main`, `panels.run` and `figures.run`. Each one re-implements
 the same sequence — build dataset, make split, build context, enumerate rankers, loop over
 averaging subsets/ablation levels/variants, render a table, write a bespoke payload — and each keeps the
-study's choices as its own module constants (`pipeline.HISTORY`, `pipeline.POPULATION`,
+study's choices as its own module constants (`pipeline.PROBE_BUDGET`, `pipeline.SUBSET`,
 `ladder.RUNGS`, `ladder.BUDGETS`, `variations.N_BOOTSTRAP`, `models.default_rankers`).
 
 **The clearest symptom.** "A named variant of one input to the measurement" exists three
@@ -95,7 +95,7 @@ conceived already reduces to one of the five:
 |---|---|
 | ablation level / feature ablation | `features` — a `FeatureBlock` with families withheld |
 | bundle ablation level | `dataset` — a dataset derived from a base |
-| prompt template (P2) | `model` — a `SemIfSelector` reading a different cache |
+| prompt template (P2) | `model` — a `SemIfRanker` reading a different cache |
 | direct mode (P1), embedding baseline (P3) | `model` — a ranker reading a different cache |
 | candidate pool mode | a control variable (§4) |
 | starvation threshold | a `averaging subset` |
@@ -107,8 +107,8 @@ An **factor** is a named, ordered set of variants of one input. An **level** is 
 
 ```python
 Factor("model", (
-    constant("coverage", models.CoverageSelector(), tier="cpu", estimated_seconds=0.1),
-    constant("semif_reranker", models.SemIfSelector(), tier="cache", estimated_seconds=0.0),
+    constant("coverage", models.CoverageRanker(), tier="cpu", estimated_seconds=0.1),
+    constant("semif_reranker", models.SemIfRanker(), tier="cache", estimated_seconds=0.0),
 ))
 ```
 
@@ -130,15 +130,15 @@ built once and shared.
 * The **value** declares its requirements — `Ranker.requirements()`,
   `FeatureGroup.needs`, `Averaging subset.needs`, `Dataset.capabilities()`. These are facts about
   the thing itself, and they must live where the inputs is read, for the reason
-  `accessors.MATERIAL` exists: a need written beside the code that reads it cannot drift from
+  `accessors.INPUTS` exists: a need written beside the code that reads it cannot drift from
   it.
 
 `Factor.map(fn)` applies a **shared option** to every level of a factor — the thing a
 dimension-level option actually is. `fn` returns an `Level`, or an `undefined` when the
 option cannot be expressed for that level; the inapplicable level is then *kept* as a
 poisoned level rather than dropped, so the design point it would have produced is reported
-undefined instead of silently vanishing. `XGBoostSelector` can express "exclude the history
-family"; `SemIfSelector` cannot, because it reads text pairs rather than columns — and that
+undefined instead of silently vanishing. `XGBoostRanker` can express "exclude the history
+family"; `SemIfRanker` cannot, because it reads text pairs rather than columns — and that
 difference should show up as a finding in the report, not as a missing row.
 
 **A third thing a level may declare: applicability.** Availability is normally asked of one
@@ -190,12 +190,12 @@ The same rule rules out the two placements this design was originally asked abou
 * **features on the model** would make a model responsible for a block's capability gating,
   which the block already derives from the dataset's declarations.
 
-The feature block *is* the interface between the two, so it is its own role. `XGBoostSelector`
+The feature block *is* the interface between the two, so it is its own role. `XGBoostRanker`
 already reads this way: it selects columns from a block it is handed (`exclude=...`); it does
-not define one. `SemIfSelector.scores` ignores `ctx.features` entirely, which is the proof
+not define one. `SemIfRanker.scores` ignores `ctx.features` entirely, which is the proof
 that the role is independent.
 
-## 5. Cells, and undefined design points
+## 5. Design points, and undefined design points
 
 A **design point** is one point in the product over the five factors plus the run's control variables. Its key is the
 tuple of level names, so it is stable, ordered, and readable.
@@ -217,7 +217,7 @@ Five distinct things produce a undefined design point, and they are different fi
 
 An *undefined column* is a fifth and different thing: a feature block whose group the dataset
 cannot support is measured-but-zeroed, and the `FeatureMatrix` audit travels in the design point
-record. Rungs of the ladder rely on this, so a block's requirements must not gate the design point.
+record. Ablation levels of the ladder rely on this, so a block's requirements must not gate the design point.
 
 ## 6. Availability
 
@@ -230,8 +230,8 @@ Requirements are strings. Two kinds, and the resolution happens in exactly one p
 An unrecognised string raises, for the same reason `has_capability("coverge")` raises: the
 vocabulary is closed and a quiet `False` would gate a whole block off.
 
-`Ranker.requirements()` is the new half. `SemIfSelector` returns
-`("artifact:artifacts/semif_scores.jsonl",)`; `XGBoostSelector` returns one per
+`Ranker.requirements()` is the new half. `SemIfRanker` returns
+`("artifact:artifacts/semif_scores.jsonl",)`; `XGBoostRanker` returns one per
 `extra_score_files` entry; the baselines return `()`. A missing cache therefore becomes an
 undefined design point carrying the path, rather than a `FileNotFoundError` string swallowed by the
 imperative runner's `except` (which is what `pipeline` does today, into a `skipped` dict).
@@ -299,7 +299,7 @@ field.
 
 ## 10. Declined
 
-* **An external config language (YAML/TOML).** Elements are objects with behaviour *and*
+* **An external config language (YAML/TOML).** Levels are objects with behaviour *and*
   declarations, so a config must name and construct Python objects. A data format would need a
   mirrored registry plus a schema and would still need Python for any new level. Python is
   also what `plan.md` and the report already read.
@@ -447,7 +447,7 @@ removing a parameter from `ladder.build_subsets` that its body never read.
    because otherwise a control variable override would silently not reach the dataset. The BugsInPy condition later
    confirmed the shape: a project selection is a parameter of the dataset *level*, so a corpus
    of three projects is a different experiment rather than a filter on the results.
-7. **Elements are materialised once per run and shared across design points**, which is what makes the
+7. **Levels are materialised once per run and shared across design points**, which is what makes the
    12-design point study condition ~110 s rather than twelve dataset builds. Sound because these are values.
 
 **One hazard checked deliberately.** `refactor.md` §12 records that a rewrite moved every
@@ -470,13 +470,13 @@ Two things the migration needed from the layer, both capability rather than conv
   context -- dataset level, dataset name, features level, model level, split level, split
   shape, history policy, candidate mode -- so reuse is sound rather than incidental.
 * **`models.Context.seed`**, so a run-level seed override reaches the models. Before it, `--seed`
-  moved the split and the ordering but left `RandomSelector` and `XGBoostSelector` at their
+  moved the split and the ordering but left `RandomRanker` and `XGBoostRanker` at their
   constructor defaults: a control variable that lies about what it changed. Both now take `None` to mean "the
   run's seed", as the BM25 shuffle controls do.
 
 And two things it removed from a imperative runner:
 
-* **the BM25 shuffle controls are model levels** (`LexicalSelector(shuffle_changes=...)`), so
+* **the BM25 shuffle controls are model levels** (`LexicalRanker(shuffle_changes=...)`), so
   `results` and `ablations` are two slices of one grid with one provenance instead of a second
   loop with its own bookkeeping -- and the shuffle seed now comes from the run rather than from a
   imperative runner argument;
@@ -490,11 +490,11 @@ the general form of something that already existed:
 
 * **`models.CachedScores`** -- a score matrix read from a file, with the cache declared as a
   *requirement*. The instruction wordings, the direct-mode cache and the embedding matrix are all
-  this; `SemIfSelector` is now a two-line subclass of it. It also means an absent cache is an
+  this; `SemIfRanker` is now a two-line subclass of it. It also means an absent cache is an
   undefined design point with the path rather than the `FileNotFoundError`-and-skip the imperative runner did. The
   *loader* is part of the level, because a cache is not always a scored-pair log: the embedding
   baseline is a whole matrix saved with `numpy.save`.
-* **`models.RankAverageSelector`** -- the fitted-free combination of two rankers' normalised rank
+* **`models.RankAverageRanker`** -- the fitted-free combination of two rankers' normalised rank
   positions. The cold-start condition and the redundancy test both need it, and it is what makes the
   redundancy question answerable without fitting anything on the rows being evaluated.
 * **`averaging subsets.cold-start(max_failures)`** -- the cold-start proxy as a declared averaging subset for one
@@ -545,7 +545,7 @@ code and artifact in step:
   by `rts/render/variations.py`. Two sections are not:
   * **`p5_trained`** needs an evaluation window *inside* the held-out tail -- a `Split` whose train
     and test are both drawn from the tail -- plus a NaN convention for unscored pairs in
-    `XGBoostSelector`'s extra columns. Both are small; both change what an existing concept means,
+    `XGBoostRanker`'s extra columns. Both are small; both change what an existing concept means,
     so they are a deliberate step rather than a migration detail.
   * **`p1_direct` cannot be reproduced at all.** Its cache
     (`semif_direct_cold_start2_coverage_restricted.jsonl`) is absent from the artifacts, so the section is

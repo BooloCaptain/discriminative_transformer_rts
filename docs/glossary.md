@@ -2,7 +2,7 @@
 
 A catalogue of the nomenclature used in this project — in the code, in the artifacts, and in
 the documentation. It is a *reference*, not a narrative: the intent is that a term met
-anywhere (a table header, a population name, an artifact key, a doc paragraph) can be looked up
+anywhere (a table header, an averaging-subset name, an artifact key, a doc paragraph) can be looked up
 here and resolved to one meaning.
 
 Organisation is by the layer a term belongs to, because a word's meaning here is almost always
@@ -13,259 +13,11 @@ are genuinely overloaded; the last section lists those explicitly.
 |---|---|
 | the study's question, scope, protocol | `docs/plan.md` |
 | the dataset half (contract, accessors, features) | `docs/refactor.md` |
-| the experiment layer (roles, axes, cells) | `docs/experiment.md` |
+| the experiment layer (factors, levels, design points) | `docs/experiment.md` |
 | the measured numbers | `docs/implementation.md` |
 | status and next steps | `docs/handoff.md` |
 | the execution plan for the two gaps | `docs/plan_next_steps.md` |
 | the code | the module named beside each entry |
-
----
-
-## 0. Standard terminology: project term → standard term
-
-> **Adopted 2026-10-02, and applied throughout the project.** Every local coinage below has
-> been migrated: the *code identifiers*, the *recorded artifact keys and names*, the *file and
-> cache names*, and the *prose*. A recorded artifact is the specification only in the sense
-> that it pins down what a change must not move by accident; a deliberate vocabulary change is
-> exactly the case where the artifacts must move with it, so they were regenerated under the
-> new names rather than preserved.
->
-> - **What was renamed:** domain identifiers (`Population` → `Subset`, `Selector` → `Ranker`,
->   `Axis`/`Element` → `Factor`/`Level`, `Knobs` → `Controls`, `Cell` → `DesignPoint`,
->   `Unmeasured` → `Undefined`, `Warning` → `Diagnostic`, `MATERIAL` → `INPUTS`), the feature
->   column and family names, the averaging-subset names, the artifact and cache file names, and
->   the recorded JSON keys.
-> - **What was deliberately kept:** ordinary English ("runs", "arm" as a figure of speech,
->   "history" as the *data* property, "signal" as in "lexical signal", "covered" as an
->   adjective), numpy's `axis=` keyword, and `k` as the retrieval cut-off symbol.
-> - **Not renamed, and why:** *killing test*, *fault*, *failure*, *mutant*, *killed*,
->   *survived*, *recall*, *precision*, *BM25* and *suite* were already the standard words. The
->   point of the exercise was to remove the collisions, not to churn the settled vocabulary.
-
-### 0.1 What each term became
-
-Two rules governed the mapping: a term is migrated only when it is (a) a local coinage or (b) a
-word that *collides* with a standard term meaning something else; and the standard term is
-preferred for new code while the old name survives wherever a recorded number depends on it.
-
-The references the mapping rests on: IEEE 610.12 (software engineering terminology);
-Avizienis et al. 2004 (**fault–error–failure cycle**: a fault may cause an error, which may
-propagate to a failure at the system boundary); Rothermel & Harrold 1996 and Yoo & Harman 2010
-(RTS: **minimisation, selection, prioritisation** — three distinct techniques); Elbaum et al.
-2002 (prioritisation, **fault-revealing test**, APFD); Jia & Harman 2011 and Ammann & Offutt
-(mutation: mutant, killed, **killing test**, mutation score, RIP model, **higher-order
-mutant**); Manning et al. (IR: **recall@k**, **precision@k**, **cut-off k**); Montgomery and
-Box–Hunter–Hunter (DOE: **factor**, **level**, **control variable**, **design point**,
-**blocking**, **preregistration**).
-
-### 0.2 Decisions on the proposed terms
-
-| your suggestion | verdict |
-|---|---|
-| Test pool → **test suite** | **Agreed.** "Pool" is not used in the SE literature; "suite" is the standard term. |
-| Killing test → "catching test" | **Keep "killing test".** It is the established term in mutation testing, and "catching test" is not attested anywhere. Add **fault-revealing test** as the alias for real-change (non-mutation) contexts. |
-| Ran test → "observed test" | **Use "executed test".** "Observed" is a poor fit twice over: this project already uses *observed* vs *imposed* ordering, and in statistics "observed" contrasts with "expected". "Executed" is the SE standard. |
-| Per-change budget → "per-change test budget" | **Use "selection budget"**, and split the two things it currently names: the **budget fraction** (b) and the **cut-off** (k). |
-| k → b? | **No — keep k.** k is the standard symbol for a retrieval cut-off (`precision@k`, `recall@k`, "precision at cut-off k"). b would read as the budget fraction, which is the other parameter. Rename the *fraction* to b and leave k alone. |
-| Suite reduction → better description | **Rename to "selection ratio"**, and say what it is: 1 − k/n, the fraction of the suite *not run for this change*. Critically, it collides with the SE term **test suite reduction** (TSR), which is a *different technique* — permanently removing redundant tests. |
-| Fault-bearing "makes sense" | **Agreed**; add the aliases **fault-revealing change** / **detectable change**, and **killed mutant** for a mutation audience. |
-| Structural funnel, recurrence, boundary, bridge rate, lexical bridge | **All agreed** — each is a local metaphor with a standard counterpart; see §0.1. |
-| Candidate set/mode → ? | **"Candidate set" is standard** (the eligible tests). Rename the *mode* to **candidate policy**, since it selects between whole-suite and coverage-restricted selection. |
-| Primitive → "primitive attribute"? | **"Primitive operation"** / **raw accessor** — an attribute would be data, and these are operations. Safer still: name the split **required operations vs derived attributes**. |
-| Declaration → more descriptive | **Agreed**; say what it declares — **capability descriptor** / **metadata declaration**. |
-
-### 0.1 Problem vocabulary (§1)
-
-| project term | recommended | why | note |
-|---|---|---|---|
-| **Test pool** | **test suite** | Standard term for the whole set of tests. | Keep `test_pool` in code. |
-| **Change** | **change** / **modification** | Already standard ("change impact analysis", "change-based RTS"). | — |
-| **Killing test** | **killing test** (mutation) / **fault-revealing test** (general SE) | Both are established; they belong to different literatures. | `killing_tests(c)` stays. |
-| **Ran test** | **executed test** | SE standard; unambiguous against "not executed". | Replaces "ran". |
-| **Fault** | **fault** | IEEE 610.12 / Avizienis: the defect. | — |
-| **Failure** | **failure** / **test failure** | The *event* at the boundary, not the change. | Say "test failure" when the outcome is meant. |
-| **Fault-bearing** | **fault-revealing change** / **detectable change** (mutation: **killed mutant**) | Describes the property (the suite can reveal it), not just the presence of a fault. | — |
-| **Per-change budget** | **selection budget**; **budget fraction** b; **cut-off** k | Standard in RTS evaluation and IR. | See the k-vs-b verdict above. |
-| **Recall** | **recall** (alias **fault-detection rate**) | Standard; Rothermel & Harrold's *inclusiveness* is the same quantity. | — |
-| **F-measure** | **F1 score** | Standard name for the balanced form. | — |
-| **Suite reduction** | **selection ratio** (per-change) | Described above; avoids the TSR collision. | — |
-| **Structural funnel** | **coverage-and-naming filter** (a static candidate filter) | SE calls this static/coverage-based test selection; "funnel" is a pipeline metaphor. | — |
-| **Usual suspect** | **the test with prior (file,test) failure history** | The concept is failure history; there is no standard noun. | Keep "usual suspect" as informal prose only. |
-| **Recurrence** | **pair co-occurrence frequency** | Maps onto SE **co-change** / **change coupling**. | — |
-| **Boundary** | **execution boundary** (this work: **host–target boundary**) | The test process and the code under test are on different sides of it. | "Hardware-in-the-loop" only if hardware is in fact involved. |
-| **Bridge rate** | **lexical-overlap rate** | The NLP/IR term for shared-token fraction. | — |
-| **Lexical bridge** | **lexical-overlap signal** (SE: **traceability link**) | Its absence is a missing traceability link between change and test. | — |
-| **Co-change proxy** | **surrogate label** / **proxy ground truth** | Standard ML term for a stand-in label. | — |
-| **Recall@budget** | **recall@k** (k = cut-off) | IR standard. | — |
-
-### 0.2 Dataset contract (§2)
-
-| project term | recommended | why |
-|---|---|---|
-| **Primitive** | **required operation** / **raw accessor** | Operations, not attributes. The contract's split becomes *required operations* vs *derived attributes*. |
-| **Declaration** | **capability descriptor** / **metadata declaration** | Says what is declared rather than "that something is". |
-| **Derived feature / accessor** | **derived attribute** (ML: **engineered feature**) | Standard in both halves. |
-| **Capability** | **capability** (optional supported material) | Already standard. |
-| **Requirement** | **requirement** (alias **dependency**) | Already standard. |
-| **Material** | **inputs** | Plainer. |
-| **Ordering: observed / imposed** | **natural (temporal) order** / **synthetic order** | "Imposed" is vivid but non-standard; "synthetic" is the usual contrast to "natural". |
-| **Test unit** | **test granularity** | Standard. |
-| **Semantics** | **annotations** / **notes** | Avoids the overloaded "semantics". |
-| **Unmeasured** | **undefined** / **not applicable** | Standard for a value that cannot exist; "unmeasured" reads as "not yet measured". |
-| **Warning** | **diagnostic** | Standard compiler/linter vocabulary. |
-| **Source / sample generator** | **data source** / **record parser (adapter)** | Standard. |
-| **Derived / pooled dataset** | **view / wrapper dataset** / **aggregate dataset** | Standard composition names. |
-| **Bundle** | **composite change** (mutation: **higher-order mutant**) | A multi-site change; in mutation terms a higher-order mutant. |
-| **Distractor** | **distractor** (the object: **survived mutant**) | "Distractor" is standard ML; name the thing itself too. |
-| **Signal mutant** | **target mutant** / **focal mutant** | Standard. |
-
-### 0.3 Derived quantities (§3)
-
-| project term | recommended |
-|---|---|
-| **labels** | **label matrix** |
-| **runs** | **execution matrix** |
-| **covered** | **coverage sets** |
-| **fault_mask / fault_idx** | **detectable-change mask / index** |
-| **candidates** | **candidate set** (per-change eligible tests) — already standard |
-| **candidate mode** | **candidate policy** (whole-suite vs coverage-restricted) |
-| **pair_counts** | **pair co-occurrence counts** |
-| **sparse_mask** | **low-co-occurrence mask** |
-| **change_id / coverage_key** | **change identity / coverage key** |
-
-### 0.4 Populations (§4)
-
-| project term | recommended | why |
-|---|---|---|
-| **Population** | **averaging subset** (alias **evaluation subset**) | "Population" is standard in statistics but overloaded here — it means the subset a metric is averaged over, not the whole dataset. |
-| **rows** | **evaluation set** | — |
-| **fault_bearing** | **detectable-change set** | — |
-| **no_prior_failure / starved** | **cold-start subset** | "Cold start" is the standard ML term for exactly this regime. |
-| **low_pair_recurrence / sparse** | **low-co-occurrence subset** | — |
-| **starved141** | **cache-covered subset** | Named for provenance; say so. |
-
-### 0.5 Splits and evaluation (§5)
-
-| project term | recommended |
-|---|---|
-| **Split** | **train/test split** (temporal variant: **time-based split**) |
-| **Evaluation window** | **held-out set** (alias **test fold**) |
-| **Effective ordering** | **effective order** |
-| **Probe budget** | **reporting budget** |
-| **BudgetResult / Evaluation** | **metric sweep / evaluation record** |
-| **n** | **sample size** |
-| **Power limit** | **statistical power limit** — already standard |
-| **±0.02** | **reproducibility floor** (alias **numerical noise floor**) |
-
-### 0.6 Features (§6)
-
-| project term | recommended | why |
-|---|---|---|
-| **FeatureBlock / FeatureGroup** | **feature set / feature group** | Standard ML. |
-| **Family** | **feature group** | "Family" is local. |
-| **Structured block** | **hand-crafted tabular feature set** | Standard ML contrast with learned representations. |
-| **Traceability** (family) | **proximity & naming heuristics** | "Traceability" is a term of art for requirements→code links; this family is path/naming proximity. |
-| **Intrinsic** (family) | **static size features** | — |
-| **History features** | **temporal features** | Standard. |
-| **covers_function** | **function coverage** | — |
-| **filename_stem_match** | **filename match** | — |
-| **path_distance** | **path proximity** | — |
-| **change_size** | **code churn** (lines changed) | Standard SE term. |
-| **test_failure_rate_cum** | **cumulative failure rate** | — |
-| **test_last_failure_age** | **recency of last failure** | — |
-| **n_covering_tests / coverage_rank_prior** | **coverage-set size / coverage-set-size prior** | — |
-
-### 0.7 Models and selectors (§7)
-
-| project term | recommended |
-|---|---|
-| **Selector** | **ranker** (ML) / **RTS technique** (SE) |
-| **Score** | **relevance score** (or **priority**, test-prioritisation framing) |
-| **Context** | **run context** |
-| **Orientation** | **query–document assignment** (IR standard) |
-| **Instruction variant** | **prompt template** |
-| **Placement control** | **prompt-position control** |
-| **Dilution** | **prompt position effect** (IR: **position bias**) |
-| **Mirror arm** | **feature-augmented prompt arm** |
-| **Importances** | **feature importances** — already standard |
-
-### 0.8 Experiment layer (§8)
-
-| project term | recommended | why |
-|---|---|---|
-| **Role** | **factor** | DOE standard: a factor is an input varied by design. |
-| **Axis** | **factor levels** | — |
-| **Element** | **level** (or **variant**) | — |
-| **Knob** | **control variable** (alias **hyperparameter**) | DOE: a variable held constant to prevent confounding. |
-| **Cell** | **design point** (alias **treatment combination**) | DOE: "design points" are combinations of factor settings. |
-| **Comparison** | **contrast** (alias **paired comparison**) | DOE standard. |
-| **Group** | **comparison block** | DOE "blocking" — grouping similar units. |
-| **Pairable / row-changing** | **paired factor / row-changing factor** | — |
-| **Tier** | **cost tier** | Fine as-is. |
-| **Poisoned element** | **undefined level** | — |
-| **Unmeasured cell** | **missing cell** | Standard: missing data. |
-| **Binding** | **build context** | — |
-| **Report** | **run record** | — |
-
-### 0.9 Studies and renderers (§9)
-
-| project term | recommended | why |
-|---|---|---|
-| **Arm** | **experimental condition** (or **configuration**) | "Arm" is clinical-trials usage; it is understood but imprecise here. |
-| **Driver** | **imperative runner** | The contrast with "renderer" is imperative vs declarative. |
-| **Renderer** | **artifact reporter** | It runs a declared arm and writes the artifact — "renderer" implies graphics. |
-| **Reading** | **derived metric** (post-hoc analysis) | — |
-| **Rung / ladder** | **ablation level** / **ablation study** | Standard ML. |
-| **Panel** | **analysis figure** | — |
-| **Gate / T0** | **quality gate** | Standard. |
-| **Falsifier** | **falsification criterion** / **preregistered prediction** | DOE standard: **preregistration**. |
-| **De-lexicalisation** | **identifier obfuscation** | Descriptive and standard. |
-
-### 0.10 Sources, mutation and the SUT (§10)
-
-| project term | recommended | why |
-|---|---|---|
-| **Mutant / killed / survived / mutation score** | unchanged | Already the standard vocabulary. |
-| **Trampoline** | **mutant dispatch** (implementation); the concept is the **mutant schema** | Keep "trampoline" only in code comments. |
-| **Verdict** | **mutation verdict** | — |
-| **Outcome** | **test outcome** (per mutant,test) | — |
-| **Label source** | **label source** (alias **oracle**) | The labels are the oracle. |
-| **Deselected test** | **excluded test** | — |
-| **Out-of-coverage fault** | **coverage-invisible fault** | States the property: its revealing test does not cover the change. |
-| **Full-suite relabelling** | **retest-all relabelling** | SE standard: **retest all**. |
-| **Boundary-broken corpus** | **cross-boundary corpus** | — |
-
-### 0.11 Artifacts, keys and conventions (§11)
-
-| project term | recommended | why |
-|---|---|---|
-| **Artifact (as specification)** | **golden file** | The recorded output that a change must reproduce is a *golden file*. |
-| **Leaf-by-leaf verification** | **golden-file (snapshot) comparison** | Standard names: golden-master, snapshot, approval, characterization testing. |
-| **Documented addition list** | **accepted-delta list** | — |
-| **Score cache** | **precomputed score cache** | Standard: cached scores. |
-
-### 0.12 Cost and statistics (§12)
-
-| project term | recommended |
-|---|---|
-| **delta** | **paired effect size** (or **paired difference**) |
-| **CPU / GPU arm** | **resource class** |
-| **Bootstrap stream is positional** | **RNG draw order** |
-| **`--pilot N`** | **temporal prefix sample** (state it is not a random sample) |
-| **b0.05** | **budget fraction 0.05** (cut-off k reported alongside) |
-
-### 0.13 The three collisions worth memorising
-
-Renames are cheap; *collisions* corrupt meaning. The three to fix first:
-
-1. **suite reduction** — here: the fraction of the suite skipped for one change. In SE: **test
-   suite reduction / minimisation**, a technique that permanently removes redundant tests.
-   Different technique, same words. Use **selection ratio**.
-2. **population** — here: the subset a metric averages over. In statistics: the whole universe
-   sampled from. Use **averaging subset**.
-3. **traceability** — here: filename/path proximity heuristics. In SE: the existence of a link
-   between requirements, code and tests. Use **proximity & naming heuristics** for the feature
-   family, and reserve "traceability" for the property the study is really about.
 
 ---
 
@@ -325,7 +77,7 @@ speak in.
 | **Capability** | Optional inputs a dataset may or may not have: `coverage`, `durations`. Absence is a fact, not a zero column. `Capability` enum. |
 | **Requirement** | What a computation needs in order to be *defined at all*: `labels`, `diff_text`, `coverage`, `durations`. `Requirement` enum. A capability is a requirement of the same spelling; `requirement_for()` is the only capability→requirement map. |
 | **Policy** | A requirement about *order* rather than inputs: `ordering.natural`, `ordering.effective`. Kept separate from `Requirement` so one id does not carry three meanings. |
-| **Material** | The named inputs a computation reads, catalogued once in `accessors.MATERIAL`. Requirements are *derived* from the inputs a computation names, so a need cannot drift from the code that reads it. `requirements_for(names)`. |
+| **Input** | The named inputs a computation reads, catalogued once in `accessors.INPUTS`. Requirements are *derived* from the inputs a computation names, so a need cannot drift from the code that reads it. `requirements_for(names)`. |
 | **Ordering** | `natural` (the source carries a real sequence) or `synthetic` (it does not). Declared, never inferred. Enforced by `Ordering` enum. |
 | **Order seed** | The seeded permutation applied to an *synthetic* dataset before computing temporal features. Evaluation configuration, not a property of the data. `Dataset.order_seed`. |
 | **Test unit** | What one test id denotes: `module`, `class`, `function`, `case`. The harness-checkable half of the annotations split; used for pooling compatibility checks. `Granularity` enum. |
@@ -371,13 +123,13 @@ speak in.
 | **candidate_counts** | Per-change count of rankable pairs; what `budget_k` multiplies. |
 | **pair_counts** | How often each `(file, test)` combination recurs across changes. Requires `coverage`. |
 | **pair_failures / pair_runs** | Failure counts / run counts for a `(file, test)` pair. What the cold_start and no-prior-failure subsets read. |
-| **sparse_mask** | Changes whose every `(file, test)` pair recurs at most N times. The sparsity proxy. |
-| **inputs** | The catalogue (`accessors.MATERIAL`) of named inputs a computation may read; resolves to a mapping handed to a subset predicate. |
+| **sparse_mask** | Changes whose every `(file, test)` pair recurs at most N times. The low-co-occurrence proxy. |
+| **inputs** | The catalogue (`accessors.INPUTS`) of named inputs a computation may read; resolves to a mapping handed to a subset predicate. |
 | **change_id vs coverage_key** | `change_id` is stable identity and keys the change index *and* the score caches; `coverage_key` keys the coverage map (for mutmut it is the function key **without** the `__mutmut_N` suffix). Conflating them mis-maps caches. |
 
 ---
 
-## 4. Populations
+## 4. Averaging subsets
 
 `rts/data/subsets.py`. A **subset** is a named subset of the **evaluation window**
 (`rows`) that a metric is *averaged over*. Three sets are deliberately distinct:
@@ -394,15 +146,15 @@ is a value (`SubsetRegistry`), composable with `+`; the study's own set is `STUD
 |---|---|
 | `detectable` | Changes with ≥1 killing test. The default averaging subset. |
 | `no_prior_failure` | Killing `(file, test)` pairs with no earlier failure (`max_failures=1`). |
-| `cold_start` | The fixed-threshold data-cold_start proxy (`max_failures=2`). |
+| `cold_start` | The fixed-threshold cold-start proxy (`max_failures=2`). |
 | `cold_start<N>` | Parameterised form, `subsets.cold_start(N)` — counts include the change itself, so `cold_start1` means no prior failure history at all. `cold_start2` = 43 held-out faults, `cold_start5` = 141 (under *mutmut* labels). |
 | `cache_covered` | Not a threshold: the held-out changes **the ladder's SemIf cache covers**, named for provenance. Its subset definition is the cache's coverage; when the cache is absent it is *unavailable*, not smaller. |
 | `held_out` | Every held-out fault-bearing change ("the whole evaluation window"). |
-| `low_pair_recurrence` | Changes whose `(file, test)` pairs rarely recur (`max_pair_count=1`). |
-| `low_cooccurrence<N>` | Parameterised sparsity proxy, `subsets.low_pair_recurrence(N)`; the recorded condition uses `low_cooccurrence80` and `low_cooccurrence160`. |
+| `low_cooccurrence` | Changes whose `(file, test)` pairs rarely recur (`max_pair_count=1`). |
+| `low_cooccurrence<N>` | Parameterised low-co-occurrence proxy, `subsets.low_cooccurrence(N)`; the recorded condition uses `low_cooccurrence80` and `low_cooccurrence160`. |
 
-> **Starved vs low_cooccurrence** — two different proxies that are easy to confuse. *Starved* keys on the
-> **failure history** of a killing pair (a data-cold_start deployment). *Sparse* keys on the
+> **Cold start vs low co-occurrence** — two different proxies that are easy to confuse. *Cold start* keys on the
+> **failure history** of a killing pair (a cold-start deployment). *Low co-occurrence* keys on the
 > **recurrence of coverage pairs** (a proxy for real evolution). The low_cooccurrence condition is a separate
 > `Experiment` because its budget grid differs — a control variable is constant across a run.
 
@@ -442,7 +194,7 @@ is a value (`SubsetRegistry`), composable with `+`; the study's own set is `STUD
 | **FeatureMatrix** | The built result: `.X`, `.columns`, `.column(name)`, `.index(name)`, `.keep`/`.without`, `.audit`, `.undefined`, `.diagnostics`. Replaced the bare `(X, names)` pair so a ranker asks for a column *by name* and fails loudly on a rename rather than reading whatever moved into that slot. |
 | **Family** | A cross-cutting label used for ablation: `coverage`, `traceability`, `history` (plus `intrinsic` for size/duration columns). Declared per *column*, because a family can take one column from each of two groups. |
 | **`without_families(...)`** | Withholds columns by family. Ladder ablation levels are built this way; a typo in a family name raises rather than quietly ablating nothing. |
-| **Undefined column** | A column whose group the dataset cannot support: measured-but-zeroed, with the reason in the matrix audit. Rungs rely on this, so a block's requirements must not gate the design point. |
+| **Undefined column** | A column whose group the dataset cannot support: measured-but-zeroed, with the reason in the matrix audit. Ablation levels rely on this, so a block's requirements must not gate the design point. |
 | **Structured block** | The 15 columns the classical rankers read, in recorded order. |
 
 The 15 structured columns, in order (group · family):
@@ -452,7 +204,7 @@ The 15 structured columns, in order (group · family):
 3. `coverage_rank_prior` — coverage
 4. `path_proximity` — traceability · directory-tree distance
 5. `tests_per_file` — traceability
-6. `filename_match` — traceability (formerly mislabelled `module_name_in_test_file` — the value is a filename-*stem* match)
+6. `filename_match` — traceability (the value is a filename-*stem* match)
 7. `test_duration` — intrinsic · wall-clock, hardware-dependent (available but not comparable)
 8. `test_lines` — intrinsic
 9. `test_tokens` — intrinsic
@@ -483,7 +235,7 @@ the dataset contract that the ranker reads (`artifact:<path>` for a cache, or a 
 
 | Ranker name | Meaning |
 |---|---|
-| `random` | Uniform random scores; the floor. `RandomSelector(seed=None)` means "the run's seed". |
+| `random` | Uniform random scores; the floor. `RandomRanker(seed=None)` means "the run's seed". |
 | `recency` | Select the tests that failed most recently. Degenerate by construction here — reported as a limitation of the setup, not a finding. |
 | `failure_rate` | Cumulative per-test failure rate. |
 | `coverage` | Tests covering the mutated function, preferring smaller coverage sets. Mutmut's own association. |
@@ -494,8 +246,8 @@ the dataset contract that the ranker reads (`artifact:<path>` for a cache, or a 
 | `semif_reranker` / `semif_textonly` | SemIf in reranker mode, reading a score cache; text-only (no structured features in the prompt). |
 | `semif_direct_pairwise` | Direct mode adapted to two options (P1). |
 | `embed_codebert` | The code-embedding baseline (P3). |
-| `rankaverage_xgb_semif` | Fitted-free rank average of SemIf and a tree (P5's cheap condition). `models.RankAverageSelector`, `models.normalised_rank`. |
-| `CachedScores` / `ProducedScores` | Selectors that read a precomputed score artifact (the general form; `SemIfSelector` subclasses `CachedScores`). |
+| `rankaverage_xgb_semif` | Fitted-free rank average of SemIf and a tree (P5's cheap condition). `models.RankAverageRanker`, `models.normalised_rank`. |
+| `CachedScores` / `ProducedScores` | Rankers that read a precomputed score artifact (the general form; `SemIfRanker` subclasses `CachedScores`). |
 
 **XGBoost naming grammar.** Parts combine, so the name states the feature set:
 
@@ -532,7 +284,7 @@ the dataset contract that the ranker reads (`artifact:<path>` for a cache, or a 
 | **Level** | One variant of one role: a name, a builder (`make`), a cost tier, an estimated seconds, a note, and optionally an applicability predicate. `Level`. |
 | **`constant(name, value, ...)`** | The idiom for a level whose value is already built. |
 | **Binding** | What a level is handed when built: the environment, the design point's resolved dataset, and (only while applicability is checked) the design point's factor names. A value is built **once per run** and shared across design points, so `make` must not read `factors`. |
-| **Knob** | A run-level constant: **a choice that is free** — the harness cannot derive the right answer from anything else. Controls do not multiply into design points and are recorded once: `seed`, `budgets`, `n_bootstrap`, `n_bootstrap_paired`, `candidates`, `model_seed`. The layer's one rule: *anything the harness can derive must not be an option.* |
+| **Control variable** | A run-level constant: **a choice that is free** — the harness cannot derive the right answer from anything else. Controls do not multiply into design points and are recorded once: `seed`, `budgets`, `n_bootstrap`, `n_bootstrap_paired`, `candidate_policy`, `model_seed`. The layer's one rule: *anything the harness can derive must not be an option.* |
 | **Environment** | What a run offers: the controls, an `out_dir`, a `caches` name→path map, and free-form `shared` values a caller can inject. |
 | **DesignPoint** | One point in the product over the five factors plus the controls. Its `key` is `"dataset=..\|features=..\|model=..\|subset=..\|split=.."`; `factors` are the level names by role. |
 | **Undefined design point** | A design point reported as undefined rather than dropped, for exactly one of five reasons: level unavailable, subset unavailable, model requirement unresolved, tier not enabled, applicability. Dropping is what turns "we asked and could not answer" into a silently halved contrast. |
@@ -545,7 +297,7 @@ the dataset contract that the ranker reads (`artifact:<path>` for a cache, or a 
 | **Row-changing role** | `dataset`, `subset`, `split` — a delta across these compares different subsets and is **refused at construction** rather than producing a plausible number. |
 | **Group** | The set of design points sharing the other four roles; a design point is paired against the reference level's design point in its own group. |
 | **Requirement resolution** | `artifact:<path>` resolves by file existence; anything else resolves against the design point's dataset. An unrecognised spelling raises (the vocabulary is closed). |
-| **`run(exp, out_dir=, controls=, shared=, caches=, tiers=)`** | The measurement. Elements and score matrices are memoised per run. |
+| **`run(exp, out_dir=, controls=, shared=, caches=, tiers=)`** | The measurement. Levels and score matrices are memoised per run. |
 | **Report / DesignPointResult** | What a run records: per design point the key, factors, tier, seconds, ranker, subset, n_rows, n_changes, split, dataset declaration, feature audit, `diagnostics` (derivation) and `audit` (dataset+split) held **separately**, results, importances. The artifact also carries the undefined design points and the contrasts. |
 
 ---
@@ -556,18 +308,18 @@ the dataset contract that the ranker reads (`artifact:<path>` for a cache, or a 
 
 | Term | Meaning |
 |---|---|
-| **Arm** | A complete `Experiment` value. |
+| **Condition** | A complete `Experiment` value. |
 | **Headline condition** | The full ranker set over the full candidate set; reproduces `results_full.json`. `study_condition()`. |
-| **Sparse condition** | The same rankers over rarely-recurring corners; a *separate experiment* because it reports three budgets where the headline condition reports six. `low_cooccurrence_condition()`. |
+| **Low co-occurrence condition** | The same rankers over rarely-recurring corners; a *separate experiment* because it reports three budgets where the headline condition reports six. `low_cooccurrence_condition()`. |
 | **Ladder condition** | The traceability-loss ladder; reproduces `ladder.json`. |
 | **Variation condition** | One of the P1–P5 sub-experiments; reproduces sections of `variations.json`. |
 | **Driver** | The *legacy* name for a hand-written sweep module: control flow in code that re-implemented the same sequence (build dataset → split → context → loop → table). Five of them: `pipeline`, `ladder`, `variations`, `bugsinpy`, plus `panels`/`figures`. `rts/bundles.py` is the last driver outside `rts/render`. |
 | **Renderer** | A module under `rts/render/` that runs a *declared* condition from `studies` and writes the legacy artifact shape. A renderer contains **no experiment logic**: `pipeline.py`, `ladder.py`, `variations.py`, `bugsinpy.py`. |
 | **Reading** | A quantity *computed from a report* rather than recorded by the kernel — an interpretation, kept apart from the data so the table can be recomputed from the layer's own records. `studies/readings.py`; the example is `semif_margins`, the ladder's headline quantity. |
 | **Reading (panel)** | Also used for `panels.py`, which the design deliberately keeps off the layer: a panel is a *reading*, not a sweep, and its deciles are dataset-derived subsets plus a per-*row* availability filter that `applies` (per-*design point*) cannot express. |
-| **Rung** | One step of a ladder: a feature block with families withheld. |
-| **Traceability-loss ladder** | Removes feature families cumulatively and asks whether SemIf crosses the classical baselines as traceability is withdrawn. Rungs `L0_all`, `L1_nohistory`, `L2_nocoverage`, `L3_notrace`. A ablation level name states what is **unavailable** at that ablation level. |
-| **Bundle / complexity ladder** | Broadens the *change* while holding the *answer* fixed. Rungs `0`–`5` by `(n_distractors, cross_file, distractor_kind)`. |
+| **Ablation level** | One step of a ladder: a feature block with families withheld. |
+| **Traceability-loss ladder** | Removes feature families cumulatively and asks whether SemIf crosses the classical baselines as traceability is withdrawn. Ablation levels `L0_all`, `L1_notemporal`, `L2_nocoverage`, `L3_noproximity`. An ablation level name states what is **unavailable** at that ablation level. |
+| **Bundle / complexity ladder** | Broadens the *change* while holding the *answer* fixed. Ablation levels `0`–`5` by `(n_distractors, cross_file, distractor_kind)`. |
 | **Distractor** | A change bundled alongside the signal mutant. `survived` (no killing tests, so the union label stays exact), `killed` (ablation level 4's control: inflates the killer count and makes RTS easier), `coherent` (ablation level 5: chosen for relatedness rather than at random). |
 | **Union annotations** | A bundle is "caught" if a selected test is sensitive to any edit in it. |
 | **Signal mutant** | The killed mutant a bundle is built around; the bundle's label is exactly its kill set. |
@@ -644,16 +396,16 @@ change is wrong or the movement is a finding to argue and record — never absor
 | Pair | The distinction |
 |---|---|
 | **fault vs failure** | A fault is a *change* that has a killing test. A failure is a *test outcome*; "failure history" is a count of past test failures. |
-| **killing test vs ran test** | Killing = the label (test failed against the change). Ran = what was executed. A missing pair is "not selected", never "passed". |
-| **candidate vs row vs subset** | Candidates = rankable pairs (per change,test). Rows = changes in the evaluation window. Subset = a named subset of rows the metric averages over. |
-| **cold_start vs low_cooccurrence** | Starved keys on failure history; low_cooccurrence keys on coverage-pair recurrence. Different proxies, different conditions. |
+| **killing test vs executed test** | Killing = the label (the test failed against the change). Executed = what actually ran. A missing pair is "not selected", never "passed". |
+| **candidate set vs row vs averaging subset** | Candidate set = the rankable (change, test) pairs. Rows = the changes in the evaluation window. Averaging subset = the named subset of rows a metric is averaged over. |
+| **cold start vs low co-occurrence** | Cold start keys on failure history; low co-occurrence keys on coverage-pair recurrence. Different proxies, different conditions. |
 | **`change_id` vs `coverage_key`** | Change identity (and score-cache key) versus coverage-map key. Mutmut coverage keys drop `__mutmut_N`. |
-| **`natural` vs `synthetic` ordering** | Whether the sequence is real or harness-synthetic. Also `effective_ordering`, which a shuffling split downgrades. |
+| **`natural` vs `synthetic` ordering** | Whether the sequence is real or harness-synthetic. Also `effective_order`, which a shuffling split downgrades. |
 | **`mutmut` vs `full` labels** | The label source: mutmut's selected tests versus the full suite. |
-| **Capability vs Requirement vs Policy** | Material the dataset has, inputs a computation needs (derived from the inputs it names), and a requirement about *order*. |
-| **struct vs static (XGBoost)** | `struct` includes the history columns; `static` excludes them. |
+| **Capability vs Requirement vs Policy** | Inputs the dataset has, requirements a computation needs (derived from the inputs it names), and a requirement about *order*. |
+| **struct vs static (XGBoost)** | `struct` includes the temporal columns; `static` excludes them. |
 | **undefined design point vs undefined column** | A design point that could not be measured (reported in `undefined`), versus a feature column the dataset could not support (measured-but-zeroed, audit in the matrix). |
 | **unavailable vs empty** | A subset the dataset cannot support is `Undefined`, not a smaller or empty set. |
 | **driver vs renderer** | A driver *contains* the sweep as control flow; a renderer *runs a declared condition* and writes the artifact. |
-| **L0–L3 ablation levels vs bundle ablation levels 0–5** | Two different ladders: traceability loss (feature families withheld) versus change complexity (bundling). |
-| **`cache_covered` vs `cold_start5`** | `cache_covered` (ladder) is "the changes the cache covers", named for provenance — under corrected labels the cold_start filter no longer defines a subset of that size. |
+| **L0-L3 vs bundle levels 0-5** | Two different ladders: traceability loss (feature families withheld) versus change complexity (bundling). |
+| **`cache_covered` vs `cold_start5`** | `cache_covered` (ladder) is "the changes the cache covers", named for provenance: the cache's own coverage defines it, and that set is not the same as any cold-start threshold. |

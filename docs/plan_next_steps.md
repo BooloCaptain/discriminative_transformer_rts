@@ -170,7 +170,7 @@ regime, absent, or **simulable on marshmallow without any new data**.
 | BM25 over change × test text | **degraded** to protocol/feature vocabulary | present, weak (0.504 raw) | partially — cannot honestly simulate the execution boundary's vocabulary loss |
 | `code_churn`, `change_added/removed` | available | present | n/a |
 | `test_duration`, `test_lines`, `test_tokens` | available | present | n/a |
-| **coverage-defined candidate mask** (`covered`) | **does not exist**; the pool is the whole suite | most SemIf numbers use it | **yes** — `--candidate-policy full` |
+| **coverage-defined candidate mask** (`coverage_restricted`) | **does not exist**; the pool is the whole suite | most SemIf numbers use it | **yes** — `--candidate-policy full` |
 | **labels** | integration-test failures, several per change | co-located unit-test failures, coverage-defined | **no** — this is the real gap |
 | candidate-pool size | thousands of tests | 1187 | partially — the bundles study already tripled the pool (158 → 490) |
 | budget unit | seconds of wall clock | test count | **yes** — proposal 3's time budgets |
