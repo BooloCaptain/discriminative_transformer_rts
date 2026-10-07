@@ -1,7 +1,7 @@
 """Tests for the experiment layer: factors, design points, availability, comparability, provenance.
 
 These use the fixture-backed dataset, so they need neither a checkout nor a real run -- which
-is the property ``docs/refactor.md`` §7 asks of the contract, and the experiment layer inherits it.
+is the property the contract is designed for, and the experiment layer inherits it.
 
 The marshmallow and ladder conditions are verified separately by re-running them and diffing against
 the recorded artifacts (``scripts/verify_experiment_layer.py``), because that check is slow and
@@ -18,10 +18,12 @@ import json
 import numpy as np
 import pytest
 
+from examples.fixture import StubDataset
 from rts import config, features
-from rts.data import splits, subsets
+from rts.data import splits
 from rts.data.contract import Ordering, Undefined
 from rts.experiment import (
+    FACTOR_BUDGET,
     FACTOR_DATASET,
     FACTOR_FEATURES,
     FACTOR_MODEL,
@@ -34,21 +36,27 @@ from rts.experiment import (
     Experiment,
     Factor,
     Level,
+    budget_level,
     constant,
     run,
     unavailable,
 )
-from rts.model import rankers
-from tests.stub_dataset import StubDataset
+from tests import _plugins as rankers
+from tests import _subsets as subsets
 
 PROBE = 0.5
 
 
+def _half_split(binding: Binding):
+    return splits.make_split(binding.dataset, train_fraction=0.5, seed=binding.controls.seed)
+
+
+def _shuffled_split(binding: Binding):
+    return splits.make_split(binding.dataset, train_fraction=0.5, shuffle=True)
+
+
 def half_split():
-    return Level(
-        "half",
-        lambda b: splits.make_split(b.dataset, train_fraction=0.5, seed=b.controls.seed),
-    )
+    return Level.of(_half_split, "half")
 
 
 def stub_experiment(**overrides) -> Experiment:
@@ -61,7 +69,8 @@ def stub_experiment(**overrides) -> Experiment:
             FACTOR_SUBSET, (constant("detectable", subsets.DETECTABLE),)
         ),
         splits=Factor(FACTOR_SPLIT, (half_split(),)),
-        controls=Controls(budgets=(PROBE,), n_bootstrap=20),
+        budgets=Factor(FACTOR_BUDGET, (budget_level(PROBE),)),
+        controls=Controls(n_bootstrap=20),
     )
     fields.update(overrides)
     return Experiment(**fields)
@@ -83,7 +92,7 @@ def test_a_cell_is_one_point_in_the_product_and_its_key_names_the_factors():
     design_points = experiment.design_points()
     assert [c.name(FACTOR_MODEL) for c in design_points] == ["a", "b"]
     assert design_points[0].key == (
-        "dataset=stub|features=structured|model=a|subset=detectable|split=half"
+        "dataset=stub|features=structured|model=a|subset=detectable|split=half|budget=b0.5"
     )
     assert design_points[0].factors_dict()[FACTOR_DATASET] == "stub"
 
@@ -135,8 +144,11 @@ def test_a_missing_artifact_makes_the_cell_unmeasured_rather_than_raising():
         def scores(self, ctx):  # pragma: no cover - must not be reached
             raise AssertionError("a design_point whose requirement is unmet must not be measured")
 
+    def make_cached(_binding):
+        return Cached()
+
     report = run(
-        stub_experiment(models=Factor(FACTOR_MODEL, (Level("cached", lambda b: Cached()),))),
+        stub_experiment(models=Factor(FACTOR_MODEL, (Level.of(make_cached, "cached"),))),
         save=False,
         verbose=False,
     )
@@ -156,9 +168,12 @@ def test_an_unrecognised_requirement_spelling_raises():
         def scores(self, ctx):  # pragma: no cover - must not be reached
             raise AssertionError
 
+    def make_typo(_binding):
+        return Typo()
+
     with pytest.raises(ValueError, match="unknown requirement"):
         run(
-            stub_experiment(models=Factor(FACTOR_MODEL, (Level("typo", lambda b: Typo()),))),
+            stub_experiment(models=Factor(FACTOR_MODEL, (Level.of(make_typo, "typo"),))),
             save=False,
             verbose=False,
         )
@@ -177,42 +192,6 @@ def test_an_unavailable_population_is_unmeasured_not_an_empty_average():
     assert report.undefined[0]["measured"] is False
 
 
-def test_applicability_may_depend_on_another_role():
-    """A variant can be meaningless in combination with another role's level, not alone."""
-
-    def only_with_coverage_population(binding: Binding) -> Undefined | None:
-        if binding.factors.get(FACTOR_SUBSET) == "detectable":
-            return None
-        return Undefined("artifact:partial", "the cache does not cover this subset")
-
-    report = run(
-        stub_experiment(
-            models=Factor(
-                FACTOR_MODEL,
-                (
-                    Level(
-                        "partial",
-                        lambda b: rankers.CoverageRanker(),
-                        applies=only_with_coverage_population,
-                    ),
-                ),
-            ),
-            subsets=Factor(
-                FACTOR_SUBSET,
-                (
-                    constant("detectable", subsets.DETECTABLE),
-                    constant("no_prior_failure", subsets.NO_PRIOR_FAILURE),
-                ),
-            ),
-        ),
-        save=False,
-        verbose=False,
-    )
-    assert len(report.design_points) == 1
-    assert len(report.undefined) == 1
-    assert report.undefined[0]["requirement"] == "artifact:partial"
-
-
 # --- temporal features are derived, not configured -------------------------------------
 
 
@@ -222,14 +201,8 @@ def test_history_is_off_when_the_split_shuffles_an_observed_dataset():
         datasets=Factor(FACTOR_DATASET, (constant("natural", StubDataset(ordering=Ordering.NATURAL)),)),
         splits=Factor(
             FACTOR_SPLIT,
-            (
-                Level(
-                    "shuffled",
-                    lambda b: splits.make_split(b.dataset, train_fraction=0.5, shuffle=True),
-                ),
-            ),
+            (Level.of(_shuffled_split, "shuffled"),),
         ),
-        temporal=None,
     )
     report = run(experiment, save=False, verbose=False)
     history = set(features.STRUCTURED.family("temporal"))
@@ -240,18 +213,11 @@ def test_history_is_off_when_the_split_shuffles_an_observed_dataset():
 def test_history_is_on_for_an_observed_dataset_by_default():
     experiment = stub_experiment(
         datasets=Factor(FACTOR_DATASET, (constant("natural", StubDataset(ordering=Ordering.NATURAL)),)),
-        temporal=None,
     )
     report = run(experiment, save=False, verbose=False)
     history = set(features.STRUCTURED.family("temporal"))
     withheld = {u["column"] for u in report.design_points[0].features["undefined"]}
     assert not (history & withheld)
-
-
-def test_enabling_temporal_features_on_a_synthetic_order_warns_rather_than_differing_silently():
-    report = run(stub_experiment(temporal=True), save=False, verbose=False)
-    codes = {w["code"] for w in report.design_points[0].diagnostics}
-    assert "feature.temporal_on_synthetic_order" in codes
 
 
 # --- comparability ----------------------------------------------------------
@@ -316,9 +282,12 @@ def test_scores_are_reused_across_populations_that_share_a_context():
             calls.append("scored")
             return np.zeros((ctx.ds.n_changes, ctx.ds.n_tests), dtype=np.float32)
 
+    def make_counting(_binding):
+        return Counting()
+
     report = run(
         stub_experiment(
-            models=Factor(FACTOR_MODEL, (Level("counting", lambda b: Counting()),)),
+            models=Factor(FACTOR_MODEL, (Level.of(make_counting, "counting"),)),
             subsets=Factor(
                 FACTOR_SUBSET,
                 (
@@ -343,7 +312,7 @@ def test_an_element_is_materialised_once_per_run_and_shared_across_cells():
         return StubDataset()
 
     experiment = stub_experiment(
-        datasets=Factor(FACTOR_DATASET, (Level("counted", counting_dataset),)),
+        datasets=Factor(FACTOR_DATASET, (Level.of(counting_dataset, "counted"),)),
         models=Factor(
             FACTOR_MODEL,
             tuple(constant(f"m{i}", rankers.CoverageRanker()) for i in range(4)),
@@ -363,14 +332,14 @@ def test_the_report_round_trips_through_its_artifact(tmp_path):
     assert payload["design_points"][0]["measured"] is True
     assert payload["environment"]["controls"]["candidate_policy"] == "full"
     assert list(payload["factors"]) == list(
-        (FACTOR_DATASET, FACTOR_FEATURES, FACTOR_MODEL, FACTOR_SUBSET, FACTOR_SPLIT)
+        (FACTOR_DATASET, FACTOR_FEATURES, FACTOR_MODEL, FACTOR_SUBSET, FACTOR_SPLIT, FACTOR_BUDGET)
     )
 
 
 def test_a_run_knob_override_is_recorded():
     report = run(
-        stub_experiment(),
-        controls=Controls(budgets=(0.25,), n_bootstrap=7, seed=config.SEED + 1),
+        stub_experiment(budgets=Factor(FACTOR_BUDGET, (budget_level(0.25),))),
+        controls=Controls(n_bootstrap=7, seed=config.SEED + 1),
         save=False,
         verbose=False,
     )
@@ -385,7 +354,7 @@ def test_the_run_seed_reaches_the_model_not_just_the_split():
         report = run(
             stub_experiment(
                 models=Factor(FACTOR_MODEL, (constant("random", rankers.RandomRanker()),)),
-                controls=Controls(budgets=(PROBE,), n_bootstrap=5, seed=seed),
+                controls=Controls(n_bootstrap=5, seed=seed),
             ),
             save=False,
             verbose=False,
@@ -396,7 +365,7 @@ def test_the_run_seed_reaches_the_model_not_just_the_split():
 
 
 def test_a_caller_can_share_score_matrices_between_runs():
-    """What lets one study be two runs -- different budget sets -- without retraining."""
+    """What lets two experiments over the same contexts pay for scoring once."""
     experiment = stub_experiment()
     shared: dict = {}
 
@@ -404,9 +373,10 @@ def test_a_caller_can_share_score_matrices_between_runs():
     assert first.design_points[0].seconds > 0
     assert len(shared) == 1
 
+    # A second experiment that differs only in the budget shares the context, so it reuses
+    # the score matrix rather than re-scoring.
     second = run(
-        experiment,
-        controls=Controls(budgets=(0.25,), n_bootstrap=5, seed=experiment.controls.seed),
+        stub_experiment(budgets=Factor(FACTOR_BUDGET, (budget_level(0.25),))),
         scores=shared,
         save=False,
         verbose=False,
@@ -420,7 +390,7 @@ def test_a_model_seed_is_not_served_by_another_seed_s_score_cache():
 
     Without it, four refits of one level reuse the first fit and report four identical
     deltas -- a plausible number from a contrast that never happened, which is the failure
-    mode ``docs/refactor.md`` §14 records for a name-based ablation.
+    mode the harness records for a name-based ablation.
     """
     experiment = stub_experiment(
         models=Factor(FACTOR_MODEL, (constant("random", rankers.RandomRanker()),))
@@ -430,9 +400,7 @@ def test_a_model_seed_is_not_served_by_another_seed_s_score_cache():
     def run_with(model_seed: int):
         return run(
             experiment,
-            controls=Controls(
-                budgets=(PROBE,), n_bootstrap=5, seed=config.SEED, model_seed=model_seed
-            ),
+            controls=Controls(n_bootstrap=5, seed=config.SEED, model_seed=model_seed),
             scores=shared,
             save=False,
             verbose=False,
@@ -462,7 +430,7 @@ def test_the_environment_is_a_value_a_caller_can_inject_through():
 
 
 def test_a_cached_score_selector_declares_its_cache_and_needs_the_right_loader(tmp_path):
-    """A cache is not always a scored-pair log, and reading it with the wrong loader is an error."""
+    """A cached selector declares its cache, and honours the loader it is given."""
     path = tmp_path / "scores.npy"
     matrix = np.arange(12, dtype=np.float32).reshape(4, 3)
     np.save(path, matrix)
@@ -475,24 +443,28 @@ def test_a_cached_score_selector_declares_its_cache_and_needs_the_right_loader(t
         bm25=np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32),
     )
 
-    binary = rankers.CachedScores("embed", path, loader=rankers.load_matrix)
+    # The default loader reads a NumPy matrix, which is what a whole-matrix cache is.
+    binary = rankers.CachedScores("embed", path)
     assert binary.requirements() == (f"artifact:{path}",)
     assert np.array_equal(binary.scores(ctx), matrix)
 
-    # The default loader reads scored pairs, so a numpy file is a decode error rather than a
-    # silently wrong matrix -- which is how the embedding condition first failed.
-    with pytest.raises(UnicodeDecodeError):
-        rankers.CachedScores("embed", path).scores(ctx)
+    # An explicit loader is honoured, so a study whose cache is a scored-pair log can read it.
+    def only_first_column(p, _ds):
+        return np.load(p)[:, :1]
+
+    assert rankers.CachedScores(
+        "subset", path, loader=only_first_column
+    ).scores(ctx).shape == (4, 1)
 
 
 def test_a_rank_average_is_fitted_free_and_declares_its_parents_caches():
-    from rts import config as cfg
+    from examples import config as example_config
 
-    parent = rankers.CachedScores("semif_textonly", cfg.SEMIF_SCORES_FILE)
+    parent = rankers.CachedScores("semif_textonly", example_config.SEMIF_SCORES_FILE)
     combined = rankers.RankAverageRanker(
         "rankaverage_xgb_semif", (rankers.LexicalRanker(), parent), candidate_policy="coverage_restricted"
     )
-    assert combined.requirements() == (f"artifact:{cfg.SEMIF_SCORES_FILE}",)
+    assert combined.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)
     assert combined.candidate_policy == "coverage_restricted"
     with pytest.raises(ValueError, match="two or more parents"):
         rankers.RankAverageRanker("solo", (rankers.LexicalRanker(),))
@@ -502,11 +474,13 @@ def test_artifact_backed_selectors_declare_what_they_read():
     assert rankers.CoverageRanker().requirements() == ()
     assert rankers.RandomRanker().requirements() == ()
 
-    semif = rankers.SemIfRanker()
-    assert semif.requirements() == (f"artifact:{config.SEMIF_SCORES_FILE}",)
+    from examples import config as example_config
 
-    extra = rankers.XGBoostRanker(extra_score_files={"semif": config.SEMIF_SCORES_FILE})
-    assert extra.requirements() == (f"artifact:{config.SEMIF_SCORES_FILE}",)
+    semif = rankers.SemIfRanker()
+    assert semif.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)
+
+    extra = rankers.XGBoostRanker(extra_score_files={"semif": example_config.SEMIF_SCORES_FILE})
+    assert extra.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)
 
 
 def test_the_shuffle_controls_build_their_own_bm25_and_name_themselves():

@@ -13,7 +13,7 @@ pooling two projects that both contain a bug numbered ``3`` cannot confuse them.
 **Meaning.** Namespacing fixes collisions, not meaning. Pooling datasets whose
 :meth:`~rts.data.contract.Dataset.test_granularity` differs is defensible only when the difference is
 immaterial, so the pool *reports* the disagreement rather than refusing it, and
-:func:`rts.data.reporting.audit` turns it into a diagnostic.
+:func:`rts.reporting.audit` turns it into a diagnostic.
 """
 
 from __future__ import annotations

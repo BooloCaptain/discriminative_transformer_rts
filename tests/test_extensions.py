@@ -11,11 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rts import features
-from rts.data import accessors, contract, reporting, splits, subsets
+from examples.fixture import StubDataset
+from rts import features, reporting
+from rts.data import accessors, contract, splits, subsets
 from rts.data.contract import Capability, Requirement, Undefined
 from rts.features.block import FeatureBlock, FeatureColumn, FeatureGroup
-from tests.stub_dataset import StubDataset
 
 # --- adding a feature ------------------------------------------------------
 
@@ -126,7 +126,7 @@ def test_an_unknown_column_name_fails_loudly():
 
 def test_the_two_blocks_agree_on_their_shared_columns():
     """The bundle block reads the base's columns by name, so a rename is caught."""
-    from rts.features.bundle import BASE_COLUMNS
+    from examples.bundle_features import BASE_COLUMNS
 
     for name in BASE_COLUMNS:
         assert name in features.STRUCTURED.columns
@@ -153,29 +153,6 @@ def test_the_traceability_family_is_exactly_its_three_real_columns():
         features.STRUCTURED.without_families("n_tests_in_file")
 
 
-def test_every_ladder_rung_withholds_exactly_the_columns_its_families_name():
-    """A rung must withhold a real, non-empty set -- that is the whole ablation."""
-    from rts import studies
-
-    for rung, removed in studies.RUNGS:
-        block = studies.rung_block(removed)
-        expected = {
-            column for family in removed for column in features.STRUCTURED.family(family)
-        }
-        assert set(block.suppressed) == expected, rung
-        if removed:
-            assert expected, rung  # a rung that removes nothing is not a rung
-    # The cumulative rungs are nested, and L3 is the one that must leave no
-    # traceability column standing.
-    l3 = studies.rung_block(studies.RUNGS[-1][1])
-    assert set(l3.suppressed) == set(
-        features.STRUCTURED.family("temporal")
-        + features.STRUCTURED.family("coverage")
-        + features.STRUCTURED.family("proximity")
-    )
-    assert len(l3.suppressed) == 9
-
-
 # --- adding a subset ---------------------------------------------------
 
 
@@ -195,21 +172,16 @@ LONG_NAMES = subsets.Subset(
 
 
 MINE = subsets.SubsetRegistry(
-    subsets.STUDY.subsets + (LONG_NAMES,)
+    subsets.DEFAULT.subsets + (LONG_NAMES,)
 )
 
 
 def test_a_new_population_is_a_value_the_caller_supplies():
-    assert "long_test_names" not in subsets.STUDY.names()
+    assert "long_test_names" not in subsets.DEFAULT.names()
     assert LONG_NAMES in MINE.subsets
     assert MINE.get("long_test_names") is LONG_NAMES
-    # The study's own set is unchanged by the caller's addition.
-    assert subsets.STUDY.names() == (
-        "detectable",
-        "no_prior_failure",
-        "cold_start",
-        "low_cooccurrence",
-    )
+    # The kernel's default set is unchanged by the caller's addition.
+    assert subsets.DEFAULT.names() == ("detectable",)
 
 
 def test_a_new_populations_requirements_are_derived_not_written():
@@ -269,15 +241,15 @@ def test_a_population_over_coverage_material_is_unavailable_without_it():
 
 def test_extending_the_registry_does_not_mutate_the_original():
     extra = subsets.SubsetRegistry((LONG_NAMES,))
-    combined = subsets.STUDY + extra
+    combined = subsets.DEFAULT + extra
     assert combined.names()[-1] == "long_test_names"
-    assert "long_test_names" not in subsets.STUDY.names()
+    assert "long_test_names" not in subsets.DEFAULT.names()
     # Composition is left-biased, so re-adding an existing name does not duplicate it.
     assert (combined + extra).names() == combined.names()
 
 
 def test_a_registry_resolves_names_and_rejects_unknown_ones():
-    assert subsets.subset("cold_start", MINE) is subsets.COLD_START
+    assert subsets.subset("detectable", MINE) is subsets.DETECTABLE
     with pytest.raises(KeyError):
         subsets.subset("nope", MINE)
     assert subsets.resolve(LONG_NAMES, MINE) is LONG_NAMES
@@ -307,7 +279,7 @@ def test_a_populations_declaration_is_reportable():
         "requires": ["labels"],
         "note": "a subset added here, not in rts/data/subsets.py",
     }
-    assert len(subsets.STUDY.describe()) == 4
+    assert len(subsets.DEFAULT.describe()) == 1
     assert any(w.code == "dataset.multi_file_changes_flattened" for w in reporting.audit(
         StubDataset(extra_files={"c0": ("pkg/other.py",)})
     ))

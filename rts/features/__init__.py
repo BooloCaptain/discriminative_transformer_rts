@@ -21,12 +21,11 @@ from __future__ import annotations
 
 from . import derived, text
 from .block import FeatureBlock, FeatureColumn, FeatureGroup, FeatureMatrix
-from .bundle import BUNDLE, base_inputs
-from .bundle import bundle as bundle_features
 from .structured import FAMILIES, STRUCTURED, structured
 
-#: The two blocks, by name, for callers that dispatch on a string.
-BLOCKS: dict[str, FeatureBlock] = {STRUCTURED.name: STRUCTURED, BUNDLE.name: BUNDLE}
+#: The blocks the kernel declares, by name, for callers that dispatch on a string. A study
+#: may declare its own block and add it here-or-beside; the kernel needs no knowledge of it.
+BLOCKS: dict[str, FeatureBlock] = {STRUCTURED.name: STRUCTURED}
 
 __all__ = [
     "BLOCKS",

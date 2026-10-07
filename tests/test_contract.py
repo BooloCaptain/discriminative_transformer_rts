@@ -21,8 +21,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rts import features
-from rts.data import accessors, composition, contract, reporting, splits, subsets
+from examples.fixture import TEST_IDS, StubDataset
+from rts import features, reporting
+from rts.data import accessors, composition, contract, splits
 from rts.data.contract import (
     Capability,
     CapabilityMissing,
@@ -30,7 +31,7 @@ from rts.data.contract import (
     Ordering,
     Undefined,
 )
-from tests.stub_dataset import TEST_IDS, StubDataset
+from tests import _subsets as subsets
 
 # ``Granularity`` starts with "Test", so pytest would otherwise try to collect the enum.
 Granularity.__test__ = False  # type: ignore[attr-defined]
@@ -393,7 +394,7 @@ def test_pooled_ordering_is_natural_only_if_every_constituent_is():
 
 
 def test_bundle_dataset_is_a_dataset_over_another_dataset():
-    from rts.data.datasets import Bundle, BundleDataset
+    from examples.datasets import Bundle, BundleDataset
 
     base = StubDataset()
     bundles = [
@@ -413,7 +414,7 @@ def test_bundle_dataset_is_a_dataset_over_another_dataset():
 
 
 def test_bundle_dataset_narrows_capabilities():
-    from rts.data.datasets import Bundle, BundleDataset
+    from examples.datasets import Bundle, BundleDataset
 
     base = StubDataset()
     bundles = [Bundle(rung=0, focal=0, members=(0,))]
@@ -430,7 +431,7 @@ def test_bundle_dataset_narrows_capabilities():
 
 
 def test_bundle_dataset_rejects_an_unknown_pool():
-    from rts.data.datasets import Bundle, BundleDataset
+    from examples.datasets import Bundle, BundleDataset
 
     with pytest.raises(ValueError):
         BundleDataset(StubDataset(), [Bundle(0, 0, (0,))], rung=0, pool="nonsense")
@@ -462,14 +463,14 @@ def test_unavailable_population_raises_rather_than_averaging_over_nothing():
     rows = np.arange(ds.n_changes, dtype=np.int64)
     scores = np.zeros((ds.n_changes, ds.n_tests), dtype=np.float32)
     evaluation = evaluate.evaluate_rows(
-        scores, ds, rows, budgets=(0.5,), n_bootstrap=0, subset="low_cooccurrence"
+        scores, ds, rows, budgets=(0.5,), n_bootstrap=0, subset=subsets.LOW_COOCCURRENCE
     )
     assert not evaluation.measured
     assert isinstance(evaluation.undefined, Undefined)
     with pytest.raises(evaluate.UndefinedSubset):
         evaluate.evaluate(
             scores, ds, rows, budgets=(0.5,), n_bootstrap=0,
-            subset="low_cooccurrence",
+            subset=subsets.LOW_COOCCURRENCE,
         )
 
 
@@ -480,7 +481,7 @@ def test_named_population_restricts_the_averaging_rows():
     rows = np.arange(ds.n_changes, dtype=np.int64)
     scores = np.ones((ds.n_changes, ds.n_tests), dtype=np.float32)
     evaluation = evaluate.evaluate_rows(
-        scores, ds, rows, budgets=(0.5,), n_bootstrap=0, subset="no_prior_failure"
+        scores, ds, rows, budgets=(0.5,), n_bootstrap=0, subset=subsets.NO_PRIOR_FAILURE
     )
     assert evaluation.subset == "no_prior_failure"
     assert evaluation.n_rows <= 3

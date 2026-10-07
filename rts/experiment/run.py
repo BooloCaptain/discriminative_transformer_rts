@@ -17,8 +17,8 @@ from typing import Any
 
 import numpy as np
 
-from .. import config, evaluate, features
-from ..data import accessors, reporting, splits, subsets
+from .. import config, evaluate, features, reporting
+from ..data import accessors, splits, subsets
 from ..data.contract import (
     Dataset,
     Diagnostic,
@@ -30,6 +30,7 @@ from ..data.contract import (
 from ..model import rankers
 from .declaration import (
     ARTIFACT_PREFIX,
+    FACTOR_BUDGET,
     FACTOR_DATASET,
     FACTOR_FEATURES,
     FACTOR_MODEL,
@@ -114,12 +115,11 @@ def _build_values(
     design_point: DesignPoint,
     cache: dict[tuple[str, str], Any],
 ) -> dict[str, Any] | Undefined:
-    """Materialise the design point's five values, reusing anything already built this run.
+    """Materialise the design point's six values, reusing anything already built this run.
 
     The dataset is built first because every other role reads it. Level values are cached by
     ``(role, level name)``, so a dataset is built once however many models sweep over it.
     """
-    factors = design_point.factors_dict()
     values: dict[str, Any] = {}
     for role in FACTORS:
         key = (role, design_point.name(role))
@@ -132,13 +132,6 @@ def _build_values(
         if is_undefined(value):
             return value
         values[role] = value
-    # Applicability can depend on an interaction between roles, so it is asked per design point, once
-    # every value is in hand. This is the only place the design point's factors are visible.
-    for role in FACTORS:
-        level = experiment.factor_for(role).get(design_point.name(role))
-        reason = level.check(Binding(env=env, dataset=values[FACTOR_DATASET], factors=factors))
-        if reason is not None:
-            return reason
     return values
 
 
@@ -162,6 +155,7 @@ def _measure(
     block: features.FeatureBlock = values[FACTOR_FEATURES]
     subset: subsets.Subset = values[FACTOR_SUBSET]
     split: splits.Split = values[FACTOR_SPLIT]
+    budget: float = values[FACTOR_BUDGET]
 
     unavailable_population = subset.unavailable(ds)
     if unavailable_population is not None:
@@ -209,7 +203,7 @@ def _measure(
         scores,
         ds,
         split.test_idx,
-        budgets=env.controls.budgets,
+        budgets=(budget,),
         n_bootstrap=env.controls.n_bootstrap,
         seed=env.controls.seed,
         candidate_sets=candidate_sets,
@@ -346,12 +340,10 @@ def run(
     declares: where to write, which controls to use if not the declared ones, what to inject, and
     which cost tiers to spend. All of them are recorded in the report.
 
-    ``scores`` lets a caller share score matrices *between* runs, which matters when one
-    experiment is split into two because a control differs -- the headline condition and the low-co-occurrence condition
-    report different budget sets, and budgets are a control, so they cannot be one run. Reuse is
-    sound because a score matrix is a function of the design point's context, which is what the key
-    records; it is not a function of the averaging subset, which is why the low_cooccurrence corners
-    cost nothing to add.
+    ``scores`` lets a caller share score matrices *between* runs, so that two experiments over
+    the same contexts pay for scoring once. Reuse is sound because a score matrix is a function
+    of the design point's context, which is what the key records; it is not a function of the
+    averaging subset or of the budget, which is why a subset or budget sweep costs nothing extra.
     """
     env = Environment(
         controls=controls or experiment.controls,
@@ -438,8 +430,7 @@ def run(
         # dataset's unless the split shuffles, and it is the design point's split that decides. It is
         # part of the matrix key because a block with the temporal family withheld keeps the
         # same column list as one without.
-        derived = split.effective_order is Ordering.NATURAL
-        use_temporal = derived if experiment.temporal is None else experiment.temporal
+        use_temporal = split.effective_order is Ordering.NATURAL
         matrix_key = (dataset_name, features_name, design_point.name(FACTOR_SPLIT), use_temporal)
         if matrix_key not in matrices:
             matrices[matrix_key] = features.structured(

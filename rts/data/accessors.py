@@ -89,7 +89,7 @@ def change_paths(ds: Dataset) -> tuple[str, ...]:
     ``files`` is plural because a change may touch several; this is the flattened view
     those features read. It does not warn -- which change was flattened is a fact about
     the data, reported by :func:`multi_file_changes` and recorded by
-    :func:`rts.data.reporting.audit`, rather than a side effect of reading.
+    :func:`rts.reporting.audit`, rather than a side effect of reading.
     """
     def build() -> tuple[str, ...]:
         out = []
@@ -208,7 +208,7 @@ def pair_cooccurrence_counts(ds: Dataset) -> dict[tuple[str, str], int]:
 def low_cooccurrence_mask(ds: Dataset, max_pair_count: int = 1) -> np.ndarray:
     """Changes whose every ``(file, test)`` combination recurs at most this often.
 
-    The "low co-occurrence" evaluation condition from ``docs/plan.md``: a proxy for software evolution where a
+    The "low co-occurrence" evaluation condition: a proxy for software evolution where a
     file and a test are not repeatedly paired. Note that it also removes exactly the
     repeated co-occurrences the structured temporal features depend on, so it is a
     robustness check, not a neutral split.

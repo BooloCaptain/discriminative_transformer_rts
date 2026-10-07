@@ -12,10 +12,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from examples.fixture import StubDataset
 from rts import evaluate
 from rts.data import splits
 from rts.data.contract import Ordering
-from tests.stub_dataset import StubDataset
 
 
 def stub_split(train_fraction: float = 0.5) -> splits.Split:

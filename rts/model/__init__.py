@@ -1,6 +1,6 @@
 """The model half: what turns a change and a test into a score.
 
-``docs/refactor.md`` §9 deferred this half deliberately -- "rankers, their context object,
+The model half was deliberately deferred -- "rankers, their context object,
 feature-family ablation, model inputs" -- on the argument that it can land independently of
 the dataset contract. It has since grown to five modules, which is why it is a package now
 rather than a loose ``models.py``:

@@ -211,14 +211,15 @@ class RunReport:
         return path
 
     def format_table(self) -> str:
-        """A compact per-design point table of recall at each budget."""
+        """A compact table: one line per measured design point, with its budget and recall."""
         if not self.design_points:
             return "(no measured design_points)"
-        budgets = [r["budget"] for r in self.design_points[0].results]
         width = max(len(c.design_point.key) for c in self.design_points)
-        head = "  ".join(f"b{b:.2f}" for b in budgets)
-        lines = [f"  {'design_point'.ljust(width)}  {head}"]
+        lines = [f"  {'design_point'.ljust(width)}  {'budget':>6}  recall"]
         for result in self.design_points:
-            design_points = "  ".join(f"{r['recall']:.3f}" for r in result.results)
-            lines.append(f"  {result.design_point.key.ljust(width)}  {design_points}")
+            for row in result.results:
+                lines.append(
+                    f"  {result.design_point.key.ljust(width)}  {row['budget']:>6.2f}  "
+                    f"{row['recall']:.3f}"
+                )
         return "\n".join(lines)

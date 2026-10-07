@@ -1,10 +1,20 @@
 """What an experiment *is*, as a value: roles, factors, levels, design points, controls.
 
 Nothing here measures anything. ``Experiment`` is an immutable declaration, ``Factor`` is an
-ordered set of variants of one role, and ``Level`` is one variant with its cost -- and, when
-a variant cannot be expressed for a role's value alone, its applicability. Measuring is
-:mod:`.run`; what a measurement records is :mod:`.report`. The package docstring is the
-original module's, which explains the five roles and why a design point is not a product.
+ordered set of variants of one role, and ``Level`` is one variant with its cost. Measuring is
+:mod:`.run`; what a measurement records is :mod:`.report`.
+
+**A declaration is data, not code.** A level does not carry a closure; it carries a
+:class:`Builder` -- a reusable factory, defined once beside the value it builds, plus the
+arguments to call it with. So a study's declaration names pieces and supplies parameters, and
+the only logic is in the pieces. ``constant`` and ``split_level`` are the kernel's own builders.
+
+**Six roles.** An experiment sweeps ``dataset``, ``features``, ``model``, ``subset``, ``split``
+and ``budget``. A new *level* in any role is cheap -- that is what most new experimental
+dimensions are. A new *role* is a deliberate kernel change, because a role has to say what it
+feeds. ``budget`` earns its place because it is genuinely swept: a metric is reported at each
+budget of each change's own candidate set, and two studies that report different budget sets are
+then two levels of one role rather than two runs that cannot be compared.
 """
 
 from __future__ import annotations
@@ -28,19 +38,77 @@ FACTOR_SUBSET = "subset"
 
 FACTOR_SPLIT = "split"
 
+FACTOR_BUDGET = "budget"
+
 
 #: The roles an experiment sweeps, in the order a design point's key names them.
-FACTORS: tuple[str, ...] = (FACTOR_DATASET, FACTOR_FEATURES, FACTOR_MODEL, FACTOR_SUBSET, FACTOR_SPLIT)
+FACTORS: tuple[str, ...] = (
+    FACTOR_DATASET,
+    FACTOR_FEATURES,
+    FACTOR_MODEL,
+    FACTOR_SUBSET,
+    FACTOR_SPLIT,
+    FACTOR_BUDGET,
+)
 
 
 #: Roles whose variation changes *which rows exist* or which pairs are rankable. Two design points
 #: differing in one of these are not two measurements of one quantity, so a paired
-#: contrast across them is refused rather than reported (``docs/experiment.md`` §7).
+#: contrast across them is refused rather than reported.
 ROW_CHANGING_FACTORS = frozenset({FACTOR_DATASET, FACTOR_SUBSET, FACTOR_SPLIT})
 
 
 ARTIFACT_PREFIX = "artifact:"
 
+
+def _qualified(fn: Callable[..., Any]) -> str:
+    """A readable name for a factory, for a report to record what a level was built from."""
+    module = getattr(fn, "__module__", "")
+    qualname = getattr(fn, "__qualname__", repr(fn))
+    return f"{module}.{qualname}" if module else qualname
+
+
+def _as_given(_binding: Binding, value: Any) -> Any:
+    """A factory that returns its argument: the builder behind every constant level."""
+    return value
+
+
+def _jsonable(value: Any) -> Any:
+    """A value a report can serialise: a primitive as-is, anything else by its repr.
+
+    A builder's parameters are recorded so a report can say what a level was built from. A
+    parameter may be an arbitrary object -- a dataset instance, say -- which is not JSON, so it
+    is recorded as its repr rather than dropped.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+
+# --- builders ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Builder:
+    """How a level's value is made: a reusable factory plus the arguments to call it with.
+
+    A *declaration* must contain no logic, so a level does not carry a closure written in the
+    declaration. It carries a factory -- a function defined once, beside the value it builds --
+    and a mapping of arguments. Because the arguments are data, a report can state what a level
+    was built from, and two levels that differ only in a parameter are visibly different.
+    """
+
+    factory: Callable[..., Any]
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+    def __call__(self, binding: Binding) -> Any:
+        return self.factory(binding, **self.params)
+
+    def metadata(self) -> dict:
+        return {
+            "factory": _qualified(self.factory),
+            "params": {k: _jsonable(v) for k, v in self.params.items()},
+        }
 
 
 # --- controls and environment -------------------------------------------------
@@ -50,30 +118,30 @@ ARTIFACT_PREFIX = "artifact:"
 class Controls:
     """Run-level constants: a choice that is free, not one the harness can derive.
 
-    These do not multiply into design points. They parameterise every design point and are recorded once, so
-    a difference in a result can never be attributed to a control that moved silently.
+    These do not multiply into design points. They parameterise every design point and are
+    recorded once, so a difference in a result can never be attributed to a control that moved
+    silently. Anything genuinely *swept* is a role, not a control -- which is why the budget is a
+    factor rather than a member of this dataclass.
     """
 
     seed: int = config.SEED
-    budgets: tuple[float, ...] = config.DEFAULT_BUDGETS
     n_bootstrap: int = config.DEFAULT_BOOTSTRAP
     candidate_policy: str = "full"
     #: Resamples for a paired test, when it differs from the table CI's. Two quantities, two
-    #: precision needs: the recorded ladder used 1000 for its table intervals and 2000 for its
-    #: paired p-values. ``None`` means "the same as ``n_bootstrap``".
+    #: precision needs: a table interval and a paired p-value may want different counts.
+    #: ``None`` means "the same as ``n_bootstrap``".
     n_bootstrap_paired: int | None = None
     #: Seed for the *model's* randomness, when that should differ from the run's. ``seed`` fixes
-    #: the synthetic change order and the temporal split, and a score cache is keyed to that order
-    #: -- so a study that wants to re-fit one model under several seeds must vary this one and
-    #: hold ``seed``, or it would move the data underneath the cache and invalidate the paired
-    #: contrast instead of testing it. ``None`` means "the same as ``seed``".
+    #: the change order and the split, and a score cache is keyed to that order -- so a study that
+    #: wants to re-fit one model under several seeds must vary this one and hold ``seed``, or it
+    #: would move the data underneath the cache and invalidate the paired contrast instead of
+    #: testing it. ``None`` means "the same as ``seed``".
     model_seed: int | None = None
 
     def to_dict(self) -> dict:
         return {
             "seed": self.seed,
             "model_seed": self.model_seed,
-            "budgets": list(self.budgets),
             "bootstrap_resamples": self.n_bootstrap,
             "paired_resample_count": self.paired_resamples,
             "candidate_policy": self.candidate_policy,
@@ -87,7 +155,6 @@ class Controls:
     def effective_model_seed(self) -> int:
         """What a model's randomness is seeded with: its own seed, else the run's."""
         return self.seed if self.model_seed is None else self.model_seed
-
 
 
 @dataclass(frozen=True)
@@ -114,26 +181,23 @@ class Environment:
         }
 
 
-
 @dataclass(frozen=True)
 class Binding:
-    """What an :class:`Level` is handed when it is built.
+    """What a level is handed when it is built.
 
-    ``dataset`` is the design point's resolved dataset for every role except ``dataset`` itself, which
-    is built first and sees ``None``. A dataset level that derives from another dataset
-    simply constructs or shares its base inside ``make`` -- no extra machinery is needed,
-    because ``make`` is already arbitrary Python.
+    ``dataset`` is the design point's resolved dataset for every role except ``dataset`` itself,
+    which is built first and sees ``None``. A dataset level that derives from another dataset
+    constructs or shares its base through its builder's parameters -- the parameters are data, so
+    the derivation is visible rather than hidden in a closure.
 
-    ``factors`` is the design point's factor names by role, and is populated **only when a level's
-    applicability is checked**. It is empty while a value is being built, because a value is
-    built once per run and shared across every design point that selects it: a level whose ``make``
-    read this would silently be reused for design points it does not describe. Anything that genuinely
-    varies by design point belongs in ``Level.applies``, which is asked per design point.
+    Nothing here varies *per design point*: a value is built once per run and shared across every
+    design point that selects it. Availability that depends on another role is a property of the
+    value (its ``requirements()``), resolved by the run against the dataset -- not a per-design-point
+    predicate.
     """
 
     env: Environment
     dataset: Dataset | None = None
-    factors: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def controls(self) -> Controls:
@@ -148,7 +212,6 @@ class Binding:
         return self.env.shared
 
 
-
 # --- levels and factors -----------------------------------------------------
 
 
@@ -156,31 +219,44 @@ class Binding:
 class Level:
     """One variant of one input: a name, a builder, and what it costs to measure.
 
-    ``applies`` is for the case where availability cannot be asked of one role's value alone.
-    Normally a requirement is a property of a value (``Ranker.requirements()``,
-    ``Subset.needs``), and the kernel resolves it against the dataset. But some variants
-    are only meaningful in combination with a particular level of *another* role -- a score
-    artifact that covers one subset and not another -- and that is a fact the study config
-    knows and no single value does. Declaring it here keeps the knowledge beside the variant
-    rather than putting a special case in the kernel.
+    ``builder`` is a :class:`Builder` -- a factory and its parameters -- rather than an arbitrary
+    callable, so a level's value is described by data. Use :meth:`Level.of` to declare one, or
+    :func:`constant` for a value that does not depend on the run.
     """
 
     name: str
-    make: Callable[[Binding], Any]
+    builder: Builder
     tier: str = "cpu"
     estimated_seconds: float | None = None
     note: str = ""
-    applies: Callable[[Binding], Undefined | None] | None = None
 
     def build(self, binding: Binding) -> Any:
         """The value this level denotes, or an :class:`Undefined` if it cannot exist."""
-        return self.make(binding)
+        return self.builder(binding)
 
-    def check(self, binding: Binding) -> Undefined | None:
-        """Why this level does not apply to ``binding``'s design point, or ``None`` if it does."""
-        if self.applies is None:
-            return None
-        return self.applies(binding)
+    @classmethod
+    def of(
+        cls,
+        factory: Callable[..., Any],
+        name: str,
+        *,
+        tier: str = "cpu",
+        estimated_seconds: float | None = None,
+        note: str = "",
+        **params: Any,
+    ) -> Level:
+        """A level built by ``factory(binding, **params)``.
+
+        ``factory`` is a reusable constructor -- a module-level function, or a classmethod -- so a
+        declaration that calls this names a piece rather than writing logic.
+        """
+        return cls(
+            name=name,
+            builder=Builder(factory, params),
+            tier=tier,
+            estimated_seconds=estimated_seconds,
+            note=note,
+        )
 
     def metadata(self) -> dict:
         return {
@@ -188,9 +264,8 @@ class Level:
             "tier": self.tier,
             "estimated_seconds": self.estimated_seconds,
             "note": self.note,
-            "applies": self.applies is not None,
+            "builder": self.builder.metadata(),
         }
-
 
 
 def constant(name: str, obj: Any, **kwargs: Any) -> Level:
@@ -199,8 +274,7 @@ def constant(name: str, obj: Any, **kwargs: Any) -> Level:
     The value is shared by every design point that selects this level, which is intended: for a
     dataset it means the artifact is read once however many models are swept over it.
     """
-    return Level(name=name, make=lambda _binding: obj, **kwargs)
-
+    return Level(name=name, builder=Builder(_as_given, {"value": obj}), **kwargs)
 
 
 def unavailable(name: str, reason: Undefined, **kwargs: Any) -> Level:
@@ -211,11 +285,60 @@ def unavailable(name: str, reason: Undefined, **kwargs: Any) -> Level:
     """
     return Level(
         name=name,
-        make=lambda _binding, reason=reason: reason,
+        builder=Builder(_as_given, {"value": reason}),
         note=kwargs.pop("note", "") or reason.note,
         **kwargs,
     )
 
+
+def _make_split(binding: Binding, train_fraction: float, shuffle: bool):
+    from ..data import splits
+
+    return splits.make_split(
+        binding.dataset,
+        train_fraction=train_fraction,
+        shuffle=shuffle,
+        seed=binding.controls.seed,
+    )
+
+
+def split_level(
+    name: str | None = None,
+    *,
+    train_fraction: float = config.DEFAULT_TRAIN_FRACTION,
+    shuffle: bool = False,
+    **kwargs: Any,
+) -> Level:
+    """A declared train/test split, as a reusable constructor rather than a lambda.
+
+    The split is evaluation configuration the experiment chooses, and it is the one role whose
+    value depends on another role (the dataset). This constructor is what keeps a *declaration*
+    free of logic: a study writes ``split_level(train_fraction=0.5)`` and nothing else.
+    """
+    label = name or f"split{int(round(train_fraction * 100))}" + (
+        "_shuffled" if shuffle else ""
+    )
+    return Level(
+        label,
+        Builder(_make_split, {"train_fraction": train_fraction, "shuffle": shuffle}),
+        note=f"{train_fraction:.0%} train prefix" + (", shuffled" if shuffle else ""),
+        **kwargs,
+    )
+
+
+def budget_level(budget: float, name: str | None = None, **kwargs: Any) -> Level:
+    """One evaluation budget, as a swept level.
+
+    A budget is the fraction of *each change's own* candidate set that a metric may select, so
+    two budgets are two quantities rather than one quantity at two thresholds. Making it a level
+    is what lets a study sweep several at once and report each on its own.
+    """
+    return Level(
+        name or f"b{budget:g}",
+        Builder(_as_given, {"value": budget}),
+        note=f"select ceil({budget:g} x the change's own candidate count)",
+        **kwargs,
+    )
 
 
 @dataclass(frozen=True)
@@ -292,6 +415,14 @@ class Factor:
         return [e.metadata() for e in self.levels]
 
 
+def declared_budgets(factor: Factor) -> tuple[float, ...]:
+    """The budget values a budget factor declares.
+
+    A budget level is a constant (see :func:`budget_level`), so the values are read straight off
+    its builder's parameters rather than by building it.
+    """
+    return tuple(level.builder.params["value"] for level in factor.levels)
+
 
 # --- design points and contrasts -------------------------------------------------
 
@@ -331,7 +462,6 @@ class DesignPoint:
         }
 
 
-
 @dataclass(frozen=True)
 class Contrast:
     """A paired delta against a reference level of one role, at a probe budget.
@@ -356,7 +486,6 @@ class Contrast:
             )
 
 
-
 # --- the experiment --------------------------------------------------------
 
 
@@ -364,11 +493,10 @@ class Contrast:
 class Experiment:
     """A declaration of what to sweep. A value: building one runs nothing.
 
-    ``history`` is an **override**, not an option. Whether the cumulative temporal columns are
-    present is derived from the dataset's ``ordering()`` and from whether the split shuffles
-    (``splits.Split.effective_order``); the harness warns when a caller overrides it. It is
-    exposed because the study's recorded condition does override it deliberately, and the diagnostic
-    travels with the design point.
+    Whether the cumulative temporal columns are present is **derived**, not configured: it
+    follows from the dataset's ``ordering()`` and from whether the split shuffles
+    (``splits.Split.effective_order``). There is deliberately no override -- a switch here would
+    let a run present a feature set the data does not support.
     """
 
     name: str
@@ -377,9 +505,9 @@ class Experiment:
     models: Factor
     subsets: Factor
     splits: Factor
+    budgets: Factor
     controls: Controls = Controls()
     contrasts: tuple[Contrast, ...] = ()
-    temporal: bool | None = None
     tier_order: tuple[str, ...] = ("cpu", "gpu")
     note: str = ""
 
@@ -391,6 +519,7 @@ class Experiment:
                 )
         if not self.tier_order:
             raise ValueError(f"experiment {self.name!r}: tier_order is empty")
+        declared = set(declared_budgets(self.budgets))
         for contrast in self.contrasts:
             factor = self.factors()[contrast.role]
             if not factor.has(contrast.reference):
@@ -398,6 +527,12 @@ class Experiment:
                     f"experiment {self.name!r}: contrast reference "
                     f"{contrast.reference!r} is not a level of the {contrast.role!r} "
                     f"factor; have {list(factor.names())}"
+                )
+            if contrast.probe_budget not in declared:
+                raise ValueError(
+                    f"experiment {self.name!r}: contrast probe budget "
+                    f"{contrast.probe_budget} is not a declared budget level; have "
+                    f"{sorted(declared)}"
                 )
 
     def factors(self) -> dict[str, Factor]:
@@ -407,6 +542,7 @@ class Experiment:
             FACTOR_MODEL: self.models,
             FACTOR_SUBSET: self.subsets,
             FACTOR_SPLIT: self.splits,
+            FACTOR_BUDGET: self.budgets,
         }
 
     def factor_for(self, role: str) -> Factor:
@@ -451,7 +587,6 @@ class Experiment:
             "name": self.name,
             "note": self.note,
             "controls": self.controls.to_dict(),
-            "temporal": self.temporal,
             "tier_order": list(self.tier_order),
             "factors": {role: factor.metadata() for role, factor in self.factors().items()},
             "contrasts": [

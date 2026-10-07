@@ -1,3 +1,16 @@
+[project]
+name = "rts-harness"
+version = "0.0.0"
+description = "A generic benchmarking harness for regression test selection."
+requires-python = ">=3.12"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+# The example plugins: the tree baseline and the figures.
+examples = ["xgboost", "matplotlib"]
+# The transformer plugins (SemIf, the code embedding) additionally need a GPU stack; install
+# torch and transformers to use them. They are not required by the harness or the example.
+
 [tool.pytest.ini_options]
 # Tests live in tests/ and import ``rts`` from the workspace root; the root conftest.py puts the
 # workspace on sys.path, so this only pins discovery and keeps the run quiet about the caches.

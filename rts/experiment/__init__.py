@@ -1,39 +1,34 @@
-"""The experiment layer: a declared sweep over five roles, and the run that measures it.
+"""The experiment layer: a declared sweep over roles, and the run that measures it.
 
-The harness already had three of the five things an experiment sweeps over as plain values
-with declarations -- :class:`~rts.data.contract.Dataset`, ``FeatureBlock`` and
-:class:`~rts.data.subsets.Subset` -- and it had no layer that composed them. Instead each
-study condition was a hand-written driver that rebuilt the same sequence and kept the study's choices
-as its own module constants. The sweep existed as control flow rather than as data, and "a named
-variant of one input" was implemented three times (the ladder's rungs, bundle rungs, and the
-instruction variants). Two of those drivers are now renderers over a declared condition
-(``rts/render/pipeline.py``, ``rts/render/ladder.py``); the rest are listed in ``docs/experiment.md`` §13.
+An *experiment* is a value: a named product of levels over its roles, with a study's choices
+expressed as data rather than as control flow. This package is the mechanism that makes that
+possible -- :mod:`.declaration` says what an experiment is, :mod:`.run` measures it, and
+:mod:`.report` records what was measured. A study declares one; a plugin package supplies the
+datasets, features, rankers and subsets it names.
 
-This module is that missing layer. See ``docs/experiment.md`` for the design and its rationale.
+**Roles.** An experiment sweeps ``dataset``, ``features``, ``model``, ``subset``, ``split`` and
+``budget``. A new *level* in any role is cheap -- that is what most new experimental dimensions
+are. A new *role* is a deliberate kernel change, because a role has to say what it feeds. Every
+factor a study has conceived reduces to one of the roles: a rung is a feature block with families
+withheld, an instruction variant is a model reading a different cache, a bundle rung is a dataset
+derived from a base, a starvation threshold is a subset, a label source is a dataset, and a
+budget is an evaluation threshold.
 
-**Five roles.** An experiment sweeps ``dataset``, ``features``, ``model``, ``subset`` and
-``split``. A new *level* in any role is cheap -- that is what most new experimental
-dimensions are. A new *role* is a deliberate kernel change, because a role has to say what it
-feeds. Every factor the study has conceived already reduces to one of the five: a rung is a
-feature block with families withheld, an instruction variant is a model reading a different
-cache, a bundle rung is a dataset derived from a base, a starvation threshold is a subset,
-and a label source is a dataset.
+**Design points, not a product.** A design point is one point in the product, and it is either
+measured or carries an :class:`~rts.data.contract.Undefined` naming what stopped it. Undefined
+design points are *reported*, never dropped: dropping is what turns "we asked and could not
+answer" into a silently halved contrast.
 
-**Design points, not a product.** A design point is one point in the product, and it is either measured or
-carries an :class:`~rts.data.contract.Undefined` naming what stopped it. Undefined design points are
-*reported*, never dropped: dropping is what turns "we asked and could not answer" into a
-silently halved contrast, which is the failure mode ``docs/refactor.md`` §6 exists to prevent.
+**Two authorities.** The *level* declares its name, cost tier and estimated seconds -- facts about
+this run's use of a thing. The *value* declares its requirements (``Ranker.requirements()``,
+``FeatureGroup.needs``, ``Subset.needs``, ``Dataset.capabilities()``) -- facts about the thing
+itself, written where the input is read so they cannot drift from it.
 
-**Two authorities.** The *level* declares its name, cost tier and estimated seconds -- facts
-about this run's use of a thing. The *value* declares its requirements (``Ranker.requirements()``,
-``FeatureGroup.needs``, ``Subset.needs``, ``Dataset.capabilities()``) -- facts about the
-thing itself, written where the inputs is read so they cannot drift from it.
-
-**Elements are materialised once per run** and shared across the design points that use them, which is
-what makes a 48-design point grid affordable: the dataset is built once. This is sound because these
-are values (``docs/refactor.md`` §2). The one consequence is that a stateful ranker's post-hoc
-attributes describe only its most recent call, so importances are captured at the point of
-scoring rather than read back afterwards.
+**Elements are materialised once per run** and shared across the design points that use them,
+which is what makes a large grid affordable: the dataset is built once. This is sound because
+these are values. The one consequence is that a stateful ranker's post-hoc attributes describe
+only its most recent call, so importances are captured at the point of scoring rather than read
+back afterwards.
 """
 
 __all__ = [
@@ -44,9 +39,11 @@ __all__ = [
     "FACTOR_MODEL",
     "FACTOR_SUBSET",
     "FACTOR_SPLIT",
+    "FACTOR_BUDGET",
     "ROW_CHANGING_FACTORS",
     "Factor",
     "Binding",
+    "Builder",
     "DesignPoint",
     "DesignPointResult",
     "Contrast",
@@ -55,13 +52,17 @@ __all__ = [
     "Experiment",
     "Controls",
     "RunReport",
+    "budget_level",
     "constant",
+    "declared_budgets",
     "run",
+    "split_level",
     "unavailable",
 ]
 
 from .declaration import (
     ARTIFACT_PREFIX,
+    FACTOR_BUDGET,
     FACTOR_DATASET,
     FACTOR_FEATURES,
     FACTOR_MODEL,
@@ -70,6 +71,7 @@ from .declaration import (
     FACTORS,
     ROW_CHANGING_FACTORS,
     Binding,
+    Builder,
     Contrast,
     Controls,
     DesignPoint,
@@ -77,7 +79,10 @@ from .declaration import (
     Experiment,
     Factor,
     Level,
+    budget_level,
     constant,
+    declared_budgets,
+    split_level,
     unavailable,
 )
 from .report import (
