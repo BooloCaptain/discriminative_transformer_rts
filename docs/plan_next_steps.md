@@ -1,4 +1,4 @@
-# Plan: the boundary-broken, sparsely-traced regime
+# Plan: the execution cross-boundary, sparsely-traced regime
 
 Supersedes the previous revision of this file, which was organised around full-suite
 relabelling (Gap 1) and a de-lexicalisation ladder (Gap 2). Gap 1 stands. The de-lexicalisation
@@ -13,16 +13,16 @@ W2c scoping spike are complete. Results are written up in `implementation.md` §
 them change the plan's own premises:
 
 * **The ladder confirms the hypothesis, on synthetic labels.** Removing coverage flips SemIf from
-  −0.050 behind the best classical selector to **+0.170** ahead (§12.2). Coverage is the dominant
+  −0.050 behind the best classical ranker to **+0.170** ahead (§12.2). Coverage is the dominant
   term: history removal changes nothing, and removing traceability on top of coverage moves the
-  strongest tree by 0.014 at b0.05 (0.631 → 0.617) without changing which classical selector
+  strongest tree by 0.014 at b0.05 (0.631 → 0.617) without changing which classical ranker
   leads, which is raw BM25 at both L2 and L3. (An earlier draft said traceability adds *nothing*,
   L2 ≡ L3; that was an artefact of an incomplete ablation — see `implementation.md` §12.2 and
   `refactor.md` §14.)
 * **But it does not replicate on real bugs.** On BugsInPy, with an identical feature condition,
   SemIf and BM25 **tie** at every budget (§12.3). This is the most important result here: the
   L3 win looks like an artefact of mutant labels that remain coverage-defined.
-* **The boundary does not destroy the lexical bridge.** MicroPython's runner genuinely uses
+* **The boundary does not destroy the lexical-overlap signal.** MicroPython's runner genuinely uses
   `subprocess.Popen`/`pty.openpty()`, yet on 1653 tests BM25 still reaches 0.648 at b0.05 with
   the related test at a median rank of 26/1653 (§12.4). The boundary removes coverage, which
   depends on execution, but not naming, which does not.
@@ -33,8 +33,8 @@ them change the plan's own premises:
 The open question has therefore narrowed and changed shape. It is no longer "can SemIf win when
 structure is removed" — on synthetic labels it can, on real labels it ties — but "what is
 different about the mutant labels that manufactures the win". The natural next step is real
-failing-test labels on a boundary-broken corpus (build MicroPython, label its bug commits),
-because that is the only arm that changes both the labels and the structure at once.
+failing-test labels on a cross-boundary corpus (build MicroPython, label its bug commits),
+because that is the only condition that changes both the labels and the structure at once.
 
 ---
 
@@ -48,10 +48,10 @@ on a device. Its defining properties:
 
 | property | consequence |
 |---|---|
-| the changed code does not run in the test process | **coverage cannot cross the boundary**: `covers_function` is empty, or trivially true of a shared driver |
-| changed code is firmware (C/C++/Rust/MicroPython), tests are host Python | the lexical bridge is reduced to protocol and feature vocabulary |
+| the changed code does not run in the test process | **coverage cannot cross the execution boundary**: `function_coverage` is empty, or trivially true of a shared imperative runner |
+| changed code is firmware (C/C++/Rust/MicroPython), tests are host Python | the lexical-overlap signal is reduced to protocol and feature vocabulary |
 | tests are named by scenario, not by module (`test_thermal_shutdown`, not `test_utils.py`) | **filename matching dies** |
-| millions of files, thousands of tests, long-running tests | **history is uniformly cold**: no `(file, test)` pair has prior co-occurrence, so failure-history features carry nothing |
+| millions of files, thousands of tests, long-running tests | **history is uniformly cold**: no `(file, test)` pair has prior co-occurrence, so failure-temporal features carry nothing |
 | tests take seconds to minutes | budget should be in **seconds**, not test counts |
 
 So four feature families die at once: coverage, filename/path proximity, identifier overlap,
@@ -65,7 +65,7 @@ under it (0.381 → 0.125) and the coverage+BM25 tree does not move (0.991 → 0
 coverage carries the result. In the target regime coverage is *absent*, so the ladder's premise
 never applies there — the measurement is correct and irrelevant, exactly as the user judged.
 
-The mistake was in the original framing, not the measurement: "sever the lexical bridge" is not
+The mistake was in the original framing, not the measurement: "sever the lexical-overlap signal" is not
 the same manipulation as "remove traceability". The second is what the target regime requires,
 and it is what this plan is now organised around.
 
@@ -74,7 +74,7 @@ and it is what this plan is now organised around.
 This is worth stating up front, because it is the strongest existing argument for the user's
 position and it is already in the data.
 
-In `implementation.md` §5.7, n=141 starved faults, full candidate set, b0.05:
+In `implementation.md` §5.7, n=141 cold-start faults, full candidate set, b0.05:
 
 | model | features | b0.01 | b0.05 | b0.10 |
 |---|---|---|---|---|
@@ -93,7 +93,7 @@ already ahead. The direction of the user's hypothesis is visible in the existing
 The study's own diagnosis is that SemIf's learned relation is *topical relevance*, while the RTS
 relation is *executional and causal*. In the target regime the causal link runs through the
 device's behaviour: a firmware change alters what a command does, and a host test fails because
-it observed that change. **That link is not written down in either text.** Topical relevance can
+it natural that change. **That link is not written down in either text.** Topical relevance can
 only bridge it if the change and the test share *vocabulary about the feature* — a thermal
 threshold constant in firmware and `SET_TEMP` in a test are bridgeable; a reordered
 initialisation sequence and a timing assertion are not.
@@ -103,7 +103,7 @@ case no text model wins — not the reranker, not BM25 — and the honest answer
 needs dynamic analysis or a per-test impact map, not text similarity.
 
 This is cheaply decidable before building anything (§2.3, gate T0): for each fault, measure
-whether the killing test shares *any* token with the change text. If the bridge rate is near
+whether the killing test shares *any* token with the change text. If the lexical-overlap rate is near
 zero, both text models are being asked an impossible question and the direction should be
 dropped or re-specified. If it is materially non-zero but below the level BM25 can exploit, that
 is precisely the regime where a semantic model has room, and the plan is worth executing.
@@ -118,7 +118,7 @@ traps: `mutants/src` must precede the editable `marshmallow.pth`, or the tests i
 *unmutated* source and every mutant silently no-ops; and a fresh pytest process per mutant loses
 13% of killed mutants, because `tests/conftest.py` builds a schema at import time and a mutant
 that raises there aborts the session with zero outcomes. Forking per mutant from a
-once-collected parent loses none. Full population: **9.9 min at 8 workers**.
+once-collected parent loses none. Full averaging subset: **9.9 min at 8 workers**.
 
 **Full-suite relabelling is complete** (2651 mutants, all gates passing):
 
@@ -127,7 +127,7 @@ once-collected parent loses none. Full population: **9.9 min at 8 workers**.
 | old killers ⊆ new killers | — | **2651/2651** |
 | killers per fault: median / mean / max | 1 / 1.0 / 1 | **8 / 58.4 / 759** |
 | faults with exactly one killer | 100% | **13.6%** |
-| fault-bearing changes | 2311 | **2327** |
+| detectable changes | 2311 | **2327** |
 | mutmut survivors that are real faults | 0 | **16/340** |
 | faults with an out-of-coverage killer | 0, by construction | **5.5%** (128/2327) |
 
@@ -143,7 +143,7 @@ candidate pool (312 killers across 110 mutants reference unreachable tests).
 
 ### 0.6 Retired measurement, kept for the record
 
-| arm | b0.05 | note |
+| condition | b0.05 | note |
 |---|---|---|
 | `bm25_lexical` baseline | 0.381 | |
 | `bm25_lexical` A1 diff-only obfuscation | 0.125 | vocabulary severed |
@@ -164,13 +164,13 @@ regime, absent, or **simulable on marshmallow without any new data**.
 
 | feature family | target regime | marshmallow today | simulable? |
 |---|---|---|---|
-| `covers_function`, `n_covering_tests`, `coverage_rank_prior` | **absent** (boundary) | present, and dominant | **yes** — drop them; already supported (`exclude_coverage`) |
-| `module_name_in_test_file`, `path_distance`, `n_tests_in_file` | **absent** (naming convention differs) | present, and `structural_rule` depends on it | **yes** — needs a new exclusion family (§3) |
-| `test_failure_rate_cum`, `test_runs_cum`, `test_last_failure_age` | **absent** (uniformly cold) | present but already harmful under starvation | **yes** — drop globally, not via the starved subset (§3) |
-| BM25 over change × test text | **degraded** to protocol/feature vocabulary | present, weak (0.504 raw) | partially — cannot honestly simulate the boundary's vocabulary loss |
-| `change_size`, `change_added/removed` | available | present | n/a |
-| `test_duration`, `test_n_lines`, `test_n_tokens` | available | present | n/a |
-| **coverage-defined candidate mask** (`covered`) | **does not exist**; the pool is the whole suite | most SemIf numbers use it | **yes** — `--candidates full` |
+| `function_coverage`, `n_covering_tests`, `coverage_rank_prior` | **absent** (boundary) | present, and dominant | **yes** — drop them; already supported (`exclude_coverage`) |
+| `module_name_in_test_file`, `path_proximity`, `n_tests_in_file` | **absent** (naming convention differs) | present, and `structural_rule` depends on it | **yes** — needs a new exclusion family (§3) |
+| `cumulative_failure_rate`, `test_runs_cum`, `failure_recency` | **absent** (uniformly cold) | present but already harmful under starvation | **yes** — drop globally, not via the cold-start averaging subset (§3) |
+| BM25 over change × test text | **degraded** to protocol/feature vocabulary | present, weak (0.504 raw) | partially — cannot honestly simulate the execution boundary's vocabulary loss |
+| `code_churn`, `change_added/removed` | available | present | n/a |
+| `test_duration`, `test_lines`, `test_tokens` | available | present | n/a |
+| **coverage-defined candidate mask** (`covered`) | **does not exist**; the pool is the whole suite | most SemIf numbers use it | **yes** — `--candidate-policy full` |
 | **labels** | integration-test failures, several per change | co-located unit-test failures, coverage-defined | **no** — this is the real gap |
 | candidate-pool size | thousands of tests | 1187 | partially — the bundles study already tripled the pool (158 → 490) |
 | budget unit | seconds of wall clock | test count | **yes** — proposal 3's time budgets |
@@ -197,8 +197,8 @@ exists as a probe artifact; the work is wiring it in.
 |---|---|---|---|
 | W0.1 Promote `scripts/probes/probe_full_suite.py` to emit `{mutant, nodeid, when, outcome}` JSONL | `sut/marshmallow/mutmut-full-suite-outcomes.jsonl` | ~1 h | probe done, format to change |
 | W0.2 Add the label source + node-id canonicalisation to `rts/config.py`, `rts/data/mutmut.py` (`--labels {mutmut,full}`) | | ~1 h | not started |
-| W0.3 Rebuild the dataset; re-derive the starved masks; re-run the CPU-only arms under both label sets | corrected §5 tables | ~10 min | not started |
-| W0.4 Check whether the SemIf side needs re-scoring for the changed fault population | reuse `--exclude-scored` | 0-3 h GPU | not started |
+| W0.3 Rebuild the dataset; re-derive the cold-start masks; re-run the CPU-only conditions under both label sets | corrected §5 tables | ~10 min | not started |
+| W0.4 Check whether the SemIf side needs re-scoring for the changed fault averaging subset | reuse `--exclude-scored` | 0-3 h GPU | not started |
 
 Gates: baseline green (fork, no mutant → `rc=0, 1190 records, 0 failures`) — **PASS**; old killers
 ⊆ new — **PASS 2651/2651**; `records == 1190` per mutant — **PASS**. Determinism re-run outstanding.
@@ -208,34 +208,34 @@ Gates: baseline green (fork, no mutant → `rc=0, 1190 records, 0 failures`) —
 **This is the direct test of the user's hypothesis on existing data**, and it is free. It
 replaces the retired de-lexicalisation ladder.
 
-Build a monotone ladder of feature availability and evaluate **every selector including SemIf at
-every rung**:
+Build a monotone ladder of feature availability and evaluate **every ranker including SemIf at
+every ablation level**:
 
-| rung | features available | what it models |
+| ablation level | features available | what it models |
 |---|---|---|
 | L0 | everything | today's benchmark |
 | L1 | drop history | uniformly cold history |
 | L2 | drop history + coverage | + no cross-boundary coverage |
 | L3 | drop history + coverage + name/path proximity | + no naming convention |
 | L4 | L3 with no BM25 column | the floor: what survives with no text and no traceability |
-| L5 | L3 with BM25 raw only (no trained tree) | SemIf vs bag-of-words, the target comparison |
+| L5 | L3 with BM25 raw only (no trained tree) | SemIf vs bag-of-words, the target contrast |
 
-Two further axes, applied at L3 as the reference rung:
+Two further factors, applied at L3 as the reference ablation level:
 
-* **candidate pool**: `--candidates full` throughout (the `covered` mask does not exist in the
+* **candidate pool**: `--candidate-policy full` throughout (the `coverage_restricted` mask does not exist in the
   target regime), plus a pool-size sweep (1187 → ~3000 by adding non-candidate tests) to model
   thousands of tests.
 * **budget in seconds** rather than counts, using a heavy-tailed duration model.
 
 The deliverable is a **degradation curve**, not a single number: recall at b0.05 (and at a
-seconds budget) against rung, one line per selector. The question it answers is precise:
+seconds budget) against ablation level, one line per ranker. The question it answers is precise:
 *as traceability is removed, does the ordering change, and does SemIf cross the classical
 baselines?* On the existing n=141 data the crossing already appears at L2
 (`xgboost_static_nocov_lex` 0.582 vs SemIf 0.681); W1 makes that systematic, adds L3–L5, and puts
 the corrected labels under it.
 
 **Stated prediction** (so a null is informative): SemIf overtakes the BM25-only tree at L2 and
-L3, and its margin grows as rungs are removed. If it does *not*, the hypothesis is falsified on
+L3, and its margin grows as ablation levels are removed. If it does *not*, the hypothesis is falsified on
 this SUT.
 
 **The honest caveat, which must appear wherever W1 is reported**: this measures the *degradation
@@ -262,7 +262,7 @@ The suite is 0.75 s, so it can be run at sampled real revisions. **Correction to
 agenda**: this cannot by itself produce faults. Real commits on a healthy project are green, so
 there are no failing tests to label. What it buys is realism on the *change* side and on
 coverage/history evolution — real diffs, real commit order (making `recency` meaningful), real
-test-set churn — and it tests the prediction that real history makes the history features look
+test-set churn — and it tests the prediction that real history makes the temporal features look
 weaker, since failures are rare. Treat it as a substrate for W2a-style labels, not as an
 experiment.
 
@@ -286,10 +286,10 @@ spike is bounded and should answer three questions before any build: is the test
 deterministic enough to label per-test outcomes; are bug-inducing commits identifiable (SZZ or CI
 evidence); and what are the test count and pool size.
 
-**Gate T0 — the textual-bridge audit (§0.4). Do this before the build, not after.** On whatever
+**Quality gate T0 — the textual-bridge audit (§0.4). Do this before the build, not after.** On whatever
 corpus W2c selects, measure for each fault whether the killing test shares any token with the
 change text, and at what rate the shared tokens are feature/protocol names rather than generic
-ones. If the bridge rate is near zero, no text model can work and W2c should be dropped or
+ones. If the lexical-overlap rate is near zero, no text model can work and W2c should be dropped or
 re-specified. If it is non-zero but below what BM25 exploits, the regime is exactly the one the
 hypothesis predicts, and the build is justified. This is a few hours of work that decides a
 multi-week one.
@@ -311,23 +311,23 @@ multi-week one.
 
 **All done.** Recorded here because the reasoning matters for reading the results:
 
-1. **A feature-exclusion family.** `models.TRACEABILITY_FEATURES = ("filename_stem_match",
-   "path_distance", "n_tests_in_file")` now exists. ⚠️ **The third name was wrong.** The column is
-   `n_tests_in_test_file`, and because a name-based ablation ignores a name that matches nothing,
-   the rung that removed this family kept that column alive. The family is now derived from the
+1. **A feature-exclusion family.** `models.PROXIMITY_FEATURES = ("filename_match",
+   "path_proximity", "n_tests_in_file")` now exists. ⚠️ **The third name was wrong.** The column is
+   `tests_per_file`, and because a name-based ablation ignores a name that matches nothing,
+   the ablation level that removed this family kept that column alive. The family is now derived from the
    feature block's own `traceability` family rather than listed here, and withholding is strict, so
    the same typo raises instead of quietly ablating two thirds of a family. See
    `implementation.md` §12.2 and `refactor.md` §14 for the corrected numbers. The ladder does not
    use an exclusion flag;
    it *zeroes* the columns of the removed families, because a zeroed column is exactly "a
    feature that carries no information" and it keeps one code path for the learned and the
-   hand-built selectors — so `structural_rule` degrades to "shortest test first" rather than
+   hand-built rankers — so `structural_rule` degrades to "shortest test first" rather than
    crashing, which is the honest behaviour of a method whose input has ceased to exist.
 2. **Mislabelled feature fixed.** `STRUCTURED_NAMES[5]` was `"module_name_in_test_file"` but
-   held a *filename-stem* match indicator; renamed to `filename_stem_match` across all five
+   held a *filename-stem* match indicator; renamed to `filename_match` across all five
    call sites.
 3. **Label source wired.** `config.LABELS` / `RTS_LABELS` selects `mutmut` or `full`, with
-   `--labels` on the CLIs. Module state rather than a parameter, because every selector, feature
+   `--labels` on the CLIs. Module state rather than a parameter, because every ranker, feature
    and evaluation must agree and threading it through ~20 `dataset.build` call sites would be
    error-prone. `mutmut` stays the default and reproduces every documented number exactly.
 4. **Node-id canonicalisation.** `artifacts.canonical_nodeid` collapses the two wall-clock
@@ -336,7 +336,7 @@ multi-week one.
    `test_nodeid` over `change_row` / `test_col`. The indices are only valid for the exact
    dataset the cache was written against, so a cache silently mis-mapped when the pool grew from
    1187 to 1189.
-6. **`--candidates full`** is used for every ladder and BugsInPy number.
+6. **`--candidate-policy full`** is used for every ladder and BugsInPy number.
 
 ---
 
@@ -354,7 +354,7 @@ W0 labels (1.5h CPU)  ──┬─→ W1 ladder (1h CPU, SemIf free)  ──→ 
 W0 first because it is a correctness fix and everything is measured against it. W1 next because
 it is nearly free and directly tests the hypothesis on data already in hand — if SemIf does not
 cross the BM25-only baseline at L2/L3, the direction is falsified at a cost of one hour, before
-any real-data work. Gate T0 runs in parallel with W1, since it is independent.
+any real-data work. Quality gate T0 runs in parallel with W1, since it is independent.
 
 W2c is the only workstream that reaches the actual target, and it should not start until T0
 passes.
@@ -373,14 +373,14 @@ Pre-registered, so a null is informative. Outcomes measured so far are marked.
   goes −0.050 → −0.078 → +0.170 → +0.170 under corrected labels. **Confirmed through L2; L3 adds
   nothing**, so the honest statement is that coverage is the whole effect and filename/path
   proximity is irrelevant. The interesting quantity was the slope, and the slope is a step.
-* **Gate T0 kills the direction** if the killing test shares no tokens with the change. **Passes
+* **Quality gate T0 kills the direction** if the killing test shares no tokens with the change. **Passes
   weakly on BugsInPy** (87.3% share ≥1 token, but only 2.66 vs 2.03 tokens of lift, and *no*
   lift at all for black and sanic), and **passes strongly on MicroPython** (98.4%). So the task
   is text-solvable in both, which removes the main reason to abandon the direction but also
   undercuts the reason to expect a semantic model to be needed.
 * **W2a changes the picture** if real labels move the ordering. **They do — against the
   hypothesis.** On BugsInPy, SemIf and BM25 tie at every budget (0.000 at b0.05, p=1.00), on an
-  arm whose feature condition is identical to the ladder's L3, where the ladder reports SemIf
+  condition whose feature condition is identical to the ladder's L3, where the ladder reports SemIf
   ahead by +0.170. So the L3 advantage does not replicate once the labels are real. One
   expectation is also refuted: BugsInPy bugs have a median of **one** failing test (max 4), so
   "more killers makes RTS easier" does not apply to it.
@@ -389,7 +389,7 @@ Pre-registered, so a null is informative. Outcomes measured so far are marked.
 
 ## 6. Decisions
 
-1. **W1 scope.** Six rungs plus two axes is thorough; a three-rung version (L0, L2, L3) would
+1. **W1 scope.** Six ablation levels plus two factors is thorough; a three-ablation level version (L0, L2, L3) would
    answer the main question in ~20 min. Which?
 2. **Pool-size sweep.** Worth simulating "thousands of tests" by inflating the pool, or does the
    bundles study's 158 → 490 result already settle it?
@@ -398,5 +398,5 @@ Pre-registered, so a null is informative. Outcomes measured so far are marked.
 4. **MicroPython vs Zephyr** for W2c — MicroPython is smaller and has a real serial/pty boundary;
    Zephyr is closer to industrial embedded but is a C build with heavy toolchain needs.
 5. **Seconds budget.** Model test durations parametrically, or is the existing `test_duration`
-   feature enough to make the axis meaningful?
+   feature enough to make the factor meaningful?
 6. **Doc layout.** Keep this file, or fold it into `plan.md`?

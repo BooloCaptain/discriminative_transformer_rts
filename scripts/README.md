@@ -8,9 +8,9 @@ part of it.
 
 | script | what it does |
 |---|---|
-| `check_fast.py` | **run this one often.** Four tiers: ruff and every module imports; the test suite; the headline arm's *non-fitting* selectors rendered through the real driver and compared against `results_full.json` leaf by leaf; and the BugsInPy arm end to end. About 50 s in total, against the full gate's ~30 min. What it does **not** cover -- the fitted models, the sparse/covered arms, the ladder, the variation sections -- is printed at the end of every run. |
-| `verify_experiment_layer.py` | **the gate**, and the acceptance criterion: runs every migrated arm and compares the artifact it renders against the recorded one, leaf by leaf. Exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the documented addition list. About 30 min here, almost all of it fitting XGBoost trees and reading SemIf caches. |
-| `run_variation_arms.sh` | queues the SemIf arms. Only one 4B model fits in 17 GB, so they run sequentially rather than in parallel. |
+| `check_fast.py` | **run this one often.** Four tiers: ruff and every module imports; the test suite; the headline condition's *non-fitting* rankers rendered through the real imperative runner and compared against `results_full.json` leaf by leaf; and the BugsInPy condition end to end. About 50 s in total, against the full gate's ~30 min. What it does **not** cover -- the fitted models, the low-co-occurrence/covered conditions, the ladder, the variation sections -- is printed at the end of every run. |
+| `verify_experiment_layer.py` | **the gate**, and the acceptance criterion: runs every migrated condition and compares the artifact it renders against the recorded one, leaf by leaf. Exits non-zero on a missing leaf, a differing leaf, or an unexpected leaf that is not on the documented addition list. About 30 min here, almost all of it fitting XGBoost trees and reading SemIf caches. |
+| `run_variation_arms.sh` | queues the SemIf conditions. Only one 4B model fits in 17 GB, so they run sequentially rather than in parallel. |
 
 ## `probes/` -- reconnaissance, run once each
 
@@ -21,7 +21,7 @@ their findings are cited. They are not part of the reproduction recipe.
 |---|---|
 | `probe_full_suite.py` | what happens if every mutant is run against the *whole* suite instead of mutmut's median of 5 tests (Gap 1) |
 | `summarise_full_suite_probe.py` | turns the probe's output into the summary the corrected labels are built from |
-| `micropython_bridge_probe.py` | whether the lexical bridge survives a real cross-boundary suite (it does) |
+| `micropython_bridge_probe.py` | whether the lexical-overlap signal survives a real cross-boundary suite (it does) |
 
 ## `data/` -- one-off builders
 
