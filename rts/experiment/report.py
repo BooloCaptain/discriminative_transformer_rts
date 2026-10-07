@@ -41,6 +41,9 @@ class DesignPointResult:
     results: list[dict]
     seconds: float = 0.0
     importances: dict = field(default_factory=dict)
+    #: What a producing ranker spent, if it produced (pairs scored, throughput, read-vs-produced).
+    #: Empty for a ranker that computes in-process, whose cost is ``seconds``.
+    production: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +62,7 @@ class DesignPointResult:
             "results": self.results,
             "seconds": self.seconds,
             "importances": self.importances,
+            "production": self.production,
         }
 
 

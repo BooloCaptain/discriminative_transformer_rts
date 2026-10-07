@@ -252,6 +252,25 @@ def test_paired_deltas_are_computed_over_the_populations_rows():
     assert record["n"] == report.find(features="structured", model="coverage").n_rows
 
 
+def test_a_contrast_is_reported_once_at_its_probe_budget():
+    """Budget is a swept role, but a contrast is *at* one budget -- not once per budget level."""
+    experiment = stub_experiment(
+        models=Factor(
+            FACTOR_MODEL,
+            (
+                constant("coverage", rankers.CoverageRanker()),
+                constant("rate", rankers.FailureRateRanker()),
+            ),
+        ),
+        budgets=Factor(FACTOR_BUDGET, (budget_level(PROBE), budget_level(0.25))),
+        contrasts=(Contrast(FACTOR_MODEL, "coverage", PROBE),),
+    )
+    report = run(experiment, save=False, verbose=False)
+    deltas = [c for c in report.contrasts if c.get("design_point") == "rate"]
+    assert len(deltas) == 1
+    assert deltas[0]["budget"] == f"b{PROBE:g}"
+
+
 # --- cost, provenance, and reuse -------------------------------------------
 
 
@@ -457,6 +476,33 @@ def test_a_cached_score_selector_declares_its_cache_and_needs_the_right_loader(t
     ).scores(ctx).shape == (4, 1)
 
 
+def test_a_produced_score_reports_what_it_spent(tmp_path):
+    """Cost is reported, not predicted: a producer records its stats, a read records none."""
+    path = tmp_path / "produced.npy"
+
+    def scorer(ctx, out):
+        np.save(out, np.zeros((ctx.ds.n_changes, ctx.ds.n_tests), dtype=np.float32))
+        return np.load(out), {"pairs": 12, "pairs_per_second": 3.0}
+
+    def make_producer(_binding):
+        return rankers.ProducedScores("produced", path, scorer=scorer)
+
+    def run_producer():
+        return run(
+            stub_experiment(models=Factor(FACTOR_MODEL, (Level.of(make_producer, "produced"),))),
+            save=False,
+            verbose=False,
+        )
+
+    first = run_producer().design_points[0]
+    assert first.production["produced"] is True
+    assert first.production["pairs"] == 12
+
+    # The second run finds the cache and produces nothing.
+    second = run_producer().design_points[0]
+    assert second.production["produced"] is False
+
+
 def test_a_rank_average_is_fitted_free_and_declares_its_parents_caches():
     from examples import config as example_config
 
@@ -476,8 +522,13 @@ def test_artifact_backed_selectors_declare_what_they_read():
 
     from examples import config as example_config
 
-    semif = rankers.SemIfRanker()
-    assert semif.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)
+    # A *cached* score matrix declares its cache, so an absent one is a hole in the grid.
+    cached = rankers.CachedScores("embed", example_config.SEMIF_SCORES_FILE)
+    assert cached.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)
+
+    # A *produced* score matrix declares nothing: the cache is its output, so an absent one is
+    # scored live rather than reported undefined.
+    assert rankers.SemIfRanker().requirements() == ()
 
     extra = rankers.XGBoostRanker(extra_score_files={"semif": example_config.SEMIF_SCORES_FILE})
     assert extra.requirements() == (f"artifact:{example_config.SEMIF_SCORES_FILE}",)

@@ -1,7 +1,7 @@
 """What an experiment *is*, as a value: roles, factors, levels, design points, controls.
 
 Nothing here measures anything. ``Experiment`` is an immutable declaration, ``Factor`` is an
-ordered set of variants of one role, and ``Level`` is one variant with its cost. Measuring is
+ordered set of variants of one role, and ``Level`` is one variant with its cost tier. Measuring is
 :mod:`.run`; what a measurement records is :mod:`.report`.
 
 **A declaration is data, not code.** A level does not carry a closure; it carries a
@@ -227,7 +227,6 @@ class Level:
     name: str
     builder: Builder
     tier: str = "cpu"
-    estimated_seconds: float | None = None
     note: str = ""
 
     def build(self, binding: Binding) -> Any:
@@ -241,7 +240,6 @@ class Level:
         name: str,
         *,
         tier: str = "cpu",
-        estimated_seconds: float | None = None,
         note: str = "",
         **params: Any,
     ) -> Level:
@@ -250,19 +248,12 @@ class Level:
         ``factory`` is a reusable constructor -- a module-level function, or a classmethod -- so a
         declaration that calls this names a piece rather than writing logic.
         """
-        return cls(
-            name=name,
-            builder=Builder(factory, params),
-            tier=tier,
-            estimated_seconds=estimated_seconds,
-            note=note,
-        )
+        return cls(name=name, builder=Builder(factory, params), tier=tier, note=note)
 
     def metadata(self) -> dict:
         return {
             "name": self.name,
             "tier": self.tier,
-            "estimated_seconds": self.estimated_seconds,
             "note": self.note,
             "builder": self.builder.metadata(),
         }
@@ -433,7 +424,6 @@ class DesignPoint:
 
     factors: tuple[tuple[str, str], ...]
     tier: str = "cpu"
-    estimated_seconds: float | None = None
 
     def name(self, role: str) -> str:
         for r, n in self.factors:
@@ -454,12 +444,7 @@ class DesignPoint:
         return dict(self.factors)
 
     def to_dict(self) -> dict:
-        return {
-            "key": self.key,
-            "factors": self.factors_dict(),
-            "tier": self.tier,
-            "estimated_seconds": self.estimated_seconds,
-        }
+        return {"key": self.key, "factors": self.factors_dict(), "tier": self.tier}
 
 
 @dataclass(frozen=True)
@@ -554,6 +539,20 @@ class Experiment:
     def probe_budgets(self) -> tuple[float, ...]:
         return tuple(sorted({c.probe_budget for c in self.contrasts}))
 
+    def budget_level_name(self, budget: float) -> str:
+        """The name of the declared budget level carrying ``budget``.
+
+        A contrast names a probe budget by value; a design point names its budget by level.
+        This is the one place the two spellings meet.
+        """
+        for level in self.budgets.levels:
+            if level.builder.params.get("value") == budget:
+                return level.name
+        raise KeyError(
+            f"experiment {self.name!r} declares no budget level with value {budget}; "
+            f"have {sorted(declared_budgets(self.budgets))}"
+        )
+
     def design_points(self) -> list[DesignPoint]:
         """Every design point, ordered cheap-first by declared cost tier.
 
@@ -571,12 +570,10 @@ class Experiment:
                     )
         design_points: list[DesignPoint] = []
         for combo in itertools.product(*(factors[role].levels for role in FACTORS)):
-            seconds = [e.estimated_seconds for e in combo if e.estimated_seconds is not None]
             design_points.append(
                 DesignPoint(
                     factors=tuple((role, e.name) for role, e in zip(FACTORS, combo)),
                     tier=max((e.tier for e in combo), key=lambda t: rank[t]),
-                    estimated_seconds=sum(seconds) if seconds else None,
                 )
             )
         design_points.sort(key=lambda c: rank[c.tier])

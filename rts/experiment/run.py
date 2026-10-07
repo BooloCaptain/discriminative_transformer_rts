@@ -180,6 +180,7 @@ def _measure(
         split=split,
         bm25=bm25,
         seed=env.controls.effective_model_seed,
+        candidate_policy=env.controls.candidate_policy,
     )
     if score_key in scores_cache:
         # A score matrix is a function of the *context*, and the context is (dataset, features,
@@ -189,6 +190,7 @@ def _measure(
         scores = scores_cache[score_key]
         seconds = 0.0
         importances: dict = {}
+        production: dict = {}
     else:
         started = time.perf_counter()
         scores = ranker.scores(ctx)
@@ -198,6 +200,9 @@ def _measure(
         # ranker afterwards: the level is shared, so a later design point in another context would
         # have overwritten it.
         importances = dict(getattr(ranker, "importances_", None) or {})
+        # What a producing ranker spent (pairs scored, throughput, read-vs-produced). Empty for a
+        # ranker that computes in-process, whose cost is ``seconds``.
+        production = dict(getattr(ranker, "last_stats", None) or {})
 
     evaluation = evaluate.evaluate_rows(
         scores,
@@ -258,6 +263,7 @@ def _measure(
         results=evaluate.results_to_dicts(evaluation.results or []),
         seconds=seconds,
         importances=importances,
+        production=production,
     )
     return result, hits
 
@@ -273,17 +279,28 @@ def _compare(
     """Paired deltas, grouped by every role except the one the contrast varies."""
     out: list[dict] = []
     for contrast in experiment.contrasts:
+        # A contrast is *at* a probe budget, so the design points it pairs are the ones measured
+        # at that budget. Budget is therefore not part of the group: grouping by it would emit
+        # the same delta once per budget level, and mixing budgets in one group would pair
+        # design points differing in a role the contrast did not name.
+        probe_level = experiment.budget_level_name(contrast.probe_budget)
         groups: dict[tuple[tuple[str, str], ...], dict[str, DesignPoint]] = defaultdict(dict)
         for result in results:
+            design_point = result.design_point
+            if design_point.name(FACTOR_BUDGET) != probe_level:
+                continue
             group = tuple(
-                (role, name) for role, name in result.design_point.factors if role != contrast.role
+                (role, name)
+                for role, name in design_point.factors
+                if role not in (contrast.role, FACTOR_BUDGET)
             )
-            groups[group][result.design_point.name(contrast.role)] = result.design_point
+            groups[group][design_point.name(contrast.role)] = design_point
         for group, at_role in groups.items():
             record = {
                 "role": contrast.role,
                 "reference": contrast.reference,
                 "probe_budget": contrast.probe_budget,
+                "budget": probe_level,
                 "group": dict(group),
             }
             reference_cell = at_role.get(contrast.reference)

@@ -45,6 +45,9 @@ class Context:
     #: ``config``, so that a run-level seed override reaches the model instead of stopping at
     #: the experiment layer.
     seed: int = config.SEED
+    #: The run's candidate policy, so a ranker that scores a restricted pool reads the same
+    #: policy the run used rather than assuming one.
+    candidate_policy: str = "full"
 
     @property
     def X(self) -> np.ndarray:

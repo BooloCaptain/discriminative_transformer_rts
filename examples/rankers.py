@@ -13,7 +13,7 @@ import numpy as np
 from examples import config, semif
 from rts import features
 from rts.data import accessors
-from rts.model.rankers import CachedScores, Context, RandomRanker, Ranker
+from rts.model.rankers import Context, ProducedScores, RandomRanker, Ranker
 
 # Feature families, taken from the block's own declaration so there is one definition of what
 # "the temporal family" is rather than a second list here that can drift from it.
@@ -299,19 +299,66 @@ class XGBoostRanker(Ranker):
         return model.predict_proba(X_all)[:, 1].reshape(ctx.ds.n_changes, ctx.ds.n_tests)
 
 
-class SemIfRanker(CachedScores):
-    """Frozen SemIf + Qwen reranker scores, read from a precomputed cache."""
+def _semif_scorer(ctx: Context, path) -> tuple[np.ndarray, dict]:
+    """Score the held-out changes live, writing the cache as it goes.
 
-    def __init__(self, scores_file=None):
+    The reusable producer a SemIf level is built from. It reads the run's candidate policy from
+    the context, so a restricted pool is scored as the run asked, and it needs no precomputed
+    cache -- an absent one is produced.
+    """
+    from examples import semif_runner
+    from rts.data import accessors
+
+    return semif_runner.score_context(
+        ctx.ds,
+        ctx.split.test_idx,
+        accessors.candidate_sets(ctx.ds, ctx.candidate_policy),
+        path,
+        seed=ctx.seed,
+    )
+
+
+def _semif_verifier(ctx: Context, path) -> None:
+    """Refuse a cache that does not cover the pairs this context needs."""
+    from examples import semif_runner
+    from rts.data import accessors
+
+    missing = semif_runner.missing_pairs(
+        ctx.ds,
+        ctx.split.test_idx,
+        accessors.candidate_sets(ctx.ds, ctx.candidate_policy),
+        path,
+        seed=ctx.seed,
+    )
+    if missing:
+        raise RuntimeError(
+            f"{path} is missing {len(missing)} pair(s) this context needs; it was produced "
+            "for a different context (rows, candidate pool or prompt), or is torn -- delete "
+            "it and re-run"
+        )
+
+
+class SemIfRanker(ProducedScores):
+    """SemIf + Qwen reranker scores: read from a cache if present, else scored live.
+
+    Producing is the *fallback*, not a precondition -- there is no cache requirement, so a
+    missing cache is not a hole in the grid. Because scoring live needs a GPU, a level built
+    from this ranker should declare ``tier="gpu"``: a CPU-only run then reports the design
+    point undefined instead of loading a 4B model.
+    """
+
+    def __init__(self, cache=None):
         super().__init__(
             "semif_reranker",
-            scores_file or config.SEMIF_SCORES_FILE,
+            cache or config.SEMIF_SCORES_FILE,
+            scorer=_semif_scorer,
             loader=semif.load_scores,
+            verifier=_semif_verifier,
         )
 
     @property
     def scores_file(self):
-        """The cache this reads, i.e. :attr:`CachedScores.path` under its older name."""
+        """The cache this reads or produces, i.e. :attr:`ProducedScores.path`."""
         return self.path
 
 
